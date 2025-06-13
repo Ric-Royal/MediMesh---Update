@@ -1,0 +1,269 @@
+version: '3.8'
+
+services:
+  # Core Database
+  postgres:
+    image: postgres:15
+    container_name: medimesh-postgres
+    environment:
+      POSTGRES_DB: medimesh
+      POSTGRES_USER: medimesh_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    secrets:
+      - db_password
+    networks:
+      - medimesh-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medimesh_user -d medimesh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Redis for caching and event streaming
+  redis:
+    image: redis:7-alpine
+    container_name: medimesh-redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass redis_password
+    networks:
+      - medimesh-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # MinIO Object Storage (S3-compatible)
+  minio:
+    image: minio/minio:latest
+    container_name: medimesh-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_password
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    secrets:
+      - minio_user
+      - minio_password
+    networks:
+      - medimesh-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # HashiCorp Vault for secrets management
+  vault:
+    image: hashicorp/vault:latest
+    container_name: medimesh-vault
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: myroot
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://0.0.0.0:8200
+    volumes:
+      - vault_data:/vault/data
+      - ./vault-config:/vault/config
+    ports:
+      - "8200:8200"
+    networks:
+      - medimesh-network
+    command: vault server -dev -dev-listen-address=0.0.0.0:8200
+
+  # Keycloak Identity and Access Management
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: medimesh-keycloak
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_password
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak_user
+      KC_DB_PASSWORD_FILE: /run/secrets/keycloak_db_password
+      KC_HOSTNAME_STRICT: false
+      KC_HTTP_ENABLED: true
+    ports:
+      - "8080:8080"
+    secrets:
+      - keycloak_password
+      - keycloak_db_password
+    networks:
+      - medimesh-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: start-dev
+
+  # Traefik API Gateway
+  traefik:
+    image: traefik:v3.0
+    container_name: medimesh-traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8080"  # Traefik dashboard
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik-config:/etc/traefik
+    networks:
+      - medimesh-network
+
+  # Patient Service API
+  patient-api:
+    build:
+      context: ./services/patient-api
+      dockerfile: Dockerfile
+    container_name: medimesh-patient-api
+    environment:
+      DATABASE_URL: postgresql://medimesh_user:${DB_PASSWORD}@postgres:5432/medimesh
+      REDIS_URL: redis://redis:6379
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: myroot
+    ports:
+      - "3001:3000"
+    networks:
+      - medimesh-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vault:
+        condition: service_started
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.patient-api.rule=Host(`localhost`) && PathPrefix(`/api/patients`)"
+      - "traefik.http.services.patient-api.loadbalancer.server.port=3000"
+
+  # Clinician Web App
+  web-app:
+    build:
+      context: ./web-app
+      dockerfile: Dockerfile
+    container_name: medimesh-web-app
+    environment:
+      REACT_APP_API_URL: http://localhost/api
+      REACT_APP_KEYCLOAK_URL: http://localhost:8080
+      REACT_APP_KEYCLOAK_REALM: medimesh
+      REACT_APP_KEYCLOAK_CLIENT_ID: medimesh-client
+    ports:
+      - "3000:3000"
+    networks:
+      - medimesh-network
+    depends_on:
+      - keycloak
+      - patient-api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.web-app.rule=Host(`localhost`)"
+      - "traefik.http.services.web-app.loadbalancer.server.port=3000"
+
+  # Apache Airflow for ETL orchestration
+  airflow-webserver:
+    image: apache/airflow:2.7.0
+    container_name: medimesh-airflow-webserver
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:${AIRFLOW_DB_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - airflow_data:/opt/airflow
+    ports:
+      - "8082:8080"
+    networks:
+      - medimesh-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: webserver
+
+  # Metabase for ad-hoc reporting
+  metabase:
+    image: metabase/metabase:latest
+    container_name: medimesh-metabase
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_DBNAME: metabase
+      MB_DB_PORT: 5432
+      MB_DB_USER: metabase_user
+      MB_DB_PASS: ${METABASE_DB_PASSWORD}
+      MB_DB_HOST: postgres
+    ports:
+      - "3002:3000"
+    networks:
+      - medimesh-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - metabase_data:/metabase-data
+
+  # Apache Superset for dashboards
+  superset:
+    image: apache/superset:latest
+    container_name: medimesh-superset
+    environment:
+      SUPERSET_CONFIG_PATH: /app/superset_config.py
+      DATABASE_URL: postgresql://superset_user:${SUPERSET_DB_PASSWORD}@postgres:5432/superset
+    ports:
+      - "8088:8088"
+    networks:
+      - medimesh-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - superset_data:/app/superset_home
+      - ./superset-config:/app/superset_config
+
+networks:
+  medimesh-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  vault_data:
+  airflow_data:
+  metabase_data:
+  superset_data:
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  minio_user:
+    file: ./secrets/minio_user.txt
+  minio_password:
+    file: ./secrets/minio_password.txt
+  keycloak_password:
+    file: ./secrets/keycloak_password.txt
+  keycloak_db_password:
+    file: ./secrets/keycloak_db_password.txt 

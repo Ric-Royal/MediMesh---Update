@@ -1,0 +1,197 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security scan daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  security-scan:
+    name: Security Vulnerability Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: |
+          web-app/package-lock.json
+          services/patient-api/package-lock.json
+    
+    # Frontend Security Scan
+    - name: Install frontend dependencies
+      run: |
+        cd web-app
+        npm ci
+        
+    - name: Run frontend security audit
+      run: |
+        cd web-app
+        npm audit --audit-level=moderate
+        
+    - name: Frontend dependency check
+      run: |
+        cd web-app
+        npx audit-ci --moderate
+    
+    # Backend Security Scan
+    - name: Install backend dependencies
+      run: |
+        cd services/patient-api
+        npm ci
+        
+    - name: Run backend security audit
+      run: |
+        cd services/patient-api
+        npm audit --audit-level=moderate
+        
+    - name: Backend dependency check
+      run: |
+        cd services/patient-api
+        npx audit-ci --moderate
+
+  secret-scan:
+    name: Secret Detection
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Run TruffleHog OSS
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+        extra_args: --debug --only-verified
+
+  docker-security:
+    name: Docker Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Build Docker images
+      run: |
+        docker build -t medimesh-frontend ./web-app
+        docker build -t medimesh-backend ./services/patient-api
+        
+    - name: Run Trivy vulnerability scanner - Frontend
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'medimesh-frontend'
+        format: 'sarif'
+        output: 'trivy-frontend-results.sarif'
+        
+    - name: Run Trivy vulnerability scanner - Backend
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: 'medimesh-backend'
+        format: 'sarif'
+        output: 'trivy-backend-results.sarif'
+        
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-frontend-results.sarif'
+        
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-backend-results.sarif'
+
+  codeql-analysis:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+      
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'javascript' ]
+        
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: ${{ matrix.language }}
+        
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v2
+      
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+
+  license-check:
+    name: License Compliance Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        
+    - name: Install license checker
+      run: npm install -g license-checker
+      
+    - name: Check frontend licenses
+      run: |
+        cd web-app
+        npm ci
+        license-checker --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC' --excludePrivatePackages
+        
+    - name: Check backend licenses
+      run: |
+        cd services/patient-api
+        npm ci
+        license-checker --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC' --excludePrivatePackages
+
+  security-report:
+    name: Generate Security Report
+    runs-on: ubuntu-latest
+    needs: [security-scan, secret-scan, docker-security, codeql-analysis, license-check]
+    if: always()
+    
+    steps:
+    - name: Security Scan Summary
+      run: |
+        echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+        echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Dependency Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Secret Detection | ${{ needs.secret-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Docker Security | ${{ needs.docker-security.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| CodeQL Analysis | ${{ needs.codeql-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| License Check | ${{ needs.license-check.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📋 Security Recommendations" >> $GITHUB_STEP_SUMMARY
+        echo "- Review any failed security checks above" >> $GITHUB_STEP_SUMMARY
+        echo "- Update dependencies with known vulnerabilities" >> $GITHUB_STEP_SUMMARY
+        echo "- Ensure no secrets are committed to the repository" >> $GITHUB_STEP_SUMMARY
+        echo "- Verify all Docker images are secure" >> $GITHUB_STEP_SUMMARY 
