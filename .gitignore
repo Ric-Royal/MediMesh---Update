@@ -116,6 +116,12 @@ jspm_packages/
 .cache
 .parcel-cache
 
+# Webpack cache
+.cache/
+node_modules/.cache/
+web-app/node_modules/.cache/
+*.pack
+
 # Next.js build output
 .next
 
