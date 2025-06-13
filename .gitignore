@@ -20,6 +20,13 @@
 secrets.txt
 passwords.txt
 
+# CRITICAL: Never commit the secrets directory
+secrets/
+*.secret
+*.key.txt
+*password*.txt
+*secret*.txt
+
 # SSL/TLS Certificates and Keys
 *.pem
 *.key
