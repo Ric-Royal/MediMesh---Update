@@ -65,10 +65,32 @@ MediMesh is a full-stack medical data management platform designed for healthcar
    npm start
    ```
 
-3. **Access the application**
+3. **Test connections** (recommended):
+   ```bash
+   # Linux/Mac
+   ./scripts/test-connections.sh
+   
+   # Windows PowerShell
+   .\test-connections.ps1
+   ```
+
+4. **Access the application**
    - Web App: http://localhost:3000
-   - API: http://localhost:3001
+   - API: http://localhost:3001/health
    - Use any username/password in development mode
+
+### ✅ Connection Verification
+
+After starting services, verify all connections are working:
+
+- **Frontend**: http://localhost:3000 (React app)
+- **Patient API**: http://localhost:3001/health (Health check)
+- **PostgreSQL**: Internal connection via Docker network
+- **Redis**: Internal connection with authentication
+
+**Development Login**: Use `admin` / `admin123` for testing
+
+If any connections fail, see [CONFIGURATION.md](CONFIGURATION.md) for troubleshooting.
 
 ## 🔐 Security & Production Deployment
 
