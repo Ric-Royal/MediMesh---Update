@@ -1,0 +1,176 @@
+{
+  "id": "medimesh",
+  "realm": "medimesh",
+  "displayName": "MediMesh Medical Data Management",
+  "enabled": true,
+  "registrationAllowed": false,
+  "registrationEmailAsUsername": false,
+  "rememberMe": true,
+  "verifyEmail": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "loginTheme": "base",
+  "adminTheme": "base",
+  "accountTheme": "base",
+  "emailTheme": "base",
+  "accessTokenLifespan": 1800,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "clients": [
+    {
+      "id": "medimesh-client",
+      "clientId": "medimesh-client",
+      "name": "MediMesh Web Application",
+      "description": "React frontend application for MediMesh medical data management",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "medimesh-client-secret-2024",
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost/*",
+        "https://medimesh.yourdomain.com/*"
+      ],
+      "webOrigins": [
+        "http://localhost:3000",
+        "http://localhost",
+        "https://medimesh.yourdomain.com"
+      ],
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": true,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": [
+        "web-origins",
+        "role_list",
+        "profile",
+        "roles",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "id": "admin",
+        "name": "admin",
+        "description": "System Administrator - Full access to all features"
+      },
+      {
+        "id": "doctor",
+        "name": "doctor",
+        "description": "Doctor - Full patient and medical record access"
+      },
+      {
+        "id": "nurse",
+        "name": "nurse",
+        "description": "Nurse - Patient care and basic record management"
+      },
+      {
+        "id": "viewer",
+        "name": "viewer",
+        "description": "Viewer - Read-only access to assigned patients"
+      }
+    ]
+  },
+  "users": [
+    {
+      "id": "admin-user",
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "System",
+      "lastName": "Administrator",
+      "email": "admin@medimesh.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "admin",
+        "doctor"
+      ]
+    },
+    {
+      "id": "doctor-user",
+      "username": "doctor",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Dr. John",
+      "lastName": "Smith",
+      "email": "doctor@medimesh.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "doctor123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "doctor"
+      ]
+    },
+    {
+      "id": "nurse-user",
+      "username": "nurse",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Sarah",
+      "lastName": "Johnson",
+      "email": "nurse@medimesh.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "nurse123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "nurse"
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "healthcare-providers",
+      "name": "Healthcare Providers",
+      "path": "/healthcare-providers",
+      "subGroups": [
+        {
+          "id": "doctors",
+          "name": "Doctors",
+          "path": "/healthcare-providers/doctors",
+          "realmRoles": ["doctor"]
+        },
+        {
+          "id": "nurses",
+          "name": "Nurses", 
+          "path": "/healthcare-providers/nurses",
+          "realmRoles": ["nurse"]
+        }
+      ]
+    },
+    {
+      "id": "administrators",
+      "name": "Administrators",
+      "path": "/administrators",
+      "realmRoles": ["admin"]
+    }
+  ]
+} 

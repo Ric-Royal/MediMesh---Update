@@ -6,8 +6,8 @@ services:
     image: postgres:15
     container_name: medimesh-postgres
     environment:
-      POSTGRES_DB: medimesh
-      POSTGRES_USER: medimesh_user
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -19,7 +19,7 @@ services:
     networks:
       - medimesh-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U medimesh_user -d medimesh"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -90,24 +90,33 @@ services:
     container_name: medimesh-keycloak
     environment:
       KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_password
+      KEYCLOAK_ADMIN_PASSWORD: admin123
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: keycloak_user
-      KC_DB_PASSWORD_FILE: /run/secrets/keycloak_db_password
+      KC_DB_PASSWORD: KeycloakDB2024!
       KC_HOSTNAME_STRICT: false
       KC_HTTP_ENABLED: true
+      KC_HEALTH_ENABLED: true
+      KC_DB_SCHEMA: public
+      JAVA_OPTS: "-Xms512m -Xmx1024m"
+    volumes:
+      - ./keycloak-config:/opt/keycloak/data/import
     ports:
       - "8080:8080"
-    secrets:
-      - keycloak_password
-      - keycloak_db_password
     networks:
       - medimesh-network
     depends_on:
       postgres:
         condition: service_healthy
-    command: start-dev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    command: start-dev --import-realm
 
   # Traefik API Gateway
   traefik:
@@ -167,6 +176,12 @@ services:
     build:
       context: ./web-app
       dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: http://localhost:3001
+        REACT_APP_KEYCLOAK_URL: http://localhost:8080
+        REACT_APP_KEYCLOAK_REALM: medimesh
+        REACT_APP_KEYCLOAK_CLIENT_ID: medimesh-client
+        REACT_APP_DEV_MODE: "true"
     container_name: medimesh-web-app
     environment:
       REACT_APP_API_URL: http://localhost:3001
@@ -175,7 +190,7 @@ services:
       REACT_APP_KEYCLOAK_CLIENT_ID: medimesh-client
       REACT_APP_DEV_MODE: "true"
     ports:
-      - "3000:3000"
+      - "3000:80"
     networks:
       - medimesh-network
     depends_on:
@@ -183,19 +198,20 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.web-app.rule=Host(`localhost`)"
-      - "traefik.http.services.web-app.loadbalancer.server.port=3000"
+      - "traefik.http.services.web-app.loadbalancer.server.port=80"
 
   # Apache Airflow for ETL orchestration
   airflow-webserver:
-    image: apache/airflow:2.7.0
+    image: apache/airflow:2.8.1
     container_name: medimesh-airflow-webserver
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:AirflowDB2024!@postgres:5432/airflow
-      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__FERNET_KEY: 'YlCImzjge_TeZc7jPJ7Jz7-FvQtt7wEeXJgJOPEqN-M='
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
       AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+      AIRFLOW__WEBSERVER__SECRET_KEY: 'medimesh-airflow-secret-key-2024'
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -208,11 +224,22 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: webserver
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@medimesh.com --password admin123 &&
+      airflow webserver
+      "
 
   # Metabase for ad-hoc reporting
   metabase:
-    image: metabase/metabase:latest
+    image: metabase/metabase:v0.47.0
     container_name: medimesh-metabase
     environment:
       MB_DB_TYPE: postgres
@@ -221,6 +248,8 @@ services:
       MB_DB_USER: metabase_user
       MB_DB_PASS: MetabaseDB2024!
       MB_DB_HOST: postgres
+      MB_DB_CONNECTION_TIMEOUT_MS: 10000
+      JAVA_OPTS: "-Xmx1g -XX:+UseG1GC"
     ports:
       - "3002:3000"
     networks:
@@ -230,14 +259,16 @@ services:
         condition: service_healthy
     volumes:
       - metabase_data:/metabase-data
+    restart: unless-stopped
 
   # Apache Superset for dashboards
   superset:
-    image: apache/superset:latest
+    image: apache/superset:3.0.0
     container_name: medimesh-superset
     environment:
-      SUPERSET_CONFIG_PATH: /app/superset_config.py
+      SUPERSET_CONFIG_PATH: /app/superset_config/superset_config.py
       DATABASE_URL: postgresql://superset_user:SupersetDB2024!@postgres:5432/superset
+      SUPERSET_SECRET_KEY: 'medimesh-superset-secret-key-2024-very-long-and-secure'
     ports:
       - "8088:8088"
     networks:
@@ -248,6 +279,19 @@ services:
     volumes:
       - superset_data:/app/superset_home
       - ./superset-config:/app/superset_config
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: >
+      bash -c "
+      superset db upgrade &&
+      superset fab create-admin --username admin --firstname Admin --lastname User --email admin@medimesh.com --password admin123 &&
+      superset init &&
+      superset run -h 0.0.0.0 -p 8088 --with-threads --reload --debugger
+      "
 
 networks:
   medimesh-network:
@@ -268,8 +312,4 @@ secrets:
   minio_user:
     file: ./secrets/minio_user.txt
   minio_password:
-    file: ./secrets/minio_password.txt
-  keycloak_password:
-    file: ./secrets/keycloak_password.txt
-  keycloak_db_password:
-    file: ./secrets/keycloak_db_password.txt 
+    file: ./secrets/minio_password.txt 

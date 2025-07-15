@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Paper,
@@ -6,7 +6,9 @@ import {
   Button,
   Container,
   Stack,
-  Divider
+  Divider,
+  TextField,
+  Alert
 } from '@mui/material';
 import {
   LocalHospital as HospitalIcon,
@@ -18,6 +20,43 @@ import { useAuth } from '../contexts/AuthContext';
 
 const LoginPage = () => {
   const { login } = useAuth();
+  const [formData, setFormData] = useState({
+    username: '',
+    password: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleInputChange = (field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [field]: value
+    }));
+    // Clear error when user starts typing
+    if (error) setError(null);
+  };
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    if (!formData.username.trim() || !formData.password.trim()) {
+      setError('Please enter both username and password');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await login(formData.username, formData.password);
+      if (!result.success) {
+        setError(result.error || 'Login failed. Please try again.');
+      }
+    } catch (err) {
+      setError('An unexpected error occurred. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const features = [
     {
@@ -114,50 +153,83 @@ const LoginPage = () => {
               Sign in to access your medical data management dashboard
             </Typography>
 
-            <Stack spacing={3}>
-              <Button
-                variant="contained"
-                size="large"
-                onClick={login}
-                sx={{
-                  py: 1.5,
-                  borderRadius: 2,
-                  textTransform: 'none',
-                  fontSize: '1.1rem',
-                  fontWeight: 'medium'
-                }}
-                fullWidth
-              >
-                Sign In with Keycloak
-              </Button>
+            {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            )}
 
-              <Divider>
-                <Typography variant="body2" color="text.secondary">
-                  or
-                </Typography>
-              </Divider>
+            <form onSubmit={handleLogin}>
+              <Stack spacing={3}>
+                <TextField
+                  fullWidth
+                  label="Username"
+                  value={formData.username}
+                  onChange={(e) => handleInputChange('username', e.target.value)}
+                  disabled={loading}
+                  autoComplete="username"
+                  required
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: 2,
+                    }
+                  }}
+                />
 
-              {process.env.NODE_ENV === 'development' && (
+                <TextField
+                  fullWidth
+                  label="Password"
+                  type="password"
+                  value={formData.password}
+                  onChange={(e) => handleInputChange('password', e.target.value)}
+                  disabled={loading}
+                  autoComplete="current-password"
+                  required
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      borderRadius: 2,
+                    }
+                  }}
+                />
+
                 <Button
-                  variant="outlined"
+                  type="submit"
+                  variant="contained"
                   size="large"
-                  onClick={login}
+                  disabled={loading}
                   sx={{
                     py: 1.5,
                     borderRadius: 2,
                     textTransform: 'none',
-                    fontSize: '1rem'
+                    fontSize: '1.1rem',
+                    fontWeight: 'medium'
                   }}
                   fullWidth
                 >
-                  Development Login
+                  {loading ? 'Signing In...' : 'Sign In'}
                 </Button>
-              )}
-            </Stack>
+
+                {process.env.NODE_ENV === 'development' && (
+                  <>
+                    <Divider>
+                      <Typography variant="body2" color="text.secondary">
+                        Development Mode
+                      </Typography>
+                    </Divider>
+                    <Typography variant="caption" color="text.secondary" align="center">
+                      Use any username/password combination for testing
+                    </Typography>
+                  </>
+                )}
+              </Stack>
+            </form>
 
             <Box sx={{ mt: 4, textAlign: 'center' }}>
               <Typography variant="caption" color="text.secondary">
-                Secure authentication powered by Keycloak
+                {process.env.NODE_ENV === 'development' 
+                  ? 'Development Mode - Any credentials accepted'
+                  : 'Secure authentication powered by Keycloak'
+                }
               </Typography>
             </Box>
           </Box>

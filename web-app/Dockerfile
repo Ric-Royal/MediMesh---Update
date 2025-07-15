@@ -1,5 +1,5 @@
 # Build stage
-FROM node:18-alpine as build
+FROM node:18-alpine AS build
 
 WORKDIR /app
 
@@ -7,10 +7,24 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --silent
+RUN npm ci
 
 # Copy source code
 COPY . ./
+
+# Accept build arguments for React environment variables
+ARG REACT_APP_API_URL=http://localhost:3001
+ARG REACT_APP_KEYCLOAK_URL=http://localhost:8080
+ARG REACT_APP_KEYCLOAK_REALM=medimesh
+ARG REACT_APP_KEYCLOAK_CLIENT_ID=medimesh-client
+ARG REACT_APP_DEV_MODE=true
+
+# Set them as environment variables for the build
+ENV REACT_APP_API_URL=$REACT_APP_API_URL
+ENV REACT_APP_KEYCLOAK_URL=$REACT_APP_KEYCLOAK_URL
+ENV REACT_APP_KEYCLOAK_REALM=$REACT_APP_KEYCLOAK_REALM
+ENV REACT_APP_KEYCLOAK_CLIENT_ID=$REACT_APP_KEYCLOAK_CLIENT_ID
+ENV REACT_APP_DEV_MODE=$REACT_APP_DEV_MODE
 
 # Build the app
 RUN npm run build

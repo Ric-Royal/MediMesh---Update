@@ -21,20 +21,22 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     const initAuth = async () => {
-      // Try Keycloak first (production auth)
-      if (process.env.NODE_ENV === 'production' || !process.env.REACT_APP_DEV_MODE) {
+      // Check if we're explicitly in development mode
+      const isDevMode = process.env.REACT_APP_DEV_MODE === 'true' || 
+                       process.env.NODE_ENV === 'development';
+      
+      if (isDevMode) {
+        console.log('Initializing development authentication mode');
+        initDevelopmentAuth();
+      } else {
+        // Production mode - try Keycloak
         try {
           await initKeycloak();
         } catch (error) {
           console.error('Keycloak initialization failed:', error);
-          if (process.env.NODE_ENV === 'development') {
-            console.log('Falling back to development authentication');
-            initDevelopmentAuth();
-          }
+          console.log('Falling back to development authentication');
+          initDevelopmentAuth();
         }
-      } else {
-        // Development mode - use simple auth
-        initDevelopmentAuth();
       }
     };
 
@@ -91,21 +93,27 @@ export const AuthProvider = ({ children }) => {
   };
 
   const initDevelopmentAuth = async () => {
+    console.log('Setting up development authentication mode');
     setDevelopmentMode(true);
     
     // Check if we have a stored development token
     const devToken = localStorage.getItem('dev_token');
     if (devToken) {
       try {
+        console.log('Found existing dev token, verifying...');
         // Verify token with development backend
         const response = await apiService.auth.me();
+        console.log('Token verified, user authenticated');
         setUser(response.data);
         setIsAuthenticated(true);
         setToken(devToken);
       } catch (error) {
+        console.log('Stored token invalid, removing it');
         // Token invalid, remove it
         localStorage.removeItem('dev_token');
       }
+    } else {
+      console.log('No existing token found, user needs to login');
     }
     setLoading(false);
   };
