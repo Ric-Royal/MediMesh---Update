@@ -78,8 +78,8 @@ const DashboardPage = () => {
 
         const [patientStatsResponse, recordStatsResponse, recentRecordsResponse] = await Promise.all([
           apiService.patients.getStatistics(),
-          apiService.records.getStatistics(),
-          apiService.records.getAll({ limit: 5, offset: 0 })
+          apiService.medicalRecords.getStatistics(),
+          apiService.medicalRecords.getAll({ limit: 5, offset: 0 })
         ]);
 
         setPatientStats(patientStatsResponse.data);

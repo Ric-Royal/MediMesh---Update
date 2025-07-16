@@ -104,7 +104,7 @@ export const AuthProvider = ({ children }) => {
         // Verify token with development backend
         const response = await apiService.auth.me();
         console.log('Token verified, user authenticated');
-        setUser(response.data);
+        setUser(response);
         setIsAuthenticated(true);
         setToken(devToken);
       } catch (error) {
@@ -126,11 +126,11 @@ export const AuthProvider = ({ children }) => {
         const response = await apiService.auth.login(username, password);
         
         // Store token
-        localStorage.setItem('dev_token', response.data.access_token);
-        setToken(response.data.access_token);
+        localStorage.setItem('dev_token', response.access_token);
+        setToken(response.access_token);
         
         // Set user data
-        setUser(response.data.user);
+        setUser(response.user);
         setIsAuthenticated(true);
         
         return { success: true };
@@ -138,7 +138,7 @@ export const AuthProvider = ({ children }) => {
         console.error('Development login error:', error);
         return { 
           success: false, 
-          error: error.response?.data?.error || 'Login failed' 
+          error: error?.response?.data?.error || error?.message || 'Login failed' 
         };
       } finally {
         setLoading(false);

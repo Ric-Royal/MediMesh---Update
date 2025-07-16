@@ -6,15 +6,25 @@ const patientCreateSchema = Joi.object({
   first_name: Joi.string().required().min(1).max(100).trim(),
   last_name: Joi.string().required().min(1).max(100).trim(),
   date_of_birth: Joi.date().required().max('now'),
-  gender: Joi.string().valid('M', 'F', 'Other').optional(),
-  phone: Joi.string().optional().max(20).pattern(/^[\+]?[1-9][\d]{0,15}$/),
-  email: Joi.string().email().optional().max(100),
+  gender: Joi.string().valid('M', 'F', 'Other', '').optional(),
+  phone: Joi.string().optional().allow('').max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/),
+  email: Joi.string().email().optional().allow('').max(100),
   address: Joi.object({
-    street: Joi.string().optional().max(200),
-    city: Joi.string().optional().max(100),
-    state: Joi.string().optional().max(50),
-    zip_code: Joi.string().optional().max(20),
-    country: Joi.string().optional().max(50)
+    street: Joi.string().optional().allow('').max(200),
+    city: Joi.string().optional().allow('').max(100),
+    state: Joi.string().optional().allow('').max(50),
+    zip_code: Joi.string().optional().allow('').max(20),
+    country: Joi.string().optional().allow('').max(50)
+  }).optional(),
+  emergency_contact: Joi.object({
+    name: Joi.string().optional().allow('').max(100),
+    relationship: Joi.string().optional().allow('').max(50),
+    phone: Joi.string().optional().allow('').max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/)
+  }).optional(),
+  insurance: Joi.object({
+    provider: Joi.string().optional().allow('').max(100),
+    policy_number: Joi.string().optional().allow('').max(50),
+    group_number: Joi.string().optional().allow('').max(50)
   }).optional()
 });
 
@@ -22,15 +32,25 @@ const patientUpdateSchema = Joi.object({
   first_name: Joi.string().optional().min(1).max(100).trim(),
   last_name: Joi.string().optional().min(1).max(100).trim(),
   date_of_birth: Joi.date().optional().max('now'),
-  gender: Joi.string().valid('M', 'F', 'Other').optional(),
-  phone: Joi.string().optional().max(20).pattern(/^[\+]?[1-9][\d]{0,15}$/),
-  email: Joi.string().email().optional().max(100),
+  gender: Joi.string().valid('M', 'F', 'Other', '').optional(),
+  phone: Joi.string().optional().allow('').max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/),
+  email: Joi.string().email().optional().allow('').max(100),
   address: Joi.object({
-    street: Joi.string().optional().max(200),
-    city: Joi.string().optional().max(100),
-    state: Joi.string().optional().max(50),
-    zip_code: Joi.string().optional().max(20),
-    country: Joi.string().optional().max(50)
+    street: Joi.string().optional().allow('').max(200),
+    city: Joi.string().optional().allow('').max(100),
+    state: Joi.string().optional().allow('').max(50),
+    zip_code: Joi.string().optional().allow('').max(20),
+    country: Joi.string().optional().allow('').max(50)
+  }).optional(),
+  emergency_contact: Joi.object({
+    name: Joi.string().optional().allow('').max(100),
+    relationship: Joi.string().optional().allow('').max(50),
+    phone: Joi.string().optional().allow('').max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/)
+  }).optional(),
+  insurance: Joi.object({
+    provider: Joi.string().optional().allow('').max(100),
+    policy_number: Joi.string().optional().allow('').max(50),
+    group_number: Joi.string().optional().allow('').max(50)
   }).optional()
 });
 
@@ -44,32 +64,20 @@ const medicalRecordCreateSchema = Joi.object({
   ),
   record_date: Joi.date().required().max('now'),
   provider_name: Joi.string().required().min(1).max(100).trim(),
-  diagnosis_codes: Joi.array().items(Joi.string().max(20)).optional(),
-  procedure_codes: Joi.array().items(Joi.string().max(20)).optional(),
-  medications: Joi.object({
-    prescribed: Joi.array().items(Joi.object({
-      name: Joi.string().required(),
-      dosage: Joi.string().optional(),
-      frequency: Joi.string().optional(),
-      duration: Joi.string().optional(),
-      instructions: Joi.string().optional()
-    })).optional(),
-    allergies: Joi.array().items(Joi.string()).optional()
+  notes: Joi.string().optional().allow('', null).max(5000),
+  diagnosis: Joi.string().optional().allow('', null).max(2000),
+  treatment_plan: Joi.string().optional().allow('', null).max(2000),
+  medications: Joi.string().optional().allow('', null).max(2000),
+  lab_results: Joi.string().optional().allow('', null).max(2000),
+  vital_signs: Joi.object({
+    blood_pressure: Joi.string().optional().allow('', null).max(50),
+    heart_rate: Joi.string().optional().allow('', null).max(50),
+    temperature: Joi.string().optional().allow('', null).max(50),
+    weight: Joi.string().optional().allow('', null).max(50),
+    height: Joi.string().optional().allow('', null).max(50)
   }).optional(),
-  notes: Joi.string().optional().max(5000),
-  attachments: Joi.object({
-    files: Joi.array().items(Joi.object({
-      filename: Joi.string().required(),
-      url: Joi.string().uri().required(),
-      type: Joi.string().required(),
-      size: Joi.number().optional()
-    })).optional(),
-    images: Joi.array().items(Joi.object({
-      filename: Joi.string().required(),
-      url: Joi.string().uri().required(),
-      description: Joi.string().optional()
-    })).optional()
-  }).optional()
+  follow_up_date: Joi.date().optional().min('now').allow(null),
+  attachments: Joi.array().optional()
 });
 
 const medicalRecordUpdateSchema = Joi.object({
@@ -80,32 +88,20 @@ const medicalRecordUpdateSchema = Joi.object({
   ),
   record_date: Joi.date().optional().max('now'),
   provider_name: Joi.string().optional().min(1).max(100).trim(),
-  diagnosis_codes: Joi.array().items(Joi.string().max(20)).optional(),
-  procedure_codes: Joi.array().items(Joi.string().max(20)).optional(),
-  medications: Joi.object({
-    prescribed: Joi.array().items(Joi.object({
-      name: Joi.string().required(),
-      dosage: Joi.string().optional(),
-      frequency: Joi.string().optional(),
-      duration: Joi.string().optional(),
-      instructions: Joi.string().optional()
-    })).optional(),
-    allergies: Joi.array().items(Joi.string()).optional()
+  notes: Joi.string().optional().allow('', null).max(5000),
+  diagnosis: Joi.string().optional().allow('', null).max(2000),
+  treatment_plan: Joi.string().optional().allow('', null).max(2000),
+  medications: Joi.string().optional().allow('', null).max(2000),
+  lab_results: Joi.string().optional().allow('', null).max(2000),
+  vital_signs: Joi.object({
+    blood_pressure: Joi.string().optional().allow('', null).max(50),
+    heart_rate: Joi.string().optional().allow('', null).max(50),
+    temperature: Joi.string().optional().allow('', null).max(50),
+    weight: Joi.string().optional().allow('', null).max(50),
+    height: Joi.string().optional().allow('', null).max(50)
   }).optional(),
-  notes: Joi.string().optional().max(5000),
-  attachments: Joi.object({
-    files: Joi.array().items(Joi.object({
-      filename: Joi.string().required(),
-      url: Joi.string().uri().required(),
-      type: Joi.string().required(),
-      size: Joi.number().optional()
-    })).optional(),
-    images: Joi.array().items(Joi.object({
-      filename: Joi.string().required(),
-      url: Joi.string().uri().required(),
-      description: Joi.string().optional()
-    })).optional()
-  }).optional()
+  follow_up_date: Joi.date().optional().min('now').allow(null),
+  attachments: Joi.array().optional()
 });
 
 // Query parameter validation schemas
@@ -116,14 +112,14 @@ const paginationSchema = Joi.object({
 });
 
 const patientSearchSchema = paginationSchema.keys({
-  search: Joi.string().optional().max(100),
+  search: Joi.string().optional().allow('').max(100),
   gender: Joi.string().valid('M', 'F', 'Other').optional(),
   age_min: Joi.number().integer().min(0).max(150).optional(),
   age_max: Joi.number().integer().min(0).max(150).optional()
 });
 
 const medicalRecordSearchSchema = paginationSchema.keys({
-  search: Joi.string().optional().max(100),
+  search: Joi.string().optional().allow('').max(100),
   record_type: Joi.string().optional(),
   provider_name: Joi.string().optional().max(100),
   date_from: Joi.date().optional(),
@@ -136,7 +132,40 @@ const uuidSchema = Joi.string().uuid().required();
 // Validation middleware
 const validate = (schema) => {
   return (req, res, next) => {
-    const { error, value } = schema.validate(req.body, { 
+    const { logger } = require('./logger');
+    
+    // Helper function to convert empty strings to null for optional fields
+    const convertEmptyStringsToNull = (obj) => {
+      if (obj === null || obj === undefined || typeof obj !== 'object') {
+        return obj;
+      }
+      
+      const result = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (typeof value === 'string' && value.trim() === '') {
+          result[key] = null;
+        } else if (typeof value === 'object' && value !== null) {
+          result[key] = convertEmptyStringsToNull(value);
+        } else {
+          result[key] = value;
+        }
+      }
+      return result;
+    };
+    
+    // Convert empty strings to null before validation
+    const processedBody = convertEmptyStringsToNull(req.body);
+    
+    // Debug: Log the incoming request data
+    logger.info('=== VALIDATION DEBUG ===', {
+      originalBody: req.body,
+      processedBody: processedBody,
+      requestHeaders: req.headers,
+      url: req.url,
+      method: req.method
+    });
+    
+    const { error, value } = schema.validate(processedBody, { 
       abortEarly: false,
       stripUnknown: true 
     });
@@ -147,6 +176,12 @@ const validate = (schema) => {
         message: detail.message,
         value: detail.context?.value
       }));
+
+      logger.error('=== VALIDATION ERROR ===', {
+        errorDetails,
+        originalBody: req.body,
+        processedBody: processedBody
+      });
 
       return res.status(400).json({
         error: 'Validation failed',

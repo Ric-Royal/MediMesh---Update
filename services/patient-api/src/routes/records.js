@@ -158,7 +158,27 @@ router.get('/:id',
 
 // POST /api/records - Create a new medical record
 router.post('/',
+  (req, res, next) => {
+    logger.info('POST /api/records - ENTRY POINT', {
+      method: req.method,
+      url: req.url,
+      hasBody: !!req.body,
+      bodyType: typeof req.body,
+      bodyContent: JSON.stringify(req.body),
+      contentType: req.headers['content-type'],
+      userAgent: req.headers['user-agent']
+    });
+    next();
+  },
   authorize(['doctor', 'nurse', 'admin']),
+  (req, res, next) => {
+    logger.info('POST /api/records - AFTER AUTH', {
+      user: req.user,
+      bodyExists: !!req.body,
+      bodyContent: req.body
+    });
+    next();
+  },
   validate(medicalRecordCreateSchema),
   async (req, res) => {
     try {

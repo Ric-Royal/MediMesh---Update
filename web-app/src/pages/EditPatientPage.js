@@ -219,15 +219,15 @@ const EditPatientPage = () => {
     } catch (err) {
       console.error('Error updating patient:', err);
       
-      if (err.response?.data?.errors) {
+      if (err.response?.data?.details) {
         // Handle validation errors from server
         const serverErrors = {};
-        err.response.data.errors.forEach(error => {
+        err.response.data.details.forEach(error => {
           serverErrors[error.field] = error.message;
         });
         setErrors(serverErrors);
       } else {
-        setSubmitError(err.response?.data?.message || 'Failed to update patient. Please try again.');
+        setSubmitError(err.response?.data?.error || err.response?.data?.message || 'Failed to update patient. Please try again.');
       }
     } finally {
       setSaving(false);
@@ -378,7 +378,7 @@ const EditPatientPage = () => {
                       >
                         <MenuItem value="M">Male</MenuItem>
                         <MenuItem value="F">Female</MenuItem>
-                        <MenuItem value="O">Other</MenuItem>
+                        <MenuItem value="Other">Other</MenuItem>
                       </Select>
                       {errors.gender && (
                         <Typography variant="caption" color="error" sx={{ mt: 1, ml: 2 }}>

@@ -168,9 +168,6 @@ const CreateRecordPage = () => {
     if (!formData.provider_name.trim()) {
       newErrors['provider_name'] = 'Provider name is required';
     }
-    if (!formData.notes.trim()) {
-      newErrors['notes'] = 'Notes are required';
-    }
 
     // Date validation
     if (formData.record_date && new Date(formData.record_date) > new Date()) {
@@ -196,16 +193,38 @@ const CreateRecordPage = () => {
       setLoading(true);
       setSubmitError(null);
 
-      // Clean up the data before sending
+      // Clean up the data before sending - ensure proper format for backend validation
       const cleanData = {
-        ...formData,
-        // Remove empty vital signs if none are provided
-        vital_signs: Object.values(formData.vital_signs).some(v => v.trim()) 
-          ? formData.vital_signs 
-          : undefined,
-        // Remove empty follow_up_date
-        follow_up_date: formData.follow_up_date || undefined
+        patient_id: formData.patient_id,
+        record_type: formData.record_type,
+        record_date: formData.record_date + 'T00:00:00.000Z', // Convert to ISO format
+        provider_name: formData.provider_name.trim(),
+        notes: formData.notes.trim(),
+        diagnosis: formData.diagnosis.trim(),
+        treatment_plan: formData.treatment_plan.trim(),
+        medications: formData.medications.trim(),
+        lab_results: formData.lab_results.trim()
       };
+      
+      // Only include vital signs if they have content
+      const hasVitalSigns = Object.values(formData.vital_signs).some(v => v && v.trim());
+      if (hasVitalSigns) {
+        cleanData.vital_signs = {
+          blood_pressure: formData.vital_signs.blood_pressure.trim(),
+          heart_rate: formData.vital_signs.heart_rate.trim(),
+          temperature: formData.vital_signs.temperature.trim(),
+          weight: formData.vital_signs.weight.trim(),
+          height: formData.vital_signs.height.trim()
+        };
+      }
+      
+      // Only include follow_up_date if it has a value
+      if (formData.follow_up_date) {
+        cleanData.follow_up_date = formData.follow_up_date + 'T00:00:00.000Z'; // Convert to ISO format
+      }
+
+      // Log the request data before sending
+      console.log('Medical Record Request data:', cleanData);
 
       const response = await apiService.medicalRecords.create(cleanData);
       
@@ -216,16 +235,18 @@ const CreateRecordPage = () => {
       });
     } catch (err) {
       console.error('Error creating medical record:', err);
+      console.log('Medical Record Error response:', err.response?.data);
+      console.log('Medical Record Error status:', err.response?.status);
       
-      if (err.response?.data?.errors) {
+      if (err.response?.data?.details) {
         // Handle validation errors from server
         const serverErrors = {};
-        err.response.data.errors.forEach(error => {
+        err.response.data.details.forEach(error => {
           serverErrors[error.field] = error.message;
         });
         setErrors(serverErrors);
       } else {
-        setSubmitError(err.response?.data?.message || 'Failed to create medical record. Please try again.');
+        setSubmitError(err.response?.data?.error || err.response?.data?.message || 'Failed to create medical record. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -459,8 +480,7 @@ const CreateRecordPage = () => {
                       value={formData.notes}
                       onChange={(e) => handleInputChange('notes', e.target.value)}
                       error={!!errors.notes}
-                      helperText={errors.notes || "Describe the patient's condition, symptoms, and observations"}
-                      required
+                      helperText={errors.notes || "Describe the patient's condition, symptoms, and observations (optional)"}
                     />
                   </Grid>
                   <Grid item xs={12} sm={6}>

@@ -230,15 +230,15 @@ const EditRecordPage = () => {
     } catch (err) {
       console.error('Error updating medical record:', err);
       
-      if (err.response?.data?.errors) {
+      if (err.response?.data?.details) {
         // Handle validation errors from server
         const serverErrors = {};
-        err.response.data.errors.forEach(error => {
+        err.response.data.details.forEach(error => {
           serverErrors[error.field] = error.message;
         });
         setErrors(serverErrors);
       } else {
-        setSubmitError(err.response?.data?.message || 'Failed to update medical record. Please try again.');
+        setSubmitError(err.response?.data?.error || err.response?.data?.message || 'Failed to update medical record. Please try again.');
       }
     } finally {
       setSaving(false);

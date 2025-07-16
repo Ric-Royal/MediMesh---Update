@@ -156,13 +156,23 @@ const CreatePatientPage = () => {
 
       // Clean up the data before sending
       const cleanData = {
-        ...formData,
-        // Remove empty nested objects
-        address: Object.values(formData.address).some(v => v.trim()) ? formData.address : undefined,
-        emergency_contact: Object.values(formData.emergency_contact).some(v => v.trim()) ? formData.emergency_contact : undefined,
-        insurance: Object.values(formData.insurance).some(v => v.trim()) ? formData.insurance : undefined
+        ...formData
       };
+      
+      // Only include nested objects if they have content
+      if (Object.values(formData.address).some(v => v.trim())) {
+        cleanData.address = formData.address;
+      }
+      if (Object.values(formData.emergency_contact).some(v => v.trim())) {
+        cleanData.emergency_contact = formData.emergency_contact;
+      }
+      if (Object.values(formData.insurance).some(v => v.trim())) {
+        cleanData.insurance = formData.insurance;
+      }
 
+      // Log the request data before sending
+      console.log('Request data:', cleanData);
+      
       const response = await apiService.patients.create(cleanData);
       
       // Navigate to the new patient's detail page
@@ -172,16 +182,18 @@ const CreatePatientPage = () => {
       });
     } catch (err) {
       console.error('Error creating patient:', err);
+      console.log('Error response:', err.response?.data);
+      console.log('Error status:', err.response?.status);
       
-      if (err.response?.data?.errors) {
+      if (err.response?.data?.details) {
         // Handle validation errors from server
         const serverErrors = {};
-        err.response.data.errors.forEach(error => {
+        err.response.data.details.forEach(error => {
           serverErrors[error.field] = error.message;
         });
         setErrors(serverErrors);
       } else {
-        setSubmitError(err.response?.data?.message || 'Failed to create patient. Please try again.');
+        setSubmitError(err.response?.data?.error || err.response?.data?.message || 'Failed to create patient. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -271,7 +283,7 @@ const CreatePatientPage = () => {
                       >
                         <MenuItem value="M">Male</MenuItem>
                         <MenuItem value="F">Female</MenuItem>
-                        <MenuItem value="O">Other</MenuItem>
+                        <MenuItem value="Other">Other</MenuItem>
                       </Select>
                       {errors.gender && (
                         <Typography variant="caption" color="error" sx={{ mt: 1, ml: 2 }}>

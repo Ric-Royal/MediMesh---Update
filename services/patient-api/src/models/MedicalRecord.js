@@ -10,11 +10,13 @@ class MedicalRecord {
     this.record_type = data.record_type;
     this.record_date = data.record_date;
     this.provider_name = data.provider_name;
-    this.diagnosis_codes = data.diagnosis_codes;
-    this.procedure_codes = data.procedure_codes;
+    this.diagnosis = data.diagnosis;
+    this.treatment_plan = data.treatment_plan;
     this.medications = data.medications;
+    this.lab_results = data.lab_results;
     this.notes = data.notes;
-    this.attachments = data.attachments;
+    this.vital_signs = data.vital_signs;
+    this.follow_up_date = data.follow_up_date;
     this.created_at = data.created_at;
     this.created_by = data.created_by;
   }
@@ -158,9 +160,9 @@ class MedicalRecord {
       const query = `
         INSERT INTO medical_records (
           id, patient_id, record_type, record_date, provider_name,
-          diagnosis_codes, procedure_codes, medications, notes, 
-          attachments, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          diagnosis, treatment_plan, medications, lab_results, notes, 
+          vital_signs, follow_up_date, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *
       `;
 
@@ -170,11 +172,13 @@ class MedicalRecord {
         data.record_type,
         data.record_date,
         data.provider_name,
-        data.diagnosis_codes || [],
-        data.procedure_codes || [],
-        data.medications || {},
-        data.notes,
-        data.attachments || {},
+        data.diagnosis || null,
+        data.treatment_plan || null,
+        data.medications || null,
+        data.lab_results || null,
+        data.notes || null,
+        data.vital_signs || null,
+        data.follow_up_date || null,
         createdBy
       ];
 
@@ -203,9 +207,10 @@ class MedicalRecord {
       const query = `
         UPDATE medical_records 
         SET record_type = $1, record_date = $2, provider_name = $3,
-            diagnosis_codes = $4, procedure_codes = $5, medications = $6,
-            notes = $7, attachments = $8
-        WHERE id = $9
+            diagnosis = $4, treatment_plan = $5, medications = $6,
+            lab_results = $7, notes = $8, vital_signs = $9, follow_up_date = $10,
+            updated_at = NOW(), updated_by = $11
+        WHERE id = $12
         RETURNING *
       `;
 
@@ -213,11 +218,14 @@ class MedicalRecord {
         data.record_type || this.record_type,
         data.record_date || this.record_date,
         data.provider_name || this.provider_name,
-        data.diagnosis_codes || this.diagnosis_codes,
-        data.procedure_codes || this.procedure_codes,
+        data.diagnosis || this.diagnosis,
+        data.treatment_plan || this.treatment_plan,
         data.medications || this.medications,
+        data.lab_results || this.lab_results,
         data.notes || this.notes,
-        data.attachments || this.attachments,
+        data.vital_signs || this.vital_signs,
+        data.follow_up_date || this.follow_up_date,
+        updatedBy,
         this.id
       ];
 
@@ -314,11 +322,13 @@ class MedicalRecord {
       record_type: this.record_type,
       record_date: this.record_date,
       provider_name: this.provider_name,
-      diagnosis_codes: this.diagnosis_codes,
-      procedure_codes: this.procedure_codes,
+      diagnosis: this.diagnosis,
+      treatment_plan: this.treatment_plan,
       medications: this.medications,
+      lab_results: this.lab_results,
       notes: this.notes,
-      attachments: this.attachments,
+      vital_signs: this.vital_signs,
+      follow_up_date: this.follow_up_date,
       created_at: this.created_at,
       created_by: this.created_by
     };

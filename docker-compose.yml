@@ -177,14 +177,14 @@ services:
       context: ./web-app
       dockerfile: Dockerfile
       args:
-        REACT_APP_API_URL: http://localhost:3001
+        REACT_APP_API_URL: "http://localhost:3001"
         REACT_APP_KEYCLOAK_URL: http://localhost:8080
         REACT_APP_KEYCLOAK_REALM: medimesh
         REACT_APP_KEYCLOAK_CLIENT_ID: medimesh-client
         REACT_APP_DEV_MODE: "true"
     container_name: medimesh-web-app
     environment:
-      REACT_APP_API_URL: http://localhost:3001
+      REACT_APP_API_URL: "http://localhost:3001"
       REACT_APP_KEYCLOAK_URL: http://localhost:8080
       REACT_APP_KEYCLOAK_REALM: medimesh
       REACT_APP_KEYCLOAK_CLIENT_ID: medimesh-client

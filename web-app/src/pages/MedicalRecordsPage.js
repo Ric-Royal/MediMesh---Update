@@ -142,7 +142,7 @@ const MedicalRecordsPage = () => {
 
   const fetchStats = async () => {
     try {
-      const response = await apiService.medicalRecords.getStats();
+      const response = await apiService.medicalRecords.getStatistics();
       setStats(response.data);
     } catch (err) {
       console.error('Error fetching stats:', err);
@@ -314,7 +314,7 @@ const MedicalRecordsPage = () => {
                   This Month
                 </Typography>
                 <Typography variant="h4">
-                  {stats.monthly_records || 0}
+                  {stats.new_records_30d || 0}
                 </Typography>
               </CardContent>
             </Card>
@@ -326,7 +326,7 @@ const MedicalRecordsPage = () => {
                   Record Types
                 </Typography>
                 <Typography variant="h4">
-                  {stats.record_types || 0}
+                  {stats.record_types_count || 0}
                 </Typography>
               </CardContent>
             </Card>
@@ -338,7 +338,7 @@ const MedicalRecordsPage = () => {
                   Active Patients
                 </Typography>
                 <Typography variant="h4">
-                  {stats.active_patients || 0}
+                  {stats.unique_patients || 0}
                 </Typography>
               </CardContent>
             </Card>

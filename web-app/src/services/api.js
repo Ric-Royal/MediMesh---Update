@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || '';
 
 // Create axios instance
 const api = axios.create({
@@ -94,7 +94,15 @@ export const apiService = {
   patients: {
     getAll: async (params = {}) => {
       try {
-        const response = await api.get('/api/patients', { params });
+        // Filter out empty string parameters
+        const filteredParams = Object.entries(params).reduce((acc, [key, value]) => {
+          if (value !== '' && value !== null && value !== undefined) {
+            acc[key] = value;
+          }
+          return acc;
+        }, {});
+        
+        const response = await api.get('/api/patients', { params: filteredParams });
         return handleResponse(response);
       } catch (error) {
         throw handleError(error);
@@ -160,7 +168,15 @@ export const apiService = {
   medicalRecords: {
     getAll: async (params = {}) => {
       try {
-        const response = await api.get('/api/records', { params });
+        // Filter out empty string parameters
+        const filteredParams = Object.entries(params).reduce((acc, [key, value]) => {
+          if (value !== '' && value !== null && value !== undefined) {
+            acc[key] = value;
+          }
+          return acc;
+        }, {});
+        
+        const response = await api.get('/api/records', { params: filteredParams });
         return handleResponse(response);
       } catch (error) {
         throw handleError(error);
@@ -197,15 +213,6 @@ export const apiService = {
     delete: async (id) => {
       try {
         const response = await api.delete(`/api/records/${id}`);
-        return handleResponse(response);
-      } catch (error) {
-        throw handleError(error);
-      }
-    },
-
-    getStats: async () => {
-      try {
-        const response = await api.get('/api/records/stats');
         return handleResponse(response);
       } catch (error) {
         throw handleError(error);
@@ -256,4 +263,4 @@ export const apiService = {
   }
 };
 
-export default api; 
+export default apiService; 

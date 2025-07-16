@@ -45,6 +45,22 @@ app.use(morgan('combined', { stream: { write: message => logger.info(message.tri
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Debug middleware to log all requests
+app.use((req, res, next) => {
+  if (req.method === 'POST' && req.path === '/api/patients') {
+    logger.info('EXPRESS DEBUG - POST /api/patients', {
+      method: req.method,
+      path: req.path,
+      hasBody: !!req.body,
+      bodyType: typeof req.body,
+      bodyContent: req.body,
+      contentType: req.headers['content-type'],
+      bodyString: JSON.stringify(req.body)
+    });
+  }
+  next();
+});
+
 // Audit logging middleware
 app.use(auditLogger);
 
@@ -63,8 +79,25 @@ app.use('/api/records', authenticateToken, recordRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-  logger.error('Unhandled error:', err);
-  res.status(500).json({
+  logger.error('Unhandled error:', {
+    error: err.message,
+    stack: err.stack,
+    type: err.type,
+    status: err.status,
+    path: req.path,
+    method: req.method,
+    body: req.body
+  });
+  
+  // Handle JSON parsing errors
+  if (err.type === 'entity.parse.failed' || err.name === 'SyntaxError') {
+    return res.status(400).json({
+      error: 'Invalid JSON in request body',
+      message: err.message
+    });
+  }
+  
+  res.status(err.status || 500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
   });
