@@ -24,9 +24,10 @@ import {
   Person as PersonIcon
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { apiService } from '../services/api';
+import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import FileUpload from '../components/common/FileUpload';
 
 const CreateRecordPage = () => {
   const navigate = useNavigate();
@@ -60,6 +61,7 @@ const CreateRecordPage = () => {
   const [loading, setLoading] = useState(false);
   const [loadingPatients, setLoadingPatients] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+
 
   // Record types
   const recordTypes = [
@@ -227,6 +229,7 @@ const CreateRecordPage = () => {
       console.log('Medical Record Request data:', cleanData);
 
       const response = await apiService.medicalRecords.create(cleanData);
+      
       
       // Navigate to the new record's detail page
       navigate(`/records/${response.data.id}`, {
@@ -605,6 +608,30 @@ const CreateRecordPage = () => {
                     />
                   </Grid>
                 </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* File Attachments */}
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <FileUpload
+                  category="medical-records"
+                  recordId={null}
+                  patientId={formData.patient_id}
+                  onUploadSuccess={(files) => {
+                    console.log('Files uploaded:', files);
+                    // Handle successful upload
+                  }}
+                  onUploadError={(error) => {
+                    console.error('Upload error:', error);
+                    // Handle upload error
+                  }}
+                  maxFiles={10}
+                  label="Medical Record Attachments"
+                  description="Upload medical images, lab results, reports, and other related documents"
+                />
               </CardContent>
             </Card>
           </Grid>

@@ -1,6 +1,8 @@
 # Superset Configuration for MediMesh
 # This file configures Apache Superset for the MediMesh healthcare platform
 
+print(">>> Loading MediMesh superset_config.py")
+
 import os
 from datetime import timedelta
 
@@ -10,7 +12,15 @@ SQLALCHEMY_DATABASE_URI = 'postgresql://superset_user:SupersetDB2024!@postgres:5
 # Security Configuration
 SECRET_KEY = 'medimesh-superset-secret-key-2024-very-long-and-secure'
 
-# Cache Configuration
+# JWT Configuration for async queries (using correct env var name for Superset 3.x)
+JWT_SECRET_KEY = os.environ.get('SUPERSET_JWT_SECRET', 'medimesh-superset-jwt-secret-key-2024-very-long-and-secure-for-async-queries')
+JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=24)
+
+# Async Query Configuration - DISABLED for now to avoid JWT issues
+GLOBAL_ASYNC_QUERIES = False
+# ASYNC_QUERY_MANAGER_CLASS = 'superset.utils.async_query_manager.AsyncQueryManager'
+
+# Redis Cache Configuration - RESTORED for Healthcare Performance
 CACHE_CONFIG = {
     'CACHE_TYPE': 'RedisCache',
     'CACHE_DEFAULT_TIMEOUT': 300,
@@ -21,40 +31,31 @@ CACHE_CONFIG = {
     'CACHE_REDIS_DB': 1,
 }
 
-# Feature Flags
+# Healthcare Feature Flags
 FEATURE_FLAGS = {
     'ENABLE_TEMPLATE_PROCESSING': True,
     'DASHBOARD_NATIVE_FILTERS': True,
     'DASHBOARD_CROSS_FILTERS': True,
-    'GLOBAL_ASYNC_QUERIES': True,
     'VERSIONED_EXPORT': True,
 }
 
-# Security Settings
+# Healthcare-Appropriate Security Settings
 TALISMAN_ENABLED = True
 TALISMAN_CONFIG = {
-    'content_security_policy': None,
+    'content_security_policy': None,  # Simplified CSP for healthcare compatibility
 }
+WTF_CSRF_ENABLED = True
 
 # Session Configuration
 PERMANENT_SESSION_LIFETIME = timedelta(hours=24)
 
-# Email Configuration (for alerts)
-SMTP_HOST = 'localhost'
-SMTP_STARTTLS = True
-SMTP_SSL = False
-SMTP_USER = 'superset'
-SMTP_PORT = 25
-SMTP_PASSWORD = ''
-SMTP_MAIL_FROM = 'superset@medimesh.com'
-
 # Logging Configuration
 ENABLE_TIME_ROTATE = True
-TIME_ROTATE_LOG_LEVEL = 'DEBUG'
+TIME_ROTATE_LOG_LEVEL = 'INFO'
 DATA_DIR = '/app/superset_home'
 FILENAME = os.path.join(DATA_DIR, 'superset.log')
 
-# Custom CSS
+# Healthcare Custom CSS
 CUSTOM_CSS = """
 .navbar-brand {
     color: #2E86AB !important;
@@ -78,13 +79,12 @@ SQLLAB_CTAS_NO_LIMIT = True
 SQLLAB_TIMEOUT = 300
 SQLLAB_DEFAULT_DBID = None
 
-# Healthcare-specific configurations
-CUSTOM_SECURITY_MANAGER = None
+# Healthcare Authentication
 AUTH_TYPE = 1  # Database authentication
 AUTH_ROLE_ADMIN = 'Admin'
 AUTH_ROLE_PUBLIC = 'Public'
 
-# Data source configurations for MediMesh
+# MediMesh Database Connection Configuration - RESTORED
 DATABASES_CONFIG = {
     'medimesh_main': {
         'database_name': 'MediMesh Main Database',
@@ -96,42 +96,7 @@ DATABASES_CONFIG = {
     }
 }
 
-# Row Level Security
-ROW_LEVEL_SECURITY_FILTERS = {}
-
-# Async Query Configuration
-RESULTS_BACKEND = {
-    'CACHE_TYPE': 'RedisCache',
-    'CACHE_DEFAULT_TIMEOUT': 86400,
-    'CACHE_KEY_PREFIX': 'superset_results_',
-    'CACHE_REDIS_HOST': 'redis',
-    'CACHE_REDIS_PORT': 6379,
-    'CACHE_REDIS_PASSWORD': 'redis_password',
-    'CACHE_REDIS_DB': 2,
-}
-
-# WebDriver Configuration for reports
-WEBDRIVER_BASEURL = "http://superset:8088/"
-WEBDRIVER_BASEURL_USER_FRIENDLY = "http://localhost:8088/"
-
-# Thumbnail Configuration
-THUMBNAIL_CACHE_CONFIG = CACHE_CONFIG
-
-# Alert and Report Configuration
-ALERT_REPORTS_NOTIFICATION_DRY_RUN = False
-WEBDRIVER_TYPE = "chrome"
-WEBDRIVER_OPTION_ARGS = [
-    "--force-device-scale-factor=1",
-    "--high-dpi-support=1",
-    "--headless",
-    "--disable-gpu",
-    "--disable-dev-shm-usage",
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-extensions",
-]
-
-# Custom roles for healthcare
+# Healthcare Custom Roles - RESTORED
 CUSTOM_ROLES = {
     'Healthcare_Admin': [
         'can_read',
@@ -151,11 +116,21 @@ CUSTOM_ROLES = {
     ]
 }
 
-# Disable unnecessary features for healthcare compliance
-ENABLE_PROXY_FIX = True
-PROXY_FIX_CONFIG = {"x_for": 1, "x_proto": 1, "x_host": 1, "x_prefix": 1}
+# Row Level Security for Healthcare Data
+ROW_LEVEL_SECURITY_FILTERS = {}
 
-# Healthcare data retention policies
+# Redis Results Backend - RESTORED for Healthcare Performance
+RESULTS_BACKEND = {
+    'CACHE_TYPE': 'RedisCache',
+    'CACHE_DEFAULT_TIMEOUT': 86400,
+    'CACHE_KEY_PREFIX': 'superset_results_',
+    'CACHE_REDIS_HOST': 'redis',
+    'CACHE_REDIS_PORT': 6379,
+    'CACHE_REDIS_PASSWORD': 'redis_password',
+    'CACHE_REDIS_DB': 2,
+}
+
+# Healthcare Data Retention Policies - RESTORED
 DATA_CACHE_CONFIG = {
     'CACHE_TYPE': 'RedisCache',
     'CACHE_DEFAULT_TIMEOUT': 3600,  # 1 hour for healthcare data
@@ -164,4 +139,40 @@ DATA_CACHE_CONFIG = {
     'CACHE_REDIS_PORT': 6379,
     'CACHE_REDIS_PASSWORD': 'redis_password',
     'CACHE_REDIS_DB': 3,
-} 
+}
+
+# Healthcare Thumbnail Cache
+THUMBNAIL_CACHE_CONFIG = CACHE_CONFIG
+
+# Healthcare Email Configuration for Alerts
+SMTP_HOST = 'localhost'
+SMTP_STARTTLS = True
+SMTP_SSL = False
+SMTP_USER = 'superset'
+SMTP_PORT = 25
+SMTP_PASSWORD = ''
+SMTP_MAIL_FROM = 'superset@medimesh.com'
+
+# Alert and Report Configuration for Healthcare
+ALERT_REPORTS_NOTIFICATION_DRY_RUN = False
+WEBDRIVER_TYPE = "chrome"
+WEBDRIVER_OPTION_ARGS = [
+    "--force-device-scale-factor=1",
+    "--high-dpi-support=1",
+    "--headless",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-extensions",
+]
+
+# WebDriver Configuration for Healthcare Reports
+WEBDRIVER_BASEURL = "http://superset:8088/"
+WEBDRIVER_BASEURL_USER_FRIENDLY = "http://localhost:8088/"
+
+# Healthcare Security Features
+ENABLE_PROXY_FIX = True
+PROXY_FIX_CONFIG = {"x_for": 1, "x_proto": 1, "x_host": 1, "x_prefix": 1}
+
+print(">>> MediMesh superset_config.py loaded successfully with Healthcare features") 

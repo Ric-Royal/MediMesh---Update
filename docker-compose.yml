@@ -155,6 +155,9 @@ services:
       PORT: 3000
       ALLOWED_ORIGINS: http://localhost:3000,http://localhost
       LOG_LEVEL: info
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: medimesh-admin
+      MINIO_SECRET_KEY: MediMeshMinio2024!
     ports:
       - "3001:3000"
     networks:
@@ -166,6 +169,8 @@ services:
         condition: service_healthy
       vault:
         condition: service_started
+      minio:
+        condition: service_healthy
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.patient-api.rule=Host(`localhost`) && PathPrefix(`/api/patients`)"
@@ -183,12 +188,6 @@ services:
         REACT_APP_KEYCLOAK_CLIENT_ID: medimesh-client
         REACT_APP_DEV_MODE: "true"
     container_name: medimesh-web-app
-    environment:
-      REACT_APP_API_URL: "http://localhost:3001"
-      REACT_APP_KEYCLOAK_URL: http://localhost:8080
-      REACT_APP_KEYCLOAK_REALM: medimesh
-      REACT_APP_KEYCLOAK_CLIENT_ID: medimesh-client
-      REACT_APP_DEV_MODE: "true"
     ports:
       - "3000:80"
     networks:
@@ -266,9 +265,10 @@ services:
     image: apache/superset:3.0.0
     container_name: medimesh-superset
     environment:
-      SUPERSET_CONFIG_PATH: /app/superset_config/superset_config.py
+      SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
       DATABASE_URL: postgresql://superset_user:SupersetDB2024!@postgres:5432/superset
       SUPERSET_SECRET_KEY: 'medimesh-superset-secret-key-2024-very-long-and-secure'
+      SUPERSET_JWT_SECRET: 'medimesh-superset-jwt-secret-key-2024-very-long-and-secure-for-async-queries'
     ports:
       - "8088:8088"
     networks:
@@ -278,7 +278,7 @@ services:
         condition: service_healthy
     volumes:
       - superset_data:/app/superset_home
-      - ./superset-config:/app/superset_config
+      - ./superset-config/superset_config.py:/app/pythonpath/superset_config.py:ro
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]

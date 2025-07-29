@@ -21,8 +21,9 @@ import {
   Person as PersonIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { apiService } from '../services/api';
+import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import FileUpload from '../components/common/FileUpload';
 
 const CreatePatientPage = () => {
   const navigate = useNavigate();
@@ -460,6 +461,30 @@ const CreatePatientPage = () => {
                     />
                   </Grid>
                 </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Patient Documents */}
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <FileUpload
+                  category="patient-documents"
+                  recordId={null}
+                  patientId={null}
+                  onUploadSuccess={(files) => {
+                    console.log('Patient documents uploaded:', files);
+                    // Handle successful upload
+                  }}
+                  onUploadError={(error) => {
+                    console.error('Document upload error:', error);
+                    // Handle upload error
+                  }}
+                  maxFiles={5}
+                  label="Patient Documents"
+                  description="Upload insurance cards, ID, consent forms, and other patient documents"
+                />
               </CardContent>
             </Card>
           </Grid>

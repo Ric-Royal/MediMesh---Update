@@ -10,6 +10,9 @@ const { connectDB } = require('./utils/database');
 const { connectRedis } = require('./utils/redis');
 const { authenticateToken } = require('./middleware/auth');
 const { auditLogger } = require('./middleware/audit');
+const FileAttachment = require('./models/FileAttachment');
+const UserSettings = require('./models/UserSettings');
+const SystemSettings = require('./models/SystemSettings');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -17,6 +20,8 @@ const patientRoutes = require('./routes/patients');
 const recordRoutes = require('./routes/records');
 const healthRoutes = require('./routes/health');
 const seedRoutes = require('./routes/seed');
+const fileRoutes = require('./routes/files');
+const settingsRoutes = require('./routes/settings');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -76,6 +81,8 @@ if (process.env.NODE_ENV === 'development') {
 // Protected routes
 app.use('/api/patients', authenticateToken, patientRoutes);
 app.use('/api/records', authenticateToken, recordRoutes);
+app.use('/api/files', authenticateToken, fileRoutes);
+app.use('/api/settings', authenticateToken, settingsRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -113,6 +120,11 @@ async function initialize() {
   try {
     await connectDB();
     await connectRedis();
+    
+    // Initialize database tables
+    await FileAttachment.createTable();
+    await UserSettings.createTable();
+    await SystemSettings.createTable();
     
     app.listen(PORT, () => {
       logger.info(`MediMesh Patient API server running on port ${PORT}`);

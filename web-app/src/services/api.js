@@ -48,8 +48,8 @@ const handleError = (error) => {
   throw new Error(message);
 };
 
-// API methods
-export const apiService = {
+// API service object
+const apiService = {
   // Health check
   healthCheck: async () => {
     try {
@@ -60,7 +60,7 @@ export const apiService = {
     }
   },
 
-  // Authentication API (development only)
+  // Authentication API
   auth: {
     login: async (username, password) => {
       try {
@@ -94,15 +94,7 @@ export const apiService = {
   patients: {
     getAll: async (params = {}) => {
       try {
-        // Filter out empty string parameters
-        const filteredParams = Object.entries(params).reduce((acc, [key, value]) => {
-          if (value !== '' && value !== null && value !== undefined) {
-            acc[key] = value;
-          }
-          return acc;
-        }, {});
-        
-        const response = await api.get('/api/patients', { params: filteredParams });
+        const response = await api.get('/api/patients', { params });
         return handleResponse(response);
       } catch (error) {
         throw handleError(error);
@@ -145,9 +137,9 @@ export const apiService = {
       }
     },
 
-    getRecords: async (id, params = {}) => {
+    search: async (query) => {
       try {
-        const response = await api.get(`/api/patients/${id}/records`, { params });
+        const response = await api.get('/api/patients/search', { params: { q: query } });
         return handleResponse(response);
       } catch (error) {
         throw handleError(error);
@@ -157,6 +149,40 @@ export const apiService = {
     getStatistics: async () => {
       try {
         const response = await api.get('/api/patients/statistics');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    export: async (params = {}) => {
+      try {
+        const response = await api.get('/api/patients/export', {
+          params,
+          responseType: 'blob'
+        });
+        
+        // Create blob URL and trigger download
+        const blob = new Blob([response.data], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', `patients_${Date.now()}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+        
+        return { success: true };
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    // Get medical records for a specific patient
+    getRecords: async (id, params = {}) => {
+      try {
+        const response = await api.get(`/api/patients/${id}/records`, { params });
         return handleResponse(response);
       } catch (error) {
         throw handleError(error);
@@ -256,6 +282,207 @@ export const apiService = {
         window.URL.revokeObjectURL(url);
         
         return { success: true };
+      } catch (error) {
+        throw handleError(error);
+      }
+    }
+  },
+
+  // File Upload API
+  files: {
+    upload: async (formData, options = {}) => {
+      try {
+        const response = await api.post('/api/files/upload', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+          ...options
+        });
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    getByRecord: async (recordId) => {
+      try {
+        const response = await api.get(`/api/files?recordId=${recordId}`);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    download: async (fileId) => {
+      try {
+        const response = await api.get(`/api/files/${fileId}/download`, {
+          responseType: 'blob'
+        });
+        return response.data;
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    delete: async (fileId) => {
+      try {
+        const response = await api.delete(`/api/files/${fileId}`);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    }
+  },
+
+  // Settings Management
+  settings: {
+    // User Settings
+    getUserSettings: async () => {
+      try {
+        const response = await api.get('/api/settings/user');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    updateUserSettings: async (settingsData) => {
+      try {
+        const response = await api.put('/api/settings/user', settingsData);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    resetUserSettings: async () => {
+      try {
+        const response = await api.post('/api/settings/user/reset');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    getSettingsSchema: async () => {
+      try {
+        const response = await api.get('/api/settings/user/schema');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    // System Settings (Admin only)
+    getSystemSettings: async () => {
+      try {
+        const response = await api.get('/api/settings/system');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    updateSystemSetting: async (key, value) => {
+      try {
+        const response = await api.put(`/api/settings/system/${key}`, { value });
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    getSystemAudit: async (filters = {}) => {
+      try {
+        const params = new URLSearchParams();
+        Object.entries(filters).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            params.append(key, value);
+          }
+        });
+        
+        const response = await api.get(`/api/settings/system/audit?${params}`);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    // Log Monitoring (Admin only)
+    getApplicationLogs: async (filters = {}) => {
+      try {
+        const params = new URLSearchParams();
+        Object.entries(filters).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            params.append(key, value);
+          }
+        });
+        
+        const response = await api.get(`/api/settings/logs/application?${params}`);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    getAuditLogs: async (filters = {}) => {
+      try {
+        const params = new URLSearchParams();
+        Object.entries(filters).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            params.append(key, value);
+          }
+        });
+        
+        const response = await api.get(`/api/settings/logs/audit?${params}`);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    getErrorLogs: async (filters = {}) => {
+      try {
+        const params = new URLSearchParams();
+        Object.entries(filters).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            params.append(key, value);
+          }
+        });
+        
+        const response = await api.get(`/api/settings/logs/errors?${params}`);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    exportLogs: async (logType, startDate, endDate, format = 'json') => {
+      try {
+        const response = await api.post('/api/settings/logs/export', {
+          logType,
+          startDate,
+          endDate,
+          format
+        }, {
+          responseType: format === 'csv' ? 'blob' : 'json'
+        });
+
+        if (format === 'csv') {
+          // Handle CSV download
+          const blob = new Blob([response.data], { type: 'text/csv' });
+          const url = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.setAttribute('download', `${logType}_logs_${Date.now()}.csv`);
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          window.URL.revokeObjectURL(url);
+          return { success: true };
+        }
+
+        return handleResponse(response);
       } catch (error) {
         throw handleError(error);
       }

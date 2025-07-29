@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import Keycloak from 'keycloak-js';
-import { apiService } from '../services/api';
+import apiService from '../services/api';
 
 const AuthContext = createContext();
 

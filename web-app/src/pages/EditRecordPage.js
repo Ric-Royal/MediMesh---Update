@@ -23,9 +23,11 @@ import {
   Person as PersonIcon
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
-import { apiService } from '../services/api';
+import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import FileUpload from '../components/common/FileUpload';
+import FilePreview from '../components/common/FilePreview';
 
 const EditRecordPage = () => {
   const { id } = useParams();
@@ -625,6 +627,50 @@ const EditRecordPage = () => {
                     />
                   </Grid>
                 </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* File Attachments */}
+          <Grid item xs={12}>
+            <Card sx={{ border: '2px dashed', borderColor: 'primary.main', bgcolor: 'primary.50' }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                  <Typography variant="h6" color="primary">
+                    📎 File Attachments
+                  </Typography>
+                  <Chip label="Upload Medical Documents" size="small" color="primary" variant="outlined" />
+                </Box>
+                
+                {/* Existing Files */}
+                <FilePreview
+                  recordId={id}
+                  patientId={formData.patient_id}
+                  onFileDeleted={(fileId) => {
+                    console.log('File deleted:', fileId);
+                    // Handle file deletion
+                  }}
+                />
+                
+                {/* Upload New Files */}
+                <Box sx={{ mt: 3, p: 2, bgcolor: 'background.paper', borderRadius: 2 }}>
+                  <FileUpload
+                    category="medical-records"
+                    recordId={id}
+                    patientId={formData.patient_id}
+                    onUploadSuccess={(files) => {
+                      console.log('Files uploaded:', files);
+                      // Handle successful upload - could refresh file list
+                    }}
+                    onUploadError={(error) => {
+                      console.error('Upload error:', error);
+                      // Handle upload error
+                    }}
+                    maxFiles={10}
+                    label="Upload Additional Files"
+                    description="📁 Drag and drop medical images, lab results, reports, and other related documents here"
+                  />
+                </Box>
               </CardContent>
             </Card>
           </Grid>

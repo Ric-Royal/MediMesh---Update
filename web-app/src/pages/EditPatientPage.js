@@ -12,7 +12,8 @@ import {
   MenuItem,
   Alert,
   Card,
-  CardContent
+  CardContent,
+  Chip
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -20,9 +21,11 @@ import {
   Person as PersonIcon
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
-import { apiService } from '../services/api';
+import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import FileUpload from '../components/common/FileUpload';
+import FilePreview from '../components/common/FilePreview';
 
 const EditPatientPage = () => {
   const { id } = useParams();
@@ -60,6 +63,7 @@ const EditPatientPage = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  const [hasUploadedFiles, setHasUploadedFiles] = useState(false);
 
   // Check permissions
   const hasEditPermission = hasRole('doctor') || hasRole('nurse') || hasRole('admin');
@@ -179,7 +183,7 @@ const EditPatientPage = () => {
 
   const hasChanges = () => {
     if (!originalData) return false;
-    return JSON.stringify(formData) !== JSON.stringify(originalData);
+    return JSON.stringify(formData) !== JSON.stringify(originalData) || hasUploadedFiles;
   };
 
   const handleSubmit = async (event) => {
@@ -555,6 +559,49 @@ const EditPatientPage = () => {
                     />
                   </Grid>
                 </Grid>
+              </CardContent>
+            </Card>
+          </Grid>
+
+          {/* Patient Documents */}
+          <Grid item xs={12}>
+            <Card sx={{ border: '2px dashed', borderColor: 'secondary.main', bgcolor: 'secondary.50' }}>
+              <CardContent>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                  <Typography variant="h6" color="secondary">
+                    🆔 Patient Documents
+                  </Typography>
+                  <Chip label="Upload ID Cards, Insurance Cards, etc." size="small" color="secondary" variant="outlined" />
+                </Box>
+                
+                {/* Existing Files */}
+                <FilePreview
+                  patientId={id}
+                  category="patient-documents"
+                  onFileDeleted={(fileId) => {
+                    console.log('Patient document deleted:', fileId);
+                    // Handle file deletion - could refresh file list
+                  }}
+                />
+                
+                {/* Upload New Files */}
+                <Box sx={{ mt: 3, p: 2, bgcolor: 'background.paper', borderRadius: 2 }}>
+                  <FileUpload
+                    category="patient-documents"
+                    patientId={id}
+                    onUploadSuccess={(files) => {
+                      console.log('Patient documents uploaded:', files);
+                      setHasUploadedFiles(true); // Mark that files have been uploaded
+                    }}
+                    onUploadError={(error) => {
+                      console.error('Patient document upload error:', error);
+                      // Handle upload error
+                    }}
+                    maxFiles={10}
+                    label="Upload Patient Documents"
+                    description="📋 Drag and drop ID cards, insurance cards, consent forms, and other patient documents here"
+                  />
+                </Box>
               </CardContent>
             </Card>
           </Grid>

@@ -14,6 +14,27 @@ const authenticateToken = (req, res, next) => {
   }
 
   try {
+    // Handle development tokens for testing
+    if (process.env.NODE_ENV === 'development' && token.startsWith('dev_token_')) {
+      const role = token.split('_')[2] || 'user'; // Extract role from dev_token_admin, dev_token_doctor, etc.
+      req.user = {
+        id: '12345',
+        username: role,
+        email: `${role}@medimesh.dev`,
+        roles: [role, 'user'],
+        scope: 'read write'
+      };
+
+      logger.info('User authenticated (dev mode)', {
+        userId: req.user.id,
+        username: req.user.username,
+        ip: req.ip
+      });
+
+      next();
+      return;
+    }
+
     // In a real implementation, this would verify against Keycloak
     // For now, using a simple JWT verification
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback-secret');
