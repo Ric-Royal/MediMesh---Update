@@ -79,6 +79,7 @@ const SettingsPage = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [localError, setLocalError] = useState(null);
   
 
 
@@ -135,8 +136,8 @@ const SettingsPage = () => {
   };
 
   const handleSaveSettings = async (settingsType) => {
-    setLoading(true);
-    setError(null);
+    setSaving(true);
+    setLocalError(null);
     
     try {
       // Here you would typically call an API to save settings
@@ -148,19 +149,19 @@ const SettingsPage = () => {
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {
-      setError('Failed to save settings. Please try again.');
+      setLocalError('Failed to save settings. Please try again.');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
   const handleChangePassword = async () => {
     if (passwordData.newPassword !== passwordData.confirmPassword) {
-      setError('New passwords do not match');
+      setLocalError('New passwords do not match');
       return;
     }
     
-    setLoading(true);
+    setSaving(true);
     try {
       // API call to change password
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -168,9 +169,9 @@ const SettingsPage = () => {
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setSaveSuccess(true);
     } catch (err) {
-      setError('Failed to change password');
+      setLocalError('Failed to change password');
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
@@ -204,8 +205,8 @@ const SettingsPage = () => {
                 <TextField
                   fullWidth
                   label="Display Name"
-                  value={personalSettings.displayName}
-                  onChange={(e) => handlePersonalSettingChange('displayName', e.target.value)}
+                  value={getSetting('profile.displayName', '')}
+                  onChange={(e) => handlePersonalSettingChange('profile', 'displayName', e.target.value)}
                 />
               </Grid>
               <Grid item xs={12}>
@@ -213,32 +214,32 @@ const SettingsPage = () => {
                   fullWidth
                   label="Email Address"
                   type="email"
-                  value={personalSettings.email}
-                  onChange={(e) => handlePersonalSettingChange('email', e.target.value)}
+                  value={getSetting('profile.email', '')}
+                  onChange={(e) => handlePersonalSettingChange('profile', 'email', e.target.value)}
                 />
               </Grid>
               <Grid item xs={12}>
                 <TextField
                   fullWidth
                   label="Phone Number"
-                  value={personalSettings.phone}
-                  onChange={(e) => handlePersonalSettingChange('phone', e.target.value)}
+                  value={getSetting('profile.phone', '')}
+                  onChange={(e) => handlePersonalSettingChange('profile', 'phone', e.target.value)}
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
                   label="Department"
-                  value={personalSettings.department}
-                  onChange={(e) => handlePersonalSettingChange('department', e.target.value)}
+                  value={getSetting('profile.department', '')}
+                  onChange={(e) => handlePersonalSettingChange('profile', 'department', e.target.value)}
                 />
               </Grid>
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
                   label="Specialization"
-                  value={personalSettings.specialization}
-                  onChange={(e) => handlePersonalSettingChange('specialization', e.target.value)}
+                  value={getSetting('profile.specialization', '')}
+                  onChange={(e) => handlePersonalSettingChange('profile', 'specialization', e.target.value)}
                 />
               </Grid>
             </Grid>
@@ -278,8 +279,8 @@ const SettingsPage = () => {
                 <FormControl fullWidth>
                   <InputLabel>Language</InputLabel>
                   <Select
-                    value={personalSettings.language}
-                    onChange={(e) => handlePersonalSettingChange('language', e.target.value)}
+                    value={getSetting('preferences.language', 'en')}
+                    onChange={(e) => handlePersonalSettingChange('preferences', 'language', e.target.value)}
                   >
                     <MenuItem value="en">English</MenuItem>
                     <MenuItem value="es">Spanish</MenuItem>
@@ -292,8 +293,8 @@ const SettingsPage = () => {
                 <FormControl fullWidth>
                   <InputLabel>Timezone</InputLabel>
                   <Select
-                    value={personalSettings.timezone}
-                    onChange={(e) => handlePersonalSettingChange('timezone', e.target.value)}
+                    value={getSetting('preferences.timezone', 'UTC')}
+                    onChange={(e) => handlePersonalSettingChange('preferences', 'timezone', e.target.value)}
                   >
                     <MenuItem value="UTC">UTC</MenuItem>
                     <MenuItem value="EST">Eastern Time</MenuItem>
@@ -306,8 +307,8 @@ const SettingsPage = () => {
                 <FormControl fullWidth>
                   <InputLabel>Theme</InputLabel>
                   <Select
-                    value={personalSettings.theme}
-                    onChange={(e) => handlePersonalSettingChange('theme', e.target.value)}
+                    value={getSetting('preferences.theme', 'light')}
+                    onChange={(e) => handlePersonalSettingChange('preferences', 'theme', e.target.value)}
                   >
                     <MenuItem value="light">Light Mode</MenuItem>
                     <MenuItem value="dark">Dark Mode</MenuItem>
@@ -334,8 +335,8 @@ const SettingsPage = () => {
                 <FormControlLabel
                   control={
                     <Switch
-                      checked={personalSettings.emailNotifications}
-                      onChange={(e) => handlePersonalSettingChange('emailNotifications', e.target.checked)}
+                      checked={getSetting('notifications.emailNotifications', true)}
+                      onChange={(e) => handlePersonalSettingChange('notifications', 'emailNotifications', e.target.checked)}
                     />
                   }
                   label="Email Notifications"
@@ -348,8 +349,8 @@ const SettingsPage = () => {
                 <FormControlLabel
                   control={
                     <Switch
-                      checked={personalSettings.smsNotifications}
-                      onChange={(e) => handlePersonalSettingChange('smsNotifications', e.target.checked)}
+                      checked={getSetting('notifications.smsNotifications', false)}
+                      onChange={(e) => handlePersonalSettingChange('notifications', 'smsNotifications', e.target.checked)}
                     />
                   }
                   label="SMS Notifications"
@@ -362,8 +363,8 @@ const SettingsPage = () => {
                 <FormControlLabel
                   control={
                     <Switch
-                      checked={personalSettings.pushNotifications}
-                      onChange={(e) => handlePersonalSettingChange('pushNotifications', e.target.checked)}
+                      checked={getSetting('notifications.pushNotifications', true)}
+                      onChange={(e) => handlePersonalSettingChange('notifications', 'pushNotifications', e.target.checked)}
                     />
                   }
                   label="Push Notifications"
@@ -397,7 +398,7 @@ const SettingsPage = () => {
                   <Select
                     labelId="default-record-type-label"
                     label="Default Record Type"
-                    value={medicalSettings.defaultRecordType}
+                    value={getSetting('medical_defaults.defaultRecordType', 'consultation')}
                     onChange={(e) => handleMedicalSettingChange('defaultRecordType', e.target.value)}
                   >
                     <MenuItem value="consultation">Consultation</MenuItem>
@@ -415,7 +416,7 @@ const SettingsPage = () => {
                   <Select
                     labelId="vital-signs-units-label"
                     label="Vital Signs Units"
-                    value={medicalSettings.vitalSignsUnits}
+                    value={getSetting('medical_defaults.vitalSignsUnits', 'metric')}
                     onChange={(e) => handleMedicalSettingChange('vitalSignsUnits', e.target.value)}
                   >
                     <MenuItem value="metric">Metric (°C, kg, cm)</MenuItem>
@@ -428,7 +429,7 @@ const SettingsPage = () => {
                   fullWidth
                   label="Default Examination Duration (minutes)"
                   type="number"
-                  value={medicalSettings.defaultExamDuration}
+                  value={getSetting('medical_defaults.defaultExamDuration', '30')}
                   onChange={(e) => handleMedicalSettingChange('defaultExamDuration', e.target.value)}
                 />
               </Grid>
@@ -455,7 +456,7 @@ const SettingsPage = () => {
                 />
                 <ListItemSecondaryAction>
                   <Switch
-                    checked={medicalSettings.autoSaveDrafts}
+                    checked={getSetting('medical_defaults.autoSaveDrafts', true)}
                     onChange={(e) => handleMedicalSettingChange('autoSaveDrafts', e.target.checked)}
                   />
                 </ListItemSecondaryAction>
@@ -800,9 +801,9 @@ const SettingsPage = () => {
         </Alert>
       )}
       
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
-          {error}
+      {(error || localError) && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setLocalError(null)}>
+          {error || localError}
         </Alert>
       )}
 

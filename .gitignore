@@ -121,6 +121,8 @@ jspm_packages/
 node_modules/.cache/
 web-app/node_modules/.cache/
 *.pack
+# Specific large cache files
+web-app/node_modules/.cache/default-development/1.pack
 
 # Next.js build output
 .next

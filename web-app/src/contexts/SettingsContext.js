@@ -264,7 +264,6 @@ export const SettingsProvider = ({ children }) => {
     isMedicalFeatureEnabled,
     isNotificationEnabled,
     applyTheme,
-    useAutoSave,
     
     // Constants
     defaultUserSettings
