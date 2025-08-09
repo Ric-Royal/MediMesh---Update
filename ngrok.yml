@@ -1,0 +1,8 @@
+version: "2"
+tunnels:
+  medimesh-web:
+    addr: medimesh-web-app:80
+    proto: http
+    schemes: [https, http]
+    inspect: false
+web_addr: 0.0.0.0:4040

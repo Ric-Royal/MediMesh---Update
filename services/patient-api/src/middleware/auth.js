@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const { logger } = require('../utils/logger');
+const { v4: uuidv4 } = require('uuid');
 
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
@@ -17,8 +18,17 @@ const authenticateToken = (req, res, next) => {
     // Handle development tokens for testing
     if (process.env.NODE_ENV === 'development' && token.startsWith('dev_token_')) {
       const role = token.split('_')[2] || 'user'; // Extract role from dev_token_admin, dev_token_doctor, etc.
+      
+      // Generate consistent UUIDs for development users
+      const devUserIds = {
+        'admin': '550e8400-e29b-41d4-a716-446655440000',
+        'doctor': '550e8400-e29b-41d4-a716-446655440001', 
+        'nurse': '550e8400-e29b-41d4-a716-446655440002',
+        'user': '550e8400-e29b-41d4-a716-446655440003'
+      };
+      
       req.user = {
-        id: '12345',
+        id: devUserIds[role] || uuidv4(),
         username: role,
         email: `${role}@medimesh.dev`,
         roles: [role, 'user'],

@@ -173,7 +173,7 @@ services:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.patient-api.rule=Host(`localhost`) && PathPrefix(`/api/patients`)"
+      - "traefik.http.routers.patient-api.rule=Host(`localhost`) && PathPrefix(`/api`)"
       - "traefik.http.services.patient-api.loadbalancer.server.port=3000"
 
   # Clinician Web App
@@ -182,7 +182,7 @@ services:
       context: ./web-app
       dockerfile: Dockerfile
       args:
-        REACT_APP_API_URL: "http://localhost:3001"
+        REACT_APP_API_URL: ""
         REACT_APP_KEYCLOAK_URL: http://localhost:8080
         REACT_APP_KEYCLOAK_REALM: medimesh
         REACT_APP_KEYCLOAK_CLIENT_ID: medimesh-client
@@ -293,6 +293,28 @@ services:
       superset run -h 0.0.0.0 -p 8088 --with-threads --reload --debugger
       "
 
+  # Ngrok for secure tunneling
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: medimesh-ngrok
+    restart: unless-stopped
+    command:
+      - "start"
+      - "--all"
+      - "--config"
+      - "/etc/ngrok.yml"
+    volumes:
+      - ./ngrok.yml:/etc/ngrok.yml
+    ports:
+      - "4040:4040"  # ngrok web interface
+    environment:
+      - NGROK_AUTHTOKEN=2nOO7p1AcCCJLktKnG7wblLoSS0_4GMoec8ER5ms1j1EnsHKW
+    networks:
+      - medimesh-network
+    depends_on:
+      - web-app
+      - patient-api
+
 networks:
   medimesh-network:
     driver: bridge
@@ -312,4 +334,6 @@ secrets:
   minio_user:
     file: ./secrets/minio_user.txt
   minio_password:
-    file: ./secrets/minio_password.txt 
+    file: ./secrets/minio_password.txt
+  ngrok_authtoken:
+    file: ./secrets/ngrok_authtoken.txt 

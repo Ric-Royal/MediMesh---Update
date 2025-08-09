@@ -5,7 +5,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || '';
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 10000,
+  timeout: 30000, // Increased to 30 seconds for settings operations
 });
 
 // Request interceptor to add auth headers

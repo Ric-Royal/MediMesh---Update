@@ -14,7 +14,6 @@ import {
   Card,
   CardContent,
   Autocomplete,
-  Chip,
   Avatar
 } from '@mui/material';
 import {
@@ -26,17 +25,18 @@ import {
 import { useNavigate, useLocation } from 'react-router-dom';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
-import LoadingSpinner from '../components/common/LoadingSpinner';
+import { useSettings } from '../contexts/SettingsContext';
 import FileUpload from '../components/common/FileUpload';
 
 const CreateRecordPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { hasRole, user } = useAuth();
+  const { getSetting } = useSettings();
   
   const [formData, setFormData] = useState({
     patient_id: location.state?.patientId || '',
-    record_type: '',
+    record_type: getSetting('medical_defaults', 'defaultRecordType', 'consultation'),
     record_date: new Date().toISOString().split('T')[0],
     provider_name: user?.name || '',
     notes: '',
@@ -87,6 +87,14 @@ const CreateRecordPage = () => {
       fetchPatientDetails(formData.patient_id);
     }
   }, [formData.patient_id]);
+
+  // Update default record type when settings change
+  useEffect(() => {
+    const defaultRecordType = getSetting('medical_defaults', 'defaultRecordType', 'consultation');
+    if (defaultRecordType && formData.record_type !== defaultRecordType) {
+      setFormData(prev => ({ ...prev, record_type: defaultRecordType }));
+    }
+  }, [getSetting, formData.record_type]);
 
   const fetchPatients = async (search = '') => {
     try {

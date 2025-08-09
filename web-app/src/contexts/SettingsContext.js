@@ -1,5 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import apiService from '../services/api';
+import { useAuth } from './AuthContext';
 
 const SettingsContext = createContext();
 
@@ -11,27 +12,96 @@ export const useSettings = () => {
   return context;
 };
 
+// Default system settings to prevent UI crashes when API fails
+const defaultSystemSettings = {
+  patientIdFormat: 'auto',
+  sessionTimeout: 30,
+  dataRetentionPeriod: 7,
+  passwordPolicy: 'strong',
+  maxFileSize: 52428800,
+  autoBackup: true,
+  auditLogging: true,
+  twoFactorAuth: true,
+  allowFileUpload: true,
+  backupFrequency: 'daily',
+  allowedFileTypes: ['pdf', 'jpg', 'jpeg', 'png', 'docx', 'doc', 'dicom', 'txt', 'csv'],
+  emailEnabled: true,
+  smsEnabled: false,
+  maintenanceMode: false
+};
+
+// Helper function to flatten grouped system settings for UI consumption
+const flattenSystemSettings = (groupedSettings) => {
+  const flattened = {};
+  
+  // Specific key mappings for UI compatibility
+  const keyMappings = {
+    'patient_id_format': 'patientIdFormat',
+    'session_timeout': 'sessionTimeout', 
+    'data_retention_years': 'dataRetentionPeriod', // UI expects 'Period' not 'Years'
+    'password_policy': 'passwordPolicy',
+    'max_file_size': 'maxFileSize',
+    'allowed_types': 'allowedFileTypes',
+    'auto_backup': 'autoBackup',
+    'frequency': 'backupFrequency',
+    'audit_logging': 'auditLogging',
+    'two_factor_auth': 'twoFactorAuth',
+    'maintenance_mode': 'maintenanceMode',
+    'email_enabled': 'emailEnabled',
+    'sms_enabled': 'smsEnabled'
+  };
+  
+  try {
+    // Handle case where groupedSettings might be null or not an object
+    if (!groupedSettings || typeof groupedSettings !== 'object') {
+      console.warn('Invalid system settings data received, using defaults');
+      return defaultSystemSettings;
+    }
+
+    // Flatten all settings from all categories
+    Object.values(groupedSettings).flat().forEach(setting => {
+      if (setting && setting.key && setting.hasOwnProperty('value')) {
+        // Remove category prefix (e.g., "security.session_timeout" -> "session_timeout")
+        const keyWithoutCategory = setting.key.split('.')[1];
+        if (keyWithoutCategory) {
+          // Use specific mapping if available, otherwise convert snake_case to camelCase
+          const mappedKey = keyMappings[keyWithoutCategory] || 
+                           keyWithoutCategory.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+          flattened[mappedKey] = setting.value;
+        }
+      }
+    });
+
+    // Merge with defaults to ensure all expected properties exist
+    return { ...defaultSystemSettings, ...flattened };
+  } catch (error) {
+    console.error('Error flattening system settings:', error);
+    return defaultSystemSettings;
+  }
+};
+
 export const SettingsProvider = ({ children }) => {
   const [userSettings, setUserSettings] = useState(null);
-  const [systemSettings, setSystemSettings] = useState(null);
+  const [systemSettings, setSystemSettings] = useState(defaultSystemSettings);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { user, isAuthenticated, token, authLoading } = useAuth();
 
   // Default settings structure
   const defaultUserSettings = {
     profile: {
-      displayName: '',
-      email: '',
+      displayName: user?.name || '',
+      email: user?.email || '',
       phone: '',
       department: '',
       specialization: ''
     },
     preferences: {
       language: 'en',
-      timezone: 'UTC',
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Africa/Johannesburg',
       theme: 'light',
-      dateFormat: 'YYYY-MM-DD',
-      timeFormat: '24h'
+      dateFormat: 'MM/dd/yyyy',
+      timeFormat: '12h'
     },
     notifications: {
       emailNotifications: true,
@@ -53,224 +123,275 @@ export const SettingsProvider = ({ children }) => {
       defaultExamDuration: '30'
     },
     working_hours: {
-      start: '08:00',
+      start: '09:00',
       end: '17:00',
       workDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-      timezone: 'UTC'
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     }
   };
 
-  // Load user settings from API
+  // Load user settings
   const loadUserSettings = useCallback(async () => {
+    // Only load if authenticated and have token
+    if (!isAuthenticated || !token || authLoading) {
+      console.log('Skipping user settings load - not authenticated or still loading auth');
+      return;
+    }
+
     try {
-      setLoading(true);
-      setError(null);
-      
       const response = await apiService.settings.getUserSettings();
-      setUserSettings(response.data);
+      setUserSettings({ ...defaultUserSettings, ...response.data });
       
-      // Apply theme immediately
-      applyTheme(response.data.preferences?.theme || 'light');
-      
+      // Theme is now handled by ThemeContext
     } catch (err) {
       console.error('Error loading user settings:', err);
-      setError('Failed to load user settings');
-      // Use default settings on error
+      
+      // Set default settings if load fails
       setUserSettings(defaultUserSettings);
-      applyTheme('light');
+      
+      // Theme is now handled by ThemeContext
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated, token, authLoading]);
 
   // Load system settings (admin only)
   const loadSystemSettings = useCallback(async () => {
+    // Only load if authenticated and have token
+    if (!isAuthenticated || !token || authLoading) {
+      console.log('Skipping system settings load - not authenticated or still loading auth');
+      return;
+    }
+
     try {
+      setError(null); // Clear any previous errors
+      console.log('Loading system settings for admin user...');
+      
       const response = await apiService.settings.getSystemSettings();
-      setSystemSettings(response.data);
+      console.log('System settings API response:', response);
+      
+      // Flatten the grouped settings for UI consumption
+      const flattenedSettings = flattenSystemSettings(response.data);
+      console.log('Flattened system settings:', flattenedSettings);
+      
+      setSystemSettings(flattenedSettings);
     } catch (err) {
       console.error('Error loading system settings:', err);
-      // Not an error for non-admin users
-      setSystemSettings(null);
+      
+      // Handle different error types with appropriate user feedback
+      if (err.response?.status === 401) {
+        console.log('System settings load failed - authentication required');
+        setError('Please log in again to access system settings.');
+        setSystemSettings(defaultSystemSettings);
+      } else if (err.response?.status === 403) {
+        console.log('System settings load failed - insufficient permissions');
+        setError('Admin privileges required to view system settings.');
+        setSystemSettings(defaultSystemSettings);
+      } else if (err.response?.status >= 500) {
+        console.log('System settings load failed - server error');
+        setError('Server error loading system settings. Using default values.');
+        setSystemSettings(defaultSystemSettings);
+      } else {
+        console.log('System settings load failed - network or other error');
+        setError('Failed to load system settings. Using default values.');
+        setSystemSettings(defaultSystemSettings);
+      }
     }
-  }, []);
+  }, [isAuthenticated, token, authLoading]);
 
   // Update user settings
   const updateUserSettings = useCallback(async (settingsUpdate) => {
+    // Check authentication before making API call
+    if (!isAuthenticated || !token) {
+      throw new Error('Authentication required to update settings');
+    }
+
     try {
+      setLoading(true);
       setError(null);
       
       const response = await apiService.settings.updateUserSettings(settingsUpdate);
       setUserSettings(response.data);
       
-      // Apply theme change immediately
-      if (settingsUpdate.preferences?.theme) {
-        applyTheme(settingsUpdate.preferences.theme);
-      }
+      // Theme updates are now handled by ThemeContext
       
       return response.data;
     } catch (err) {
       console.error('Error updating user settings:', err);
       setError('Failed to update settings');
       throw err;
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated, token]);
 
-  // Update system setting (admin only)
+  // Helper function to convert UI property names back to database key format
+  const getSystemSettingKey = (uiKey) => {
+    const reverseKeyMappings = {
+      'patientIdFormat': 'medical.patient_id_format',
+      'sessionTimeout': 'security.session_timeout',
+      'dataRetentionPeriod': 'medical.data_retention_years',
+      'passwordPolicy': 'security.password_policy',
+      'maxFileSize': 'files.max_file_size',
+      'allowedFileTypes': 'files.allowed_types',
+      'autoBackup': 'backup.auto_backup',
+      'backupFrequency': 'backup.frequency',
+      'auditLogging': 'security.audit_logging',
+      'twoFactorAuth': 'security.two_factor_auth',
+      'maintenanceMode': 'system.maintenance_mode',
+      'emailEnabled': 'notifications.email_enabled',
+      'smsEnabled': 'notifications.sms_enabled'
+    };
+    
+    return reverseKeyMappings[uiKey] || uiKey;
+  };
+
+  // Update system setting
   const updateSystemSetting = useCallback(async (key, value) => {
+    // Check authentication before making API call
+    if (!isAuthenticated || !token) {
+      throw new Error('Authentication required to update system settings');
+    }
+
     try {
+      setLoading(true);
       setError(null);
       
-      const response = await apiService.settings.updateSystemSetting(key, value);
+      // Convert UI key to database key format
+      const databaseKey = getSystemSettingKey(key);
+      console.log('Updating system setting:', databaseKey, 'to:', value);
       
-      // Update the system settings state
+      const response = await apiService.settings.updateSystemSetting(databaseKey, value);
+      
+      // Update local system settings using UI key
       setSystemSettings(prev => ({
         ...prev,
-        [response.data.category]: prev[response.data.category]?.map(setting => 
-          setting.key === key ? response.data : setting
-        ) || [response.data]
+        [key]: value
       }));
       
+      console.log('System setting updated successfully');
       return response.data;
     } catch (err) {
       console.error('Error updating system setting:', err);
-      setError('Failed to update system setting');
+      
+      // Provide specific error messages
+      if (err.response?.status === 403) {
+        setError('Admin privileges required to update system settings');
+      } else if (err.response?.status === 404) {
+        setError(`System setting '${key}' not found`);
+      } else {
+        setError('Failed to update system setting');
+      }
       throw err;
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated, token]);
 
   // Reset user settings to defaults
   const resetUserSettings = useCallback(async () => {
+    // Check authentication before making API call
+    if (!isAuthenticated || !token) {
+      throw new Error('Authentication required to reset settings');
+    }
+
     try {
+      setLoading(true);
       setError(null);
       
       const response = await apiService.settings.resetUserSettings();
       setUserSettings(response.data);
       
-      // Apply default theme
-      applyTheme('light');
+      // Theme is now handled by ThemeContext
       
       return response.data;
     } catch (err) {
       console.error('Error resetting user settings:', err);
       setError('Failed to reset settings');
       throw err;
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated, token]);
 
-  // Apply theme to the document
-  const applyTheme = useCallback((theme) => {
-    const root = document.documentElement;
-    
-    if (theme === 'dark') {
-      root.classList.add('dark-theme');
-      root.classList.remove('light-theme');
-    } else if (theme === 'light') {
-      root.classList.add('light-theme');
-      root.classList.remove('dark-theme');
-    } else if (theme === 'auto') {
-      // Use system preference
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      if (prefersDark) {
-        root.classList.add('dark-theme');
-        root.classList.remove('light-theme');
-      } else {
-        root.classList.add('light-theme');
-        root.classList.remove('dark-theme');
-      }
-    }
-  }, []);
+  // Theme handling moved to ThemeContext
 
-  // Get a specific setting value by path
-  const getSetting = useCallback((path, defaultValue = null) => {
-    if (!userSettings) return defaultValue;
-    
-    const parts = path.split('.');
-    let value = userSettings;
-    
-    for (const part of parts) {
-      if (value && typeof value === 'object' && part in value) {
-        value = value[part];
-      } else {
-        return defaultValue;
-      }
+  // Helper functions for getting specific settings
+  const getSetting = useCallback((section, key, defaultValue = null) => {
+    if (!userSettings || !userSettings[section]) {
+      return defaultValue;
     }
-    
-    return value || defaultValue;
+    return userSettings[section][key] !== undefined ? userSettings[section][key] : defaultValue;
   }, [userSettings]);
 
-  // Get system setting value by key
   const getSystemSetting = useCallback((key, defaultValue = null) => {
-    if (!systemSettings) return defaultValue;
-    
-    for (const category of Object.values(systemSettings)) {
-      const setting = category.find(s => s.key === key);
-      if (setting) {
-        return setting.value;
-      }
+    if (!systemSettings) {
+      return defaultValue;
     }
-    
-    return defaultValue;
+    return systemSettings[key] !== undefined ? systemSettings[key] : defaultValue;
   }, [systemSettings]);
 
-  // Check if a medical feature is enabled
+  // Helper function to check if medical features are enabled
   const isMedicalFeatureEnabled = useCallback((feature) => {
-    return getSetting(`medical_defaults.${feature}`, false);
-  }, [getSetting]);
-
-  // Get notification preference
-  const isNotificationEnabled = useCallback((type) => {
-    return getSetting(`notifications.${type}`, false);
-  }, [getSetting]);
-
-  // Note: useAutoSave moved to separate hook file to fix React hooks violation
-
-  // Load settings on mount
-  useEffect(() => {
-    loadUserSettings();
-    loadSystemSettings();
-  }, [loadUserSettings, loadSystemSettings]);
-
-  // Listen for theme changes
-  useEffect(() => {
-    if (userSettings?.preferences?.theme === 'auto') {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const handleChange = () => applyTheme('auto');
-      
-      mediaQuery.addEventListener('change', handleChange);
-      return () => mediaQuery.removeEventListener('change', handleChange);
+    if (!userSettings?.medical_defaults) {
+      return false;
     }
-  }, [userSettings?.preferences?.theme, applyTheme]);
+    return userSettings.medical_defaults[feature] === true;
+  }, [userSettings]);
 
-  const contextValue = {
-    // State
+  // Load settings when auth state changes
+  useEffect(() => {
+    if (!authLoading && isAuthenticated && token) {
+      console.log('Auth state ready, loading settings...');
+      loadUserSettings();
+      
+      // Only load system settings if user has admin role
+      if (user?.roles?.includes('admin')) {
+        console.log('User has admin role, loading system settings...');
+        loadSystemSettings();
+      } else {
+        console.log('User does not have admin role, skipping system settings');
+      }
+    } else if (!authLoading && !isAuthenticated) {
+      // Clear settings when not authenticated
+      console.log('User not authenticated, clearing settings');
+      setUserSettings(null);
+      setSystemSettings(defaultSystemSettings);
+      setLoading(false);
+      setError(null);
+    }
+  }, [isAuthenticated, token, authLoading, user?.roles, loadUserSettings, loadSystemSettings]);
+
+  // Memoize the context value to prevent unnecessary re-renders
+  const value = useMemo(() => ({
     userSettings,
     systemSettings,
     loading,
     error,
-    
-    // User settings functions
     updateUserSettings,
-    resetUserSettings,
-    loadUserSettings,
-    
-    // System settings functions (admin only)
     updateSystemSetting,
-    loadSystemSettings,
-    
-    // Utility functions
+    resetUserSettings,
     getSetting,
     getSystemSetting,
     isMedicalFeatureEnabled,
-    isNotificationEnabled,
-    applyTheme,
-    
-    // Constants
-    defaultUserSettings
-  };
+    // Expose defaults for reference
+    defaultUserSettings,
+    defaultSystemSettings
+  }), [
+    userSettings,
+    systemSettings,
+    loading,
+    error,
+    updateUserSettings,
+    updateSystemSetting,
+    resetUserSettings,
+    getSetting,
+    getSystemSetting,
+    isMedicalFeatureEnabled
+  ]);
 
   return (
-    <SettingsContext.Provider value={contextValue}>
+    <SettingsContext.Provider value={value}>
       {children}
     </SettingsContext.Provider>
   );

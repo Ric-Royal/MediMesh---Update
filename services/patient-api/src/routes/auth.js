@@ -1,5 +1,6 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
 const { logger } = require('../utils/logger');
 
 const router = express.Router();
@@ -9,19 +10,53 @@ router.post('/login', async (req, res) => {
   try {
     const { username, password } = req.body;
     
-    // For development - accept any username/password
+    // Development credentials and roles
+    const devUsers = {
+      'admin': {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        password: 'admin123',
+        roles: ['admin', 'doctor', 'nurse', 'user'],
+        name: 'System Administrator'
+      },
+      'doctor': {
+        id: '550e8400-e29b-41d4-a716-446655440001',
+        password: 'doctor123',
+        roles: ['doctor', 'user'],
+        name: 'Dr. John Smith'
+      },
+      'nurse': {
+        id: '550e8400-e29b-41d4-a716-446655440002',
+        password: 'nurse123',
+        roles: ['nurse', 'user'],
+        name: 'Nurse Jane Doe'
+      },
+      'user': {
+        id: '550e8400-e29b-41d4-a716-446655440003',
+        password: 'user123',
+        roles: ['user'],
+        name: 'Regular User'
+      }
+    };
+    
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }
     
-    // Generate a mock JWT token
+    // Check if user exists and password matches
+    const user = devUsers[username.toLowerCase()];
+    if (!user || user.password !== password) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+    
+    // Generate JWT token with proper user data
     const token = jwt.sign(
       {
-        sub: '12345',
+        sub: user.id,
         preferred_username: username,
-        email: `${username}@medimesh.com`,
+        name: user.name,
+        email: `${username}@medimesh.dev`,
         realm_access: {
-          roles: ['doctor', 'nurse', 'admin'] // Give all roles for development
+          roles: user.roles
         },
         scope: 'openid profile email',
         iss: 'medimesh-dev',
@@ -34,6 +69,8 @@ router.post('/login', async (req, res) => {
     
     logger.info('Development login successful', {
       username,
+      userId: user.id,
+      roles: user.roles,
       ip: req.ip
     });
     
@@ -42,10 +79,11 @@ router.post('/login', async (req, res) => {
       token_type: 'Bearer',
       expires_in: 86400,
       user: {
-        id: '12345',
+        id: user.id,
         username,
-        email: `${username}@medimesh.com`,
-        roles: ['doctor', 'nurse', 'admin']
+        name: user.name,
+        email: `${username}@medimesh.dev`,
+        roles: user.roles
       }
     });
     

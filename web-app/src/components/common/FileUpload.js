@@ -12,10 +12,6 @@ import {
   ListItem,
   ListItemText,
   ListItemSecondaryAction,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   TextField,
   FormControlLabel,
   Checkbox,
@@ -31,6 +27,7 @@ import {
   Close as CloseIcon
 } from '@mui/icons-material';
 import { styled } from '@mui/material/styles';
+import { useSettings } from '../../contexts/SettingsContext';
 
 const DropZone = styled(Paper)(({ theme, isDragOver }) => ({
   border: `2px dashed ${isDragOver ? theme.palette.primary.main : theme.palette.grey[300]}`,
@@ -54,17 +51,8 @@ const FileUpload = ({
   onUploadError = () => {},
   onFilesSelected = () => {},
   maxFiles = 10,
-  maxFileSize = 50 * 1024 * 1024, // 50MB
-  allowedTypes = [
-    'image/jpeg',
-    'image/png',
-    'image/gif',
-    'application/pdf',
-    'application/msword',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    'text/plain',
-    'text/csv'
-  ],
+  maxFileSize = null, // Will use system setting if not provided
+  allowedTypes = null, // Will use system setting if not provided
   disabled = false,
   required = false,
   label = 'Upload Files',
@@ -72,6 +60,30 @@ const FileUpload = ({
   deferUpload = false,
   selectedFiles = []
 }) => {
+  const { getSystemSetting } = useSettings();
+  
+  // Get settings with fallbacks
+  const systemMaxFileSize = getSystemSetting('maxFileSize', 50) * 1024 * 1024; // Convert MB to bytes
+  const systemAllowedTypes = getSystemSetting('allowedFileTypes', ['pdf', 'jpg', 'jpeg', 'png', 'docx', 'doc', 'dicom', 'txt', 'csv']);
+  
+  // Use prop values if provided, otherwise use system settings
+  const effectiveMaxFileSize = maxFileSize || systemMaxFileSize;
+  const effectiveAllowedTypes = allowedTypes || systemAllowedTypes.map(type => {
+    // Convert file extensions to MIME types
+    const mimeTypes = {
+      'pdf': 'application/pdf',
+      'jpg': 'image/jpeg',
+      'jpeg': 'image/jpeg',
+      'png': 'image/png',
+      'gif': 'image/gif',
+      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'doc': 'application/msword',
+      'txt': 'text/plain',
+      'csv': 'text/csv',
+      'dicom': 'application/dicom'
+    };
+    return mimeTypes[type] || `application/${type}`;
+  });
   const [files, setFiles] = useState(selectedFiles || []);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -94,14 +106,14 @@ const FileUpload = ({
   
   const fileInputRef = useRef(null);
 
-  const validateFile = (file) => {
+  const validateFile = useCallback((file) => {
     const errors = [];
     
-    if (file.size > maxFileSize) {
-      errors.push(`File "${file.name}" is too large (max ${Math.round(maxFileSize / (1024 * 1024))}MB)`);
+    if (file.size > effectiveMaxFileSize) {
+      errors.push(`File "${file.name}" is too large (max ${Math.round(effectiveMaxFileSize / (1024 * 1024))}MB)`);
     }
     
-    if (!allowedTypes.includes(file.type)) {
+    if (!effectiveAllowedTypes.includes(file.type)) {
       errors.push(`File "${file.name}" has unsupported type (${file.type})`);
     }
     
@@ -110,7 +122,7 @@ const FileUpload = ({
     }
     
     return errors;
-  };
+  }, [effectiveMaxFileSize, effectiveAllowedTypes]);
 
   const handleFileSelect = useCallback((selectedFiles) => {
     const fileList = Array.from(selectedFiles);
@@ -144,7 +156,7 @@ const FileUpload = ({
     if (deferUpload) {
       onFilesSelected(newFiles);
     }
-  }, [files, maxFiles, maxFileSize, allowedTypes, deferUpload, onFilesSelected]);
+  }, [files, maxFiles, deferUpload, onFilesSelected, validateFile]);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -338,7 +350,7 @@ const FileUpload = ({
           ref={fileInputRef}
           type="file"
           multiple
-          accept={allowedTypes.join(',')}
+          accept={effectiveAllowedTypes.join(',')}
           onChange={handleFileInputChange}
           style={{ display: 'none' }}
           disabled={disabled}
@@ -349,7 +361,7 @@ const FileUpload = ({
           {description}
         </Typography>
         <Typography variant="body2" color="textSecondary">
-          Max {maxFiles} files, {Math.round(maxFileSize / (1024 * 1024))}MB each
+          Max {maxFiles} files, {Math.round(effectiveMaxFileSize / (1024 * 1024))}MB each
         </Typography>
         <Button
           variant="outlined"

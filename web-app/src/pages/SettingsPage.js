@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -11,7 +11,6 @@ import {
   FormControlLabel,
   TextField,
   Button,
-  Divider,
   Alert,
   Chip,
   List,
@@ -28,12 +27,8 @@ import {
   DialogContent,
   DialogActions,
   Avatar,
-  IconButton,
   Tabs,
-  Tab,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails
+  Tab
 } from '@mui/material';
 import {
   Settings as SettingsIcon,
@@ -43,17 +38,9 @@ import {
   AdminPanelSettings as AdminIcon,
   LocalHospital as MedicalIcon,
   Storage as StorageIcon,
-  Schedule as ScheduleIcon,
-  Language as LanguageIcon,
-  Palette as ThemeIcon,
-  Email as EmailIcon,
-  Sms as SmsIcon,
-  Phone as PhoneIcon,
   Save as SaveIcon,
   Lock as LockIcon,
   Visibility as VisibilityIcon,
-  ExpandMore as ExpandMoreIcon,
-  Edit as EditIcon,
   VpnKey as KeyIcon,
   Shield as ShieldIcon,
   History as HistoryIcon,
@@ -61,28 +48,50 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';
+import { useThemeSettings } from '../contexts/ThemeContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+
+// Custom hook for debouncing values
+const useDebounce = (value, delay) => {
+  const [debouncedValue, setDebouncedValue] = useState(value);
+
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedValue(value);
+    }, delay);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [value, delay]);
+
+  return debouncedValue;
+};
 
 const SettingsPage = () => {
   const { user, hasRole } = useAuth();
   const { 
-    userSettings, 
     systemSettings, 
     loading, 
     error,
     updateUserSettings,
     updateSystemSetting,
-    getSetting,
-    getSystemSetting 
+    getSetting
   } = useSettings();
+  const { changeTheme } = useThemeSettings();
   
   const [activeTab, setActiveTab] = useState(0);
   const [saveSuccess, setSaveSuccess] = useState(false);
-  const [saving, setSaving] = useState(false);
   const [localError, setLocalError] = useState(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [pendingChanges, setPendingChanges] = useState({});
+  const [localValues, setLocalValues] = useState({}); // For immediate UI updates
+  const [fieldLoading, setFieldLoading] = useState({}); // Track loading state per field
+  const [saveLoading, setSaveLoading] = useState(false); // Track loading state for save operation
   
-
-
+  // Debounce pending changes to reduce rapid updates
+  const debouncedPendingChanges = useDebounce(pendingChanges, 500);
+  
   const [changePasswordDialog, setChangePasswordDialog] = useState(false);
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
@@ -94,66 +103,177 @@ const SettingsPage = () => {
     setActiveTab(newValue);
   };
 
-  const handlePersonalSettingChange = async (section, field, value) => {
-    try {
-      setSaving(true);
-      const update = { [section]: { [field]: value } };
-      await updateUserSettings(update);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (err) {
-      console.error('Failed to update setting:', err);
-    } finally {
-      setSaving(false);
-    }
-  };
+  // Helper function to set field loading state
+  const setFieldLoadingState = useCallback((fieldKey, isLoading) => {
+    setFieldLoading(prev => ({
+      ...prev,
+      [fieldKey]: isLoading
+    }));
+  }, []);
 
-  const handleSystemSettingChange = async (field, value) => {
-    try {
-      setSaving(true);
-      await updateSystemSetting(field, value);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (err) {
-      console.error('Failed to update system setting:', err);
-    } finally {
-      setSaving(false);
-    }
-  };
+  // Helper function to check if field is loading
+  const isFieldLoading = useCallback((section, field) => {
+    const fieldKey = section === 'system' ? `system.${field}` : 
+                     section === 'medical' ? `medical.${field}` : `${section}.${field}`;
+    return fieldLoading[fieldKey] || false;
+  }, [fieldLoading]);
 
-  const handleMedicalSettingChange = async (field, value) => {
-    try {
-      setSaving(true);
-      const update = { medical_defaults: { [field]: value } };
-      await updateUserSettings(update);
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (err) {
-      console.error('Failed to update medical setting:', err);
-    } finally {
-      setSaving(false);
+  // Stage changes locally instead of auto-saving
+  const handlePersonalSettingChange = useCallback((section, field, value) => {
+    const changeKey = `${section}.${field}`;
+    
+    // Update local values immediately for UI responsiveness
+    setLocalValues(prev => ({
+      ...prev,
+      [changeKey]: value
+    }));
+    
+    // Debounced update to pending changes
+    setTimeout(() => {
+      setPendingChanges(prev => ({
+        ...prev,
+        [changeKey]: { section, field, value, type: 'personal' }
+      }));
+      setHasUnsavedChanges(true);
+    }, 300);
+    
+    // Special handling for theme - apply immediately for preview
+    if (section === 'preferences' && field === 'theme') {
+      changeTheme(value);
     }
-  };
+  }, [changeTheme]);
 
-  const handleSaveSettings = async (settingsType) => {
-    setSaving(true);
+  const handleSystemSettingChange = useCallback((field, value) => {
+    const changeKey = `system.${field}`;
+    
+    // Update local values immediately for UI responsiveness
+    setLocalValues(prev => ({
+      ...prev,
+      [changeKey]: value
+    }));
+    
+    // Debounced update to pending changes
+    setTimeout(() => {
+      setPendingChanges(prev => ({
+        ...prev,
+        [changeKey]: { field, value, type: 'system' }
+      }));
+      setHasUnsavedChanges(true);
+    }, 300);
+  }, []);
+
+  const handleMedicalSettingChange = useCallback((field, value) => {
+    const changeKey = `medical.${field}`;
+    
+    // Update local values immediately for UI responsiveness
+    setLocalValues(prev => ({
+      ...prev,
+      [changeKey]: value
+    }));
+    
+    // Debounced update to pending changes
+    setTimeout(() => {
+      setPendingChanges(prev => ({
+        ...prev,
+        [changeKey]: { field, value, type: 'medical' }
+      }));
+      setHasUnsavedChanges(true);
+    }, 300);
+  }, []);
+
+  // Get current value (from local values, pending changes, or saved settings)
+  const getCurrentValue = useCallback((section, field, defaultValue = '') => {
+    const changeKey = section === 'system' ? `system.${field}` : 
+                      section === 'medical' ? `medical.${field}` : `${section}.${field}`;
+    
+    // Priority order: local values (immediate) > pending changes > saved settings
+    if (localValues[changeKey] !== undefined) {
+      return localValues[changeKey];
+    }
+    
+    if (pendingChanges[changeKey]) {
+      return pendingChanges[changeKey].value;
+    }
+    
+    if (section === 'system') {
+      return systemSettings?.[field] || defaultValue;
+    }
+    
+    return getSetting(section, field, defaultValue);
+  }, [localValues, pendingChanges, systemSettings, getSetting]);
+
+  // Save all pending changes
+  const handleSaveAllChanges = async () => {
+    if (!hasUnsavedChanges) return;
+    
     setLocalError(null);
+    setSaveLoading(true);
     
     try {
-      // Here you would typically call an API to save settings
-      // await apiService.settings.update(settingsType, settingsData);
+      // Group changes by type
+      const personalChanges = {};
+      const systemChanges = {};
+      const medicalChanges = {};
       
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      Object.values(pendingChanges).forEach(change => {
+        if (change.type === 'personal') {
+          if (!personalChanges[change.section]) {
+            personalChanges[change.section] = {};
+          }
+          personalChanges[change.section][change.field] = change.value;
+        } else if (change.type === 'system') {
+          systemChanges[change.field] = change.value;
+        } else if (change.type === 'medical') {
+          if (!medicalChanges.medical_defaults) {
+            medicalChanges.medical_defaults = {};
+          }
+          medicalChanges.medical_defaults[change.field] = change.value;
+        }
+      });
       
+      // Save changes
+      const promises = [];
+      
+      if (Object.keys(personalChanges).length > 0) {
+        promises.push(updateUserSettings(personalChanges));
+      }
+      
+      if (Object.keys(medicalChanges).length > 0) {
+        promises.push(updateUserSettings(medicalChanges));
+      }
+      
+      if (Object.keys(systemChanges).length > 0) {
+        for (const [field, value] of Object.entries(systemChanges)) {
+          promises.push(updateSystemSetting(field, value));
+        }
+      }
+      
+      await Promise.all(promises);
+      
+      // Clear pending changes and local values
+      setPendingChanges({});
+      setLocalValues({});
+      setHasUnsavedChanges(false);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (err) {
+      console.error('Failed to save settings:', err);
       setLocalError('Failed to save settings. Please try again.');
     } finally {
-      setSaving(false);
+      setSaveLoading(false);
     }
   };
+  
+  // Discard pending changes
+  const handleDiscardChanges = useCallback(() => {
+    setPendingChanges({});
+    setLocalValues({}); // Clear local values too
+    setHasUnsavedChanges(false);
+    
+    // Revert theme to saved setting
+    const savedTheme = getSetting('preferences', 'theme', 'light');
+    changeTheme(savedTheme);
+  }, [getSetting, changeTheme]);
 
   const handleChangePassword = async () => {
     if (passwordData.newPassword !== passwordData.confirmPassword) {
@@ -161,7 +281,6 @@ const SettingsPage = () => {
       return;
     }
     
-    setSaving(true);
     try {
       // API call to change password
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -170,8 +289,6 @@ const SettingsPage = () => {
       setSaveSuccess(true);
     } catch (err) {
       setLocalError('Failed to change password');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -205,7 +322,7 @@ const SettingsPage = () => {
                 <TextField
                   fullWidth
                   label="Display Name"
-                  value={getSetting('profile.displayName', '')}
+                  value={getCurrentValue('profile', 'displayName', '')}
                   onChange={(e) => handlePersonalSettingChange('profile', 'displayName', e.target.value)}
                 />
               </Grid>
@@ -214,7 +331,7 @@ const SettingsPage = () => {
                   fullWidth
                   label="Email Address"
                   type="email"
-                  value={getSetting('profile.email', '')}
+                  value={getCurrentValue('profile', 'email', '')}
                   onChange={(e) => handlePersonalSettingChange('profile', 'email', e.target.value)}
                 />
               </Grid>
@@ -222,7 +339,7 @@ const SettingsPage = () => {
                 <TextField
                   fullWidth
                   label="Phone Number"
-                  value={getSetting('profile.phone', '')}
+                  value={getCurrentValue('profile', 'phone', '')}
                   onChange={(e) => handlePersonalSettingChange('profile', 'phone', e.target.value)}
                 />
               </Grid>
@@ -230,7 +347,7 @@ const SettingsPage = () => {
                 <TextField
                   fullWidth
                   label="Department"
-                  value={getSetting('profile.department', '')}
+                  value={getCurrentValue('profile', 'department', '')}
                   onChange={(e) => handlePersonalSettingChange('profile', 'department', e.target.value)}
                 />
               </Grid>
@@ -238,21 +355,13 @@ const SettingsPage = () => {
                 <TextField
                   fullWidth
                   label="Specialization"
-                  value={getSetting('profile.specialization', '')}
+                  value={getCurrentValue('profile', 'specialization', '')}
                   onChange={(e) => handlePersonalSettingChange('profile', 'specialization', e.target.value)}
                 />
               </Grid>
             </Grid>
             
-            <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
-              <Button
-                variant="contained"
-                startIcon={<SaveIcon />}
-                onClick={() => handleSaveSettings('personal')}
-                disabled={loading}
-              >
-                Save Profile
-              </Button>
+            <Box sx={{ mt: 2 }}>
               <Button
                 variant="outlined"
                 startIcon={<KeyIcon />}
@@ -279,7 +388,7 @@ const SettingsPage = () => {
                 <FormControl fullWidth>
                   <InputLabel>Language</InputLabel>
                   <Select
-                    value={getSetting('preferences.language', 'en')}
+                    value={getCurrentValue('preferences', 'language', 'en')}
                     onChange={(e) => handlePersonalSettingChange('preferences', 'language', e.target.value)}
                   >
                     <MenuItem value="en">English</MenuItem>
@@ -293,13 +402,22 @@ const SettingsPage = () => {
                 <FormControl fullWidth>
                   <InputLabel>Timezone</InputLabel>
                   <Select
-                    value={getSetting('preferences.timezone', 'UTC')}
+                    value={getCurrentValue('preferences', 'timezone', 'Africa/Johannesburg')}
                     onChange={(e) => handlePersonalSettingChange('preferences', 'timezone', e.target.value)}
                   >
-                    <MenuItem value="UTC">UTC</MenuItem>
-                    <MenuItem value="EST">Eastern Time</MenuItem>
-                    <MenuItem value="PST">Pacific Time</MenuItem>
-                    <MenuItem value="CST">Central Time</MenuItem>
+                    <MenuItem value="Africa/Cairo">Cairo (GMT+2)</MenuItem>
+                    <MenuItem value="Africa/Lagos">Lagos (GMT+1)</MenuItem>
+                    <MenuItem value="Africa/Johannesburg">Johannesburg (GMT+2)</MenuItem>
+                    <MenuItem value="Africa/Nairobi">Nairobi (GMT+3)</MenuItem>
+                    <MenuItem value="Africa/Casablanca">Casablanca (GMT+1)</MenuItem>
+                    <MenuItem value="Africa/Addis_Ababa">Addis Ababa (GMT+3)</MenuItem>
+                    <MenuItem value="Africa/Accra">Accra (GMT+0)</MenuItem>
+                    <MenuItem value="Africa/Tunis">Tunis (GMT+1)</MenuItem>
+                    <MenuItem value="Africa/Algiers">Algiers (GMT+1)</MenuItem>
+                    <MenuItem value="Africa/Dar_es_Salaam">Dar es Salaam (GMT+3)</MenuItem>
+                    <MenuItem value="Africa/Khartoum">Khartoum (GMT+2)</MenuItem>
+                    <MenuItem value="Africa/Maputo">Maputo (GMT+2)</MenuItem>
+                    <MenuItem value="UTC">UTC (GMT+0)</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -307,7 +425,7 @@ const SettingsPage = () => {
                 <FormControl fullWidth>
                   <InputLabel>Theme</InputLabel>
                   <Select
-                    value={getSetting('preferences.theme', 'light')}
+                    value={getCurrentValue('preferences', 'theme', 'light')}
                     onChange={(e) => handlePersonalSettingChange('preferences', 'theme', e.target.value)}
                   >
                     <MenuItem value="light">Light Mode</MenuItem>
@@ -398,7 +516,7 @@ const SettingsPage = () => {
                   <Select
                     labelId="default-record-type-label"
                     label="Default Record Type"
-                    value={getSetting('medical_defaults.defaultRecordType', 'consultation')}
+                    value={getCurrentValue('medical_defaults', 'defaultRecordType', 'consultation')}
                     onChange={(e) => handleMedicalSettingChange('defaultRecordType', e.target.value)}
                   >
                     <MenuItem value="consultation">Consultation</MenuItem>
@@ -416,7 +534,7 @@ const SettingsPage = () => {
                   <Select
                     labelId="vital-signs-units-label"
                     label="Vital Signs Units"
-                    value={getSetting('medical_defaults.vitalSignsUnits', 'metric')}
+                    value={getCurrentValue('medical_defaults', 'vitalSignsUnits', 'metric')}
                     onChange={(e) => handleMedicalSettingChange('vitalSignsUnits', e.target.value)}
                   >
                     <MenuItem value="metric">Metric (°C, kg, cm)</MenuItem>
@@ -429,8 +547,8 @@ const SettingsPage = () => {
                   fullWidth
                   label="Default Examination Duration (minutes)"
                   type="number"
-                  value={getSetting('medical_defaults.defaultExamDuration', '30')}
-                  onChange={(e) => handleMedicalSettingChange('defaultExamDuration', e.target.value)}
+                                      value={getCurrentValue('medical_defaults', 'defaultExamDuration', '30')}
+                    onChange={(e) => handleMedicalSettingChange('defaultExamDuration', e.target.value)}
                 />
               </Grid>
             </Grid>
@@ -456,7 +574,7 @@ const SettingsPage = () => {
                 />
                 <ListItemSecondaryAction>
                   <Switch
-                    checked={getSetting('medical_defaults.autoSaveDrafts', true)}
+                    checked={getCurrentValue('medical_defaults', 'autoSaveDrafts', true)}
                     onChange={(e) => handleMedicalSettingChange('autoSaveDrafts', e.target.checked)}
                   />
                 </ListItemSecondaryAction>
@@ -470,7 +588,7 @@ const SettingsPage = () => {
                 />
                 <ListItemSecondaryAction>
                   <Switch
-                    checked={medicalSettings.requireDiagnosis}
+                    checked={getCurrentValue('medical_defaults', 'requireDiagnosis', false)}
                     onChange={(e) => handleMedicalSettingChange('requireDiagnosis', e.target.checked)}
                   />
                 </ListItemSecondaryAction>
@@ -484,7 +602,7 @@ const SettingsPage = () => {
                 />
                 <ListItemSecondaryAction>
                   <Switch
-                    checked={medicalSettings.enableTemplates}
+                    checked={getCurrentValue('medical_defaults', 'enableTemplates', true)}
                     onChange={(e) => handleMedicalSettingChange('enableTemplates', e.target.checked)}
                   />
                 </ListItemSecondaryAction>
@@ -498,7 +616,7 @@ const SettingsPage = () => {
                 />
                 <ListItemSecondaryAction>
                   <Switch
-                    checked={medicalSettings.showICD10Codes}
+                    checked={getCurrentValue('medical_defaults', 'showICD10Codes', false)}
                     onChange={(e) => handleMedicalSettingChange('showICD10Codes', e.target.checked)}
                   />
                 </ListItemSecondaryAction>
@@ -512,7 +630,7 @@ const SettingsPage = () => {
                 />
                 <ListItemSecondaryAction>
                   <Switch
-                    checked={medicalSettings.drugInteractionAlerts}
+                    checked={getCurrentValue('medical_defaults', 'drugInteractionAlerts', true)}
                     onChange={(e) => handleMedicalSettingChange('drugInteractionAlerts', e.target.checked)}
                   />
                 </ListItemSecondaryAction>
@@ -526,22 +644,12 @@ const SettingsPage = () => {
                 />
                 <ListItemSecondaryAction>
                   <Switch
-                    checked={medicalSettings.allergyWarnings}
+                    checked={getCurrentValue('medical_defaults', 'allergyWarnings', true)}
                     onChange={(e) => handleMedicalSettingChange('allergyWarnings', e.target.checked)}
                   />
                 </ListItemSecondaryAction>
               </ListItem>
             </List>
-            
-            <Button
-              variant="contained"
-              startIcon={<SaveIcon />}
-              onClick={() => handleSaveSettings('medical')}
-              disabled={loading}
-              sx={{ mt: 2 }}
-            >
-              Save Medical Settings
-            </Button>
           </CardContent>
         </Card>
       </Grid>
@@ -718,17 +826,6 @@ const SettingsPage = () => {
                   </FormControl>
                 </Box>
               )}
-              
-              <Button
-                variant="contained"
-                color="error"
-                startIcon={<SaveIcon />}
-                onClick={() => handleSaveSettings('system')}
-                disabled={loading}
-                sx={{ mt: 2 }}
-              >
-                Save System Settings
-              </Button>
             </CardContent>
           </Card>
         </Grid>
@@ -782,16 +879,48 @@ const SettingsPage = () => {
         <Box>
           <Typography variant="h4" gutterBottom>
             Settings
+            {hasUnsavedChanges && (
+              <Chip 
+                label="Unsaved changes" 
+                color="warning" 
+                size="small" 
+                sx={{ ml: 2 }}
+              />
+            )}
           </Typography>
           <Typography variant="body1" color="text.secondary">
             Manage your preferences and system configuration
           </Typography>
         </Box>
-        <Chip 
-          label={`Logged in as ${user?.name || 'User'}`}
-          color="primary"
-          avatar={<Avatar>{user?.name?.[0] || 'U'}</Avatar>}
-        />
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          {hasUnsavedChanges && (
+            <>
+              <Button
+                variant="outlined"
+                color="error"
+                onClick={handleDiscardChanges}
+                size="small"
+              >
+                Discard Changes
+              </Button>
+              <Button
+                variant="contained"
+                color="primary"
+                onClick={handleSaveAllChanges}
+                size="small"
+                startIcon={<SaveIcon />}
+                disabled={saveLoading}
+              >
+                {saveLoading ? 'Saving...' : 'Save Changes'}
+              </Button>
+            </>
+          )}
+          <Chip 
+            label={`Logged in as ${user?.name || 'User'}`}
+            color="primary"
+            avatar={<Avatar>{user?.name?.[0] || 'U'}</Avatar>}
+          />
+        </Box>
       </Box>
 
       {/* Success/Error Messages */}
@@ -803,7 +932,13 @@ const SettingsPage = () => {
       
       {(error || localError) && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setLocalError(null)}>
+          <Typography variant="subtitle2" gutterBottom>Settings Error</Typography>
           {error || localError}
+          {loading && (
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              If this error persists, please refresh the page and try again.
+            </Typography>
+          )}
         </Alert>
       )}
 
