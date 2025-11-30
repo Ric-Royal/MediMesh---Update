@@ -24,6 +24,8 @@ const seedRoutes = require('./routes/seed');
 const fileRoutes = require('./routes/files');
 const settingsRoutes = require('./routes/settings');
 const paymentRoutes = require('./routes/payments');
+const encounterRoutes = require('./routes/encounters');
+const queueRoutes = require('./routes/queue');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
