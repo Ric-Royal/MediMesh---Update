@@ -1,156 +1,109 @@
-const { DataTypes } = require('sequelize');
-const { sequelize } = require('../utils/database');
+const { v4: uuidv4 } = require('uuid');
+const { pool } = require('../utils/database');
 
-const Encounter = sequelize.define('Encounter', {
-  id: {
-    type: DataTypes.UUID,
-    defaultValue: DataTypes.UUIDV4,
-    primaryKey: true
-  },
-  encounterNumber: {
-    type: DataTypes.STRING(50),
-    unique: true,
-    allowNull: false,
-    field: 'encounter_number'
-  },
-  patientId: {
-    type: DataTypes.UUID,
-    allowNull: false,
-    field: 'patient_id',
-    references: { model: 'patients', key: 'id' }
-  },
-  appointmentId: {
-    type: DataTypes.UUID,
-    field: 'appointment_id',
-    references: { model: 'appointments', key: 'id' }
-  },
-  encounterType: {
-    type: DataTypes.ENUM('outpatient', 'inpatient', 'emergency', 'day-case', 'follow-up'),
-    allowNull: false,
-    field: 'encounter_type'
-  },
-  status: {
-    type: DataTypes.ENUM('registered', 'waiting', 'triage', 'in-consultation', 'pending-lab', 
-                        'pending-radiology', 'pending-pharmacy', 'completed', 'cancelled', 'no-show'),
-    defaultValue: 'registered'
-  },
-  triageLevel: {
-    type: DataTypes.ENUM('routine', 'urgent', 'emergency', 'critical'),
-    defaultValue: 'routine',
-    field: 'triage_level'
-  },
-  departmentId: {
-    type: DataTypes.UUID,
-    field: 'department_id',
-    references: { model: 'departments', key: 'id' }
-  },
-  clinicId: {
-    type: DataTypes.UUID,
-    field: 'clinic_id',
-    references: { model: 'clinics', key: 'id' }
-  },
-  doctorId: {
-    type: DataTypes.UUID,
-    field: 'doctor_id',
-    references: { model: 'staff', key: 'id' }
-  },
-  waitingLocation: {
-    type: DataTypes.STRING(100),
-    field: 'waiting_location'
-  },
-  currentLocationId: {
-    type: DataTypes.UUID,
-    field: 'current_location_id'
-  },
-  registrationTime: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW,
-    field: 'registration_time'
-  },
-  triageTime: {
-    type: DataTypes.DATE,
-    field: 'triage_time'
-  },
-  consultationStartTime: {
-    type: DataTypes.DATE,
-    field: 'consultation_start_time'
-  },
-  consultationEndTime: {
-    type: DataTypes.DATE,
-    field: 'consultation_end_time'
-  },
-  totalWaitingMinutes: {
-    type: DataTypes.INTEGER,
-    field: 'total_waiting_minutes'
-  },
-  chiefComplaint: {
-    type: DataTypes.TEXT,
-    field: 'chief_complaint'
-  },
-  presentingSymptoms: {
-    type: DataTypes.TEXT,
-    field: 'presenting_symptoms'
-  },
-  vitalSigns: {
-    type: DataTypes.JSONB,
-    field: 'vital_signs'
-  },
-  paymentStatus: {
-    type: DataTypes.ENUM('unpaid', 'partial', 'paid', 'billed-later', 'waived'),
-    defaultValue: 'unpaid',
-    field: 'payment_status'
-  },
-  paymentType: {
-    type: DataTypes.ENUM('self-pay', 'corporate', 'insurance', 'government', 'ngo'),
-    defaultValue: 'self-pay',
-    field: 'payment_type'
-  },
-  corporateScheme: {
-    type: DataTypes.STRING(200),
-    field: 'corporate_scheme'
-  },
-  referredFrom: {
-    type: DataTypes.STRING(200),
-    field: 'referred_from'
-  },
-  notes: DataTypes.TEXT,
-  createdBy: {
-    type: DataTypes.UUID,
-    field: 'created_by'
+class Encounter {
+  static async create(encounterData) {
+    const id = uuidv4();
+    const query = `
+      INSERT INTO encounters (
+        id, patient_id, encounter_type, status, triage_level,
+        department_id, clinic_id, doctor_id, waiting_location,
+        chief_complaint, payment_type, payment_status, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      RETURNING *
+    `;
+    
+    const values = [
+      id,
+      encounterData.patientId,
+      encounterData.encounterType || 'outpatient',
+      encounterData.status || 'registered',
+      encounterData.triageLevel || 'routine',
+      encounterData.departmentId,
+      encounterData.clinicId,
+      encounterData.doctorId,
+      encounterData.waitingLocation || 'reception',
+      encounterData.chiefComplaint,
+      encounterData.paymentType || 'self-pay',
+      encounterData.paymentStatus || 'unpaid',
+      encounterData.createdBy
+    ];
+    
+    const result = await pool.query(query, values);
+    return result.rows[0];
   }
-}, {
-  tableName: 'encounters',
-  timestamps: true,
-  underscored: true
-});
-
-// Class methods
-Encounter.getActiveEncounters = async function(clinicId) {
-  return await this.findAll({
-    where: {
-      clinicId,
-      status: ['waiting', 'in-consultation']
-    },
-    order: [['registrationTime', 'ASC']],
-    include: ['patient', 'doctor']
-  });
-};
-
-Encounter.getEncountersByDate = async function(date) {
-  const startOfDay = new Date(date);
-  startOfDay.setHours(0, 0, 0, 0);
-  const endOfDay = new Date(date);
-  endOfDay.setHours(23, 59, 59, 999);
   
-  return await this.findAll({
-    where: {
-      registrationTime: {
-        [sequelize.Sequelize.Op.between]: [startOfDay, endOfDay]
-      }
-    },
-    order: [['registrationTime', 'ASC']]
-  });
-};
+  static async findByPk(id) {
+    const query = `
+      SELECT e.*, 
+             p.first_name, p.last_name, p.uhid,
+             s.first_name as doctor_first_name, s.last_name as doctor_last_name
+      FROM encounters e
+      LEFT JOIN patients p ON e.patient_id = p.id
+      LEFT JOIN staff s ON e.doctor_id = s.id
+      WHERE e.id = $1
+    `;
+    const result = await pool.query(query, [id]);
+    return result.rows[0];
+  }
+  
+  static async getActiveEncounters(clinicId) {
+    const query = `
+      SELECT e.*, 
+             p.first_name, p.last_name, p.uhid,
+             s.first_name as doctor_first_name, s.last_name as doctor_last_name
+      FROM encounters e
+      LEFT JOIN patients p ON e.patient_id = p.id
+      LEFT JOIN staff s ON e.doctor_id = s.id
+      WHERE e.clinic_id = $1 
+        AND e.status IN ('waiting', 'in-consultation')
+      ORDER BY e.registration_time ASC
+    `;
+    const result = await pool.query(query, [clinicId]);
+    return result.rows;
+  }
+  
+  static async getEncountersByDate(date) {
+    const startOfDay = new Date(date);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(date);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    const query = `
+      SELECT e.*, 
+             p.first_name, p.last_name, p.uhid
+      FROM encounters e
+      LEFT JOIN patients p ON e.patient_id = p.id
+      WHERE e.registration_time BETWEEN $1 AND $2
+      ORDER BY e.registration_time ASC
+    `;
+    const result = await pool.query(query, [startOfDay, endOfDay]);
+    return result.rows;
+  }
+  
+  static async update(id, updateData) {
+    const fields = [];
+    const values = [];
+    let paramCount = 1;
+    
+    Object.keys(updateData).forEach(key => {
+      fields.push(`${key} = $${paramCount}`);
+      values.push(updateData[key]);
+      paramCount++;
+    });
+    
+    values.push(id);
+    const query = `
+      UPDATE encounters 
+      SET ${fields.join(', ')}, updated_at = NOW()
+      WHERE id = $${paramCount}
+      RETURNING *
+    `;
+    
+    const result = await pool.query(query, values);
+    return result.rows[0];
+  }
+}
 
 module.exports = Encounter;
 
