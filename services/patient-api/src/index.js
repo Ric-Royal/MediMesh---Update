@@ -13,6 +13,7 @@ const { auditLogger } = require('./middleware/audit');
 const FileAttachment = require('./models/FileAttachment');
 const UserSettings = require('./models/UserSettings');
 const SystemSettings = require('./models/SystemSettings');
+const Payment = require('./models/Payment');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -22,6 +23,7 @@ const healthRoutes = require('./routes/health');
 const seedRoutes = require('./routes/seed');
 const fileRoutes = require('./routes/files');
 const settingsRoutes = require('./routes/settings');
+const paymentRoutes = require('./routes/payments');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -78,11 +80,22 @@ if (process.env.NODE_ENV === 'development') {
   app.use('/api/seed', seedRoutes); // Data seeding for testing
 }
 
-// Protected routes
+// Conditional auth middleware - skip auth for M-Pesa callback
+const conditionalAuth = (req, res, next) => {
+  // Skip authentication for M-Pesa callback webhook
+  if (req.path === '/mpesa/callback' && req.method === 'POST') {
+    return next();
+  }
+  // Apply authentication for all other routes
+  return authenticateToken(req, res, next);
+};
+
+// Protected routes (with exception for M-Pesa callback)
 app.use('/api/patients', authenticateToken, patientRoutes);
 app.use('/api/records', authenticateToken, recordRoutes);
 app.use('/api/files', authenticateToken, fileRoutes);
 app.use('/api/settings', authenticateToken, settingsRoutes);
+app.use('/api/payments', conditionalAuth, paymentRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -125,6 +138,7 @@ async function initialize() {
     await FileAttachment.createTable();
     await UserSettings.createTable();
     await SystemSettings.createTable();
+    await Payment.createTable();
     
     app.listen(PORT, () => {
       logger.info(`MediMesh Patient API server running on port ${PORT}`);

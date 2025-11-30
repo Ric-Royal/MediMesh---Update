@@ -334,6 +334,69 @@ const apiService = {
     }
   },
 
+  // Payment API
+  payments: {
+    // Initiate M-Pesa STK Push
+    initiateSTKPush: async (paymentData) => {
+      try {
+        const response = await api.post('/api/payments/mpesa/stk-push', paymentData);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    // Get payment by ID
+    getById: async (id) => {
+      try {
+        const response = await api.get(`/api/payments/${id}`);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    // Get all payments for a patient
+    getPatientPayments: async (patientId, params = {}) => {
+      try {
+        const response = await api.get(`/api/payments/patient/${patientId}`, { params });
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    // Query M-Pesa transaction status
+    queryPaymentStatus: async (paymentId) => {
+      try {
+        const response = await api.get(`/api/payments/mpesa/query/${paymentId}`);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    // Get payment statistics
+    getStatistics: async (params = {}) => {
+      try {
+        const response = await api.get('/api/payments/statistics', { params });
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    // Create manual payment record
+    create: async (paymentData) => {
+      try {
+        const response = await api.post('/api/payments', paymentData);
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    }
+  },
+
   // Settings Management
   settings: {
     // User Settings

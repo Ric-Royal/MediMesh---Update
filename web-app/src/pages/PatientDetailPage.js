@@ -35,12 +35,15 @@ import {
   Home as HomeIcon,
   CalendarToday as CalendarIcon,
   Person as PersonIcon,
-  Description as DescriptionIcon
+  Description as DescriptionIcon,
+  Payment as PaymentIcon
 } from '@mui/icons-material';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import PaymentDialog from '../components/payments/PaymentDialog';
+import PaymentHistory from '../components/payments/PaymentHistory';
 
 const PatientDetailPage = () => {
   const { id } = useParams();
@@ -55,6 +58,8 @@ const PatientDetailPage = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [successMessage, setSuccessMessage] = useState(location.state?.message || null);
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [paymentHistoryKey, setPaymentHistoryKey] = useState(0);
 
   useEffect(() => {
     fetchPatientData();
@@ -152,6 +157,12 @@ const PatientDetailPage = () => {
     setActiveTab(newValue);
   };
 
+  const handlePaymentSuccess = (paymentData) => {
+    setSuccessMessage(`Payment request sent successfully! Checkout ID: ${paymentData.checkout_request_id}`);
+    // Refresh payment history
+    setPaymentHistoryKey(prev => prev + 1);
+  };
+
   if (loading) {
     return <LoadingSpinner message="Loading patient information..." />;
   }
@@ -208,6 +219,14 @@ const PatientDetailPage = () => {
         <Box sx={{ display: 'flex', gap: 2 }}>
           {(hasRole('doctor') || hasRole('nurse') || hasRole('admin')) && (
             <>
+              <Button
+                variant="contained"
+                color="success"
+                startIcon={<PaymentIcon />}
+                onClick={() => setPaymentDialogOpen(true)}
+              >
+                Request Payment
+              </Button>
               <Button
                 variant="contained"
                 startIcon={<AddIcon />}
@@ -368,6 +387,7 @@ const PatientDetailPage = () => {
       <Paper sx={{ mb: 2 }}>
         <Tabs value={activeTab} onChange={handleTabChange}>
           <Tab label={`Medical Records (${medicalRecords.length})`} />
+          <Tab label="Payments" />
           <Tab label="Summary" />
         </Tabs>
       </Paper>
@@ -467,6 +487,12 @@ const PatientDetailPage = () => {
       )}
 
       {activeTab === 1 && (
+        <Box>
+          <PaymentHistory key={paymentHistoryKey} patientId={patient.id} />
+        </Box>
+      )}
+
+      {activeTab === 2 && (
         <Paper sx={{ p: 3 }}>
           <Typography variant="h6" gutterBottom>
             Patient Summary
@@ -514,6 +540,14 @@ const PatientDetailPage = () => {
           </Grid>
         </Paper>
       )}
+
+      {/* Payment Dialog */}
+      <PaymentDialog
+        open={paymentDialogOpen}
+        onClose={() => setPaymentDialogOpen(false)}
+        patient={patient}
+        onSuccess={handlePaymentSuccess}
+      />
     </Box>
   );
 };

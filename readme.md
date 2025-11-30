@@ -14,6 +14,7 @@ MediMesh is a full-stack medical data management platform designed for healthcar
 ### ✨ Key Features
 
 - **Complete CRUD Operations** - Full patient and medical record management
+- **M-Pesa Payments** - Lipa Na M-Pesa Online integration via Daraja 3.0 API
 - **HIPAA Compliance** - Comprehensive audit trails and data protection
 - **Role-Based Access Control** - Doctor, Nurse, Admin, and Viewer roles
 - **Enterprise Authentication** - Keycloak integration with JWT tokens

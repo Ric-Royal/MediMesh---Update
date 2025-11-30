@@ -21,7 +21,8 @@ import {
   TrendingUp as TrendingUpIcon,
   AccessTime as AccessTimeIcon,
   Add as AddIcon,
-  HealthAndSafety as HealthIcon
+  HealthAndSafety as HealthIcon,
+  Payment as PaymentIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import apiService from '../services/api';
@@ -63,6 +64,7 @@ const StatCard = ({ title, value, icon, subtitle, color = 'primary', trend }) =>
 const DashboardPage = () => {
   const [patientStats, setPatientStats] = useState(null);
   const [recordStats, setRecordStats] = useState(null);
+  const [paymentStats, setPaymentStats] = useState(null);
   const [recentRecords, setRecentRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -76,15 +78,30 @@ const DashboardPage = () => {
         setLoading(true);
         setError(null);
 
-        const [patientStatsResponse, recordStatsResponse, recentRecordsResponse] = await Promise.all([
+        // Fetch payment stats along with other data
+        const promises = [
           apiService.patients.getStatistics(),
           apiService.medicalRecords.getStatistics(),
           apiService.medicalRecords.getAll({ limit: 5, offset: 0 })
-        ]);
+        ];
 
-        setPatientStats(patientStatsResponse.data);
-        setRecordStats(recordStatsResponse.data);
-        setRecentRecords(recentRecordsResponse.data || []);
+        // Try to fetch payment stats (may fail if not configured)
+        try {
+          promises.push(apiService.payments.getStatistics());
+        } catch (err) {
+          console.log('Payment stats not available');
+        }
+
+        const responses = await Promise.all(promises);
+
+        setPatientStats(responses[0].data);
+        setRecordStats(responses[1].data);
+        setRecentRecords(responses[2].data || []);
+        
+        // Set payment stats if available
+        if (responses[3]) {
+          setPaymentStats(responses[3].data);
+        }
       } catch (err) {
         console.error('Error fetching dashboard data:', err);
         setError('Failed to load dashboard data. Please try again.');
@@ -203,20 +220,20 @@ const DashboardPage = () => {
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            title="Record Types"
-            value={recordStats?.record_types_count || '0'}
-            icon={<HealthIcon fontSize="large" />}
-            subtitle="Different record categories"
+            title="Total Revenue"
+            value={paymentStats ? `KES ${parseFloat(paymentStats.total_revenue || 0).toLocaleString()}` : 'KES 0'}
+            icon={<PaymentIcon fontSize="large" />}
+            subtitle={`${paymentStats?.successful_transactions || 0} successful payments`}
             color="success"
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
-            title="Average Age"
-            value={patientStats?.avg_age ? Math.round(patientStats.avg_age) : '0'}
+            title="Pending Payments"
+            value={paymentStats ? `KES ${parseFloat(paymentStats.pending_amount || 0).toLocaleString()}` : 'KES 0'}
             icon={<TrendingUpIcon fontSize="large" />}
-            subtitle="Patient average age"
-            color="info"
+            subtitle={`${paymentStats?.total_transactions || 0} total transactions`}
+            color="warning"
           />
         </Grid>
       </Grid>

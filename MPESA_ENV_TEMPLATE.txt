@@ -1,0 +1,54 @@
+# MediMesh M-Pesa Configuration Template
+# Copy these values to your .env file and fill in your actual values
+
+# ============================================
+# M-PESA DARAJA API CONFIGURATION
+# ============================================
+
+# Environment: 'sandbox' for testing, 'production' for live
+MPESA_ENVIRONMENT=sandbox
+
+# Get these from: https://developer.safaricom.co.ke/MyApps
+# Go to your app → Keys tab
+MPESA_CONSUMER_KEY=your_consumer_key_here
+MPESA_CONSUMER_SECRET=your_consumer_secret_here
+
+# STK Push Passkey
+# Sandbox passkey: Get from Daraja documentation
+# Production passkey: Provided by Safaricom after going live
+MPESA_PASSKEY=your_passkey_here
+
+# Business Short Code
+# Sandbox: 174379 (default test paybill)
+# Production: Your actual paybill or till number
+MPESA_SHORTCODE=174379
+
+# Callback URL (MUST be publicly accessible)
+# Development (using ngrok): https://your-subdomain.ngrok.io/api/payments/mpesa/callback
+# Production: https://api.yourdomain.com/api/payments/mpesa/callback
+MPESA_CALLBACK_URL=https://your-subdomain.ngrok.io/api/payments/mpesa/callback
+
+# ============================================
+# SANDBOX TEST CREDENTIALS
+# ============================================
+# Test Consumer Key: Get from your sandbox app
+# Test Consumer Secret: Get from your sandbox app
+# Test Passkey: Provided in Daraja documentation
+# Test Phone Numbers:
+#   - 254708374149 (always successful)
+#   - 254708374148 (always fails)
+
+# ============================================
+# PRODUCTION CHECKLIST
+# ============================================
+# Before switching to production:
+# [ ] Request production credentials from Safaricom
+# [ ] Set MPESA_ENVIRONMENT=production
+# [ ] Update MPESA_CONSUMER_KEY with production key
+# [ ] Update MPESA_CONSUMER_SECRET with production secret
+# [ ] Update MPESA_PASSKEY with production passkey
+# [ ] Update MPESA_SHORTCODE with your actual business code
+# [ ] Ensure MPESA_CALLBACK_URL is HTTPS with valid SSL
+# [ ] Test with small real amounts (KES 1)
+# [ ] Monitor logs and set up alerts
+
