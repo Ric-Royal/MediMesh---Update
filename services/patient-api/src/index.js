@@ -98,6 +98,8 @@ app.use('/api/records', authenticateToken, recordRoutes);
 app.use('/api/files', authenticateToken, fileRoutes);
 app.use('/api/settings', authenticateToken, settingsRoutes);
 app.use('/api/payments', conditionalAuth, paymentRoutes);
+app.use('/api/encounters', authenticateToken, encounterRoutes);
+app.use('/api/queue', authenticateToken, queueRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
