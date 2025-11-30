@@ -19,6 +19,7 @@ import CreateRecordPage from './pages/CreateRecordPage';
 import EditPatientPage from './pages/EditPatientPage';
 import EditRecordPage from './pages/EditRecordPage';
 import SettingsPage from './pages/SettingsPage';
+import QueueManagementPage from './pages/QueueManagementPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 // Protected Route component
@@ -86,6 +87,9 @@ function App() {
                   <Route path="/records/new" element={<CreateRecordPage />} />
                   <Route path="/records/:id" element={<RecordDetailPage />} />
                   <Route path="/records/:id/edit" element={<EditRecordPage />} />
+                  
+                  {/* Queue Management - NEW! */}
+                  <Route path="/queue" element={<QueueManagementPage />} />
                   
                   {/* Settings */}
                   <Route path="/settings" element={<SettingsPage />} />

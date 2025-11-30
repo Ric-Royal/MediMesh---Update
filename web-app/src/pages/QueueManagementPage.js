@@ -34,7 +34,7 @@ import LocalHospitalIcon from '@mui/icons-material/LocalHospital';
 import WarningIcon from '@mui/icons-material/Warning';
 import ScienceIcon from '@mui/icons-material/Science';
 import CallIcon from '@mui/icons-material/Call';
-import { AppLayout } from '../components/layout/AppLayout';
+import AppLayout from '../components/layout/AppLayout';
 
 const QueueManagementPage = () => {
   const [selectedClinic, setSelectedClinic] = useState('');
