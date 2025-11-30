@@ -16,6 +16,7 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import PersonIcon from '@mui/icons-material/Person';
 import CloseIcon from '@mui/icons-material/Close';
+import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import { debounce } from '@mui/material/utils';
 
 export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID, Name, or Phone (Ctrl+K)" }) => {
@@ -23,6 +24,16 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [searchFilter, setSearchFilter] = useState('all');
+  const [includeArchived, setIncludeArchived] = useState(false);
+
+  const filterOptions = [
+    { value: 'all', label: 'All' },
+    { value: 'uhid', label: 'UHID' },
+    { value: 'phone', label: 'Phone' },
+    { value: 'encounter', label: 'Encounter' },
+    { value: 'corporate', label: 'Corporate' },
+  ];
 
   // Debounced search function
   const performSearch = useCallback(
@@ -35,7 +46,12 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
 
       setIsSearching(true);
       try {
-        const response = await fetch(`http://localhost:3001/api/patients?search=${encodeURIComponent(searchQuery)}`, {
+        const params = new URLSearchParams({
+          search: searchQuery,
+          filter: searchFilter,
+          includeArchived: includeArchived ? '1' : '0',
+        });
+        const response = await fetch(`http://localhost:3001/api/patients?${params.toString()}`, {
           headers: {
             'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}`
           }
@@ -52,7 +68,7 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
         setIsSearching(false);
       }
     }, 300),
-    []
+    [searchFilter, includeArchived]
   );
 
   const handleSearchChange = (e) => {
@@ -123,6 +139,27 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
           }
         }}
       />
+
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
+        {filterOptions.map((option) => (
+          <Chip
+            key={option.value}
+            label={option.label}
+            size="small"
+            variant={option.value === searchFilter ? 'filled' : 'outlined'}
+            color={option.value === searchFilter ? 'primary' : 'default'}
+            onClick={() => setSearchFilter(option.value)}
+            icon={option.value === searchFilter ? <FilterAltIcon fontSize="small" /> : undefined}
+          />
+        ))}
+        <Chip
+          label="Include archived"
+          size="small"
+          variant={includeArchived ? 'filled' : 'outlined'}
+          color={includeArchived ? 'secondary' : 'default'}
+          onClick={() => setIncludeArchived((prev) => !prev)}
+        />
+      </Box>
 
       {/* Search Results Dropdown */}
       {showResults && (query.length >= 2) && (

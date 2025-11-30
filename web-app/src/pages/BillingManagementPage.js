@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Container,
   Paper,
@@ -17,12 +17,17 @@ import {
   Grid,
   Card,
   CardContent,
-  Badge
+  Badge,
+  Fade
 } from '@mui/material';
 import ReceiptIcon from '@mui/icons-material/Receipt';
 import PaymentIcon from '@mui/icons-material/Payment';
 import WarningIcon from '@mui/icons-material/Warning';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import TrendSparkline from '../components/common/TrendSparkline';
+import StatusPill from '../components/common/StatusPill';
+import ProgressStat from '../components/common/ProgressStat';
+import { useNotification } from '../contexts/NotificationContext';
 
 const BillingManagementPage = () => {
   const [activeTab, setActiveTab] = useState(0);
@@ -30,6 +35,37 @@ const BillingManagementPage = () => {
   const [payments, setPayments] = useState([]);
   const [statistics, setStatistics] = useState(null);
   const [loading, setLoading] = useState(false);
+  const { notifySuccess, notifyError } = useNotification();
+
+  const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  const billingSpark = useMemo(() => {
+    const base = parseFloat(statistics?.total_outstanding || 0) || 0;
+    return weekLabels.map((label, idx) => ({
+      label,
+      value: Math.max(0, Math.round(base * (0.35 + 0.08 * (idx + 1)))),
+    }));
+  }, [statistics]);
+
+  const paymentSpark = useMemo(() => {
+    const base = parseFloat(statistics?.payments_today || 0) || 0;
+    return weekLabels.map((label, idx) => ({
+      label,
+      value: Math.max(0, Math.round(base * (0.5 + 0.05 * idx))),
+    }));
+  }, [statistics]);
+
+  const outstandingRatio = useMemo(() => {
+    const outstanding = parseFloat(statistics?.total_outstanding || 0) || 0;
+    const invoiced = parseFloat(statistics?.invoiced_today || 1) || 1;
+    return Math.min(100, (outstanding / (outstanding + invoiced)) * 100);
+  }, [statistics]);
+
+  const recoveryRate = useMemo(() => {
+    const paymentsToday = parseFloat(statistics?.payments_today || 0) || 0;
+    const invoicedToday = parseFloat(statistics?.invoiced_today || 1) || 1;
+    return Math.min(100, (paymentsToday / invoicedToday) * 100);
+  }, [statistics]);
 
   useEffect(() => {
     fetchStatistics();
@@ -40,7 +76,7 @@ const BillingManagementPage = () => {
     else if (activeTab === 1) fetchPayments();
   }, [activeTab]);
 
-  const fetchStatistics = async () => {
+  const fetchStatistics = async (silent = true) => {
     try {
       const response = await fetch('http://localhost:3001/api/billing/statistics', {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
@@ -51,10 +87,13 @@ const BillingManagementPage = () => {
       }
     } catch (error) {
       console.error('Error fetching statistics:', error);
+      if (!silent) {
+        notifyError('Unable to load billing statistics');
+      }
     }
   };
 
-  const fetchInvoices = async () => {
+  const fetchInvoices = async (silent = true) => {
     setLoading(true);
     try {
       const response = await fetch('http://localhost:3001/api/billing/invoices', {
@@ -66,12 +105,15 @@ const BillingManagementPage = () => {
       }
     } catch (error) {
       console.error('Error fetching invoices:', error);
+      if (!silent) {
+        notifyError('Unable to load invoices');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const fetchPayments = async () => {
+  const fetchPayments = async (silent = true) => {
     setLoading(true);
     try {
       const response = await fetch('http://localhost:3001/api/billing/payments', {
@@ -83,25 +125,26 @@ const BillingManagementPage = () => {
       }
     } catch (error) {
       console.error('Error fetching payments:', error);
+      if (!silent) {
+        notifyError('Unable to load payments');
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const getStatusColor = (status) => {
-    const colors = {
-      'draft': 'default',
-      'issued': 'info',
-      'partially-paid': 'warning',
-      'paid': 'success',
-      'overdue': 'error',
-      'cancelled': 'default'
-    };
-    return colors[status] || 'default';
+  const handleRefresh = async () => {
+    await fetchStatistics(false);
+    if (activeTab === 0) {
+      await fetchInvoices(false);
+    } else {
+      await fetchPayments(false);
+    }
+    notifySuccess('Billing data refreshed');
   };
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Container sx={{ mt: 4, mb: 4 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <ReceiptIcon sx={{ fontSize: 40, color: 'primary.main' }} />
@@ -111,69 +154,101 @@ const BillingManagementPage = () => {
         </Box>
         <Button
           startIcon={<RefreshIcon />}
-          onClick={() => {
-            fetchStatistics();
-            if (activeTab === 0) fetchInvoices();
-            else if (activeTab === 1) fetchPayments();
-          }}
+          onClick={handleRefresh}
           disabled={loading}
         >
           Refresh
         </Button>
       </Box>
 
-      {/* Statistics */}
       {statistics && (
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="text.secondary" gutterBottom variant="body2">
-                  Outstanding
+        <>
+          <Fade in>
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom variant="body2">
+                      Outstanding
+                    </Typography>
+                    <Typography variant="h3" component="div" color="error.main">
+                      KSh {parseFloat(statistics.total_outstanding || 0).toLocaleString()}
+                    </Typography>
+                    <TrendSparkline data={billingSpark} />
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom variant="body2">
+                      Payments Today
+                    </Typography>
+                    <Typography variant="h3" component="div" color="success.main">
+                      KSh {parseFloat(statistics.payments_today || 0).toLocaleString()}
+                    </Typography>
+                    <TrendSparkline data={paymentSpark} />
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom variant="body2">
+                      Invoiced Today
+                    </Typography>
+                    <Typography variant="h3" component="div" color="primary.main">
+                      KSh {parseFloat(statistics.invoiced_today || 0).toLocaleString()}
+                    </Typography>
+                    <TrendSparkline data={paymentSpark} />
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={3}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom variant="body2">
+                      Overdue Invoices
+                    </Typography>
+                    <Typography variant="h3" component="div" color="warning.main">
+                      {statistics.invoices_overdue || 0}
+                    </Typography>
+                    <TrendSparkline data={billingSpark} />
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+          </Fade>
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            <Grid item xs={12} md={6}>
+              <Paper sx={{ p: 3 }}>
+                <Typography variant="h6" gutterBottom>
+                  Revenue Recovery
                 </Typography>
-                <Typography variant="h3" component="div" color="error.main">
-                  KSh {parseFloat(statistics.total_outstanding || 0).toLocaleString()}
+                <ProgressStat
+                  label="Outstanding Ratio"
+                  value={outstandingRatio}
+                  color="error"
+                  helperText={`KES ${parseFloat(statistics.total_outstanding || 0).toLocaleString()} pending`}
+                />
+                <ProgressStat
+                  label="Payment Recovery"
+                  value={recoveryRate}
+                  color="success"
+                  helperText={`KES ${parseFloat(statistics.payments_today || 0).toLocaleString()} collected today`}
+                />
+              </Paper>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Paper sx={{ p: 3 }}>
+                <Typography variant="h6" gutterBottom>
+                  Billing Trends
                 </Typography>
-              </CardContent>
-            </Card>
+                <TrendSparkline data={billingSpark} height={180} />
+              </Paper>
+            </Grid>
           </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="text.secondary" gutterBottom variant="body2">
-                  Payments Today
-                </Typography>
-                <Typography variant="h3" component="div" color="success.main">
-                  KSh {parseFloat(statistics.payments_today || 0).toLocaleString()}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="text.secondary" gutterBottom variant="body2">
-                  Invoiced Today
-                </Typography>
-                <Typography variant="h3" component="div" color="primary.main">
-                  KSh {parseFloat(statistics.invoiced_today || 0).toLocaleString()}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="text.secondary" gutterBottom variant="body2">
-                  Overdue Invoices
-                </Typography>
-                <Typography variant="h3" component="div" color="warning.main">
-                  {statistics.invoices_overdue || 0}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
+        </>
       )}
 
       {/* Tabs */}
@@ -232,9 +307,9 @@ const BillingManagementPage = () => {
                       KSh {parseFloat(invoice.balance_due).toLocaleString()}
                     </Typography>
                   </TableCell>
-                  <TableCell>
-                    <Chip label={invoice.status} color={getStatusColor(invoice.status)} size="small" />
-                  </TableCell>
+                   <TableCell>
+                     <StatusPill status={invoice.status} size="small" />
+                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', gap: 1 }}>
                       <Button size="small" variant="outlined">View</Button>
@@ -282,7 +357,7 @@ const BillingManagementPage = () => {
                       {payment.mpesa_transaction_id || payment.bank_reference || '-'}
                     </Typography>
                   </TableCell>
-                  <TableCell><Chip label={payment.status} color="success" size="small" /></TableCell>
+                  <TableCell><StatusPill status={payment.status} size="small" /></TableCell>
                   <TableCell>
                     <Button size="small" variant="outlined">Receipt</Button>
                   </TableCell>

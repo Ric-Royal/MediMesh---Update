@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import io from 'socket.io-client';
 import {
   Container,
@@ -21,12 +21,20 @@ import {
   Select,
   MenuItem,
   CircularProgress,
-  Alert
+  Alert,
+  LinearProgress,
+  Fade,
+  Tooltip
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningIcon from '@mui/icons-material/Warning';
+import TrendSparkline from '../components/common/TrendSparkline';
+import StatusPill from '../components/common/StatusPill';
+import PriorityBadge from '../components/common/PriorityBadge';
+import ProgressStat from '../components/common/ProgressStat';
+import { useNotification } from '../contexts/NotificationContext';
 
 const QueueManagementPage = () => {
   const [queue, setQueue] = useState([]);
@@ -35,6 +43,7 @@ const QueueManagementPage = () => {
   const [loading, setLoading] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const socketRef = useRef(null);
+  const { notifySuccess, notifyError } = useNotification();
 
   useEffect(() => {
     // Initialize WebSocket connection
@@ -45,7 +54,7 @@ const QueueManagementPage = () => {
     socket.on('connect', () => {
       console.log('WebSocket connected');
       setWsConnected(true);
-      
+
       // Join queue room for selected clinic
       if (selectedClinic !== 'all') {
         socket.emit('join-queue', { clinicId: selectedClinic });
@@ -60,7 +69,7 @@ const QueueManagementPage = () => {
     socket.on('queue-update', (data) => {
       console.log('Received queue update:', data);
       // Refresh queue data when update is received
-      fetchQueue();
+      fetchQueue({ silent: true, showSpinner: false });
     });
 
     socketRef.current = socket;
@@ -80,27 +89,29 @@ const QueueManagementPage = () => {
   }, [selectedClinic]);
 
   useEffect(() => {
-    fetchQueue();
-    fetchStatistics();
-    
+    fetchQueue({ silent: true });
+    fetchStatistics({ silent: true });
+
     // Auto-refresh every 30 seconds as backup
     const interval = setInterval(() => {
       if (!wsConnected) {
-        fetchQueue();
-        fetchStatistics();
+        fetchQueue({ silent: true, showSpinner: false });
+        fetchStatistics({ silent: true });
       }
     }, 30000);
 
     return () => clearInterval(interval);
   }, [selectedClinic, wsConnected]);
 
-  const fetchQueue = async () => {
-    setLoading(true);
+  const fetchQueue = async ({ silent = true, showSpinner = true } = {}) => {
+    if (showSpinner) {
+      setLoading(true);
+    }
     try {
       const endpoint = selectedClinic === 'all'
         ? 'http://localhost:3001/api/queue'
         : `http://localhost:3001/api/queue/clinic/${selectedClinic}`;
-      
+
       const response = await fetch(endpoint, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
       });
@@ -108,17 +119,28 @@ const QueueManagementPage = () => {
       if (response.ok) {
         const data = await response.json();
         setQueue(data.data || []);
+        if (!silent) {
+          notifySuccess('Queue updated');
+        }
       }
     } catch (error) {
       console.error('Error fetching queue:', error);
+      if (!silent) {
+        notifyError('Unable to load queue');
+      }
     } finally {
-      setLoading(false);
+      if (showSpinner) {
+        setLoading(false);
+      }
     }
   };
 
-  const fetchStatistics = async () => {
-    if (selectedClinic === 'all') return;
-    
+  const fetchStatistics = async ({ silent = true } = {}) => {
+    if (selectedClinic === 'all') {
+      setStatistics(null);
+      return;
+    }
+
     try {
       const response = await fetch(`http://localhost:3001/api/queue/clinic/${selectedClinic}/statistics`, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
@@ -130,7 +152,15 @@ const QueueManagementPage = () => {
       }
     } catch (error) {
       console.error('Error fetching statistics:', error);
+      if (!silent) {
+        notifyError('Unable to load queue insights');
+      }
     }
+  };
+
+  const handleRefresh = () => {
+    fetchQueue({ silent: false });
+    fetchStatistics({ silent: true });
   };
 
   const getStatusColor = (status) => {
@@ -150,8 +180,88 @@ const QueueManagementPage = () => {
     return 'error.main';
   };
 
+  const getWaitTimeVariant = (minutes) => {
+    if (minutes < 15) return 'success';
+    if (minutes < 30) return 'warning';
+    return 'error';
+  };
+
+  const derivedStats = useMemo(() => {
+    const waitingCount = queue.filter((entry) => entry.status === 'waiting').length;
+    const inServiceCount = queue.filter((entry) => entry.status === 'in-service').length;
+    const completedCount = queue.filter((entry) => entry.status === 'completed').length;
+    const averageWait = queue.length
+      ? Math.round(
+          queue.reduce((sum, entry) => sum + (entry.waitingMinutes || 0), 0) / queue.length
+        )
+      : 0;
+
+    return {
+      totalWaiting: statistics?.totalWaiting ?? (queue.length ? waitingCount || queue.length : 0),
+      inService: statistics?.inService ?? inServiceCount,
+      averageWaitTime: statistics?.averageWaitTime ?? averageWait,
+      completedToday: statistics?.completedToday ?? completedCount,
+    };
+  }, [statistics, queue]);
+
+  const queueTrendData = useMemo(() => {
+    if (!queue.length) return [];
+    return queue.slice(0, 8).map((entry, idx) => ({
+      label: entry.patientName?.split(' ')[0] || `P${idx + 1}`,
+      value: entry.waitingMinutes || 0,
+    }));
+  }, [queue]);
+
+  const emergencyCount = useMemo(
+    () =>
+      queue.filter((entry) =>
+        ['emergency', 'stat'].includes((entry.priority || '').toLowerCase())
+      ).length,
+    [queue]
+  );
+
+  const serviceUtilization = queue.length
+    ? Math.round((derivedStats.inService / queue.length) * 100)
+    : 0;
+  const averageWaitPercent = Math.min(100, (derivedStats.averageWaitTime / 60) * 100);
+  const emergencyLoad = queue.length ? Math.round((emergencyCount / queue.length) * 100) : 0;
+
+  const statCards = useMemo(
+    () => [
+      {
+        title: 'Total Waiting',
+        value: derivedStats.totalWaiting || 0,
+        subtitle: `${queue.length} patients in scope`,
+        color: 'warning.main',
+        data: queueTrendData,
+      },
+      {
+        title: 'In Service',
+        value: derivedStats.inService || 0,
+        subtitle: 'Actively being attended',
+        color: 'primary.main',
+        data: queueTrendData,
+      },
+      {
+        title: 'Avg Wait Time',
+        value: `${derivedStats.averageWaitTime || 0} min`,
+        subtitle: 'Target &lt; 20 mins',
+        color: 'info.main',
+        data: queueTrendData,
+      },
+      {
+        title: 'Completed Today',
+        value: derivedStats.completedToday || 0,
+        subtitle: 'Visits closed today',
+        color: 'success.main',
+        data: queueTrendData,
+      },
+    ],
+    [derivedStats, queue.length, queueTrendData]
+  );
+
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Container sx={{ mt: 4, mb: 4 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -167,7 +277,7 @@ const QueueManagementPage = () => {
         </Box>
         <Button
           startIcon={<RefreshIcon />}
-          onClick={() => { fetchQueue(); fetchStatistics(); }}
+          onClick={handleRefresh}
           disabled={loading}
         >
           Refresh
@@ -181,59 +291,30 @@ const QueueManagementPage = () => {
         </Alert>
       )}
 
-      {/* Statistics Cards */}
-      {statistics && (
+      <Fade in>
         <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="text.secondary" gutterBottom variant="body2">
-                  Total Waiting
-                </Typography>
-                <Typography variant="h3" component="div">
-                  {statistics.totalWaiting || 0}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="text.secondary" gutterBottom variant="body2">
-                  In Service
-                </Typography>
-                <Typography variant="h3" component="div" color="primary">
-                  {statistics.inService || 0}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="text.secondary" gutterBottom variant="body2">
-                  Avg Wait Time
-                </Typography>
-                <Typography variant="h3" component="div" color="warning.main">
-                  {statistics.averageWaitTime || 0}m
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <Card>
-              <CardContent>
-                <Typography color="text.secondary" gutterBottom variant="body2">
-                  Completed Today
-                </Typography>
-                <Typography variant="h3" component="div" color="success.main">
-                  {statistics.completedToday || 0}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
+          {statCards.map((card, index) => (
+            <Grid item xs={12} sm={6} md={3} key={`${card.title}-${index}`}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Typography color="text.secondary" gutterBottom variant="body2">
+                    {card.title}
+                  </Typography>
+                  <Typography variant="h4" component="div" sx={{ color: card.color }} fontWeight={700}>
+                    {card.value}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    {card.subtitle}
+                  </Typography>
+                  <Box sx={{ mt: 2 }}>
+                    <TrendSparkline data={card.data} />
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+          ))}
         </Grid>
-      )}
+      </Fade>
 
       {/* Clinic Filter */}
       <Paper sx={{ p: 2, mb: 3 }}>
@@ -252,6 +333,47 @@ const QueueManagementPage = () => {
         </FormControl>
       </Paper>
 
+      <Grid container spacing={3} sx={{ mb: 3 }}>
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, height: '100%' }}>
+            <Typography variant="h6" gutterBottom>
+              Queue Health
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <ProgressStat
+                label="Service Utilization"
+                value={serviceUtilization}
+                color="primary"
+                helperText={`${derivedStats.inService || 0} rooms in use`}
+              />
+              <ProgressStat
+                label="Average Wait SLA"
+                value={averageWaitPercent}
+                color="warning"
+                helperText={`${derivedStats.averageWaitTime || 0} minutes avg`}
+              />
+              <ProgressStat
+                label="Emergency Load"
+                value={emergencyLoad}
+                color="error"
+                helperText={`${emergencyCount} critical cases`}
+              />
+            </Box>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, height: '100%' }}>
+            <Typography variant="h6" gutterBottom>
+              Wait Time Trend
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Live sparkline of the last 8 patients in queue
+            </Typography>
+            <TrendSparkline data={queueTrendData} height={180} />
+          </Paper>
+        </Grid>
+      </Grid>
+
       {/* Queue Table */}
       <TableContainer component={Paper}>
         <Table>
@@ -261,6 +383,7 @@ const QueueManagementPage = () => {
               <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Patient</TableCell>
               <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>UHID</TableCell>
               <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Clinic</TableCell>
+              <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Priority</TableCell>
               <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Wait Time</TableCell>
               <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Status</TableCell>
               <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Actions</TableCell>
@@ -269,13 +392,13 @@ const QueueManagementPage = () => {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} align="center">
+                <TableCell colSpan={8} align="center">
                   <CircularProgress />
                 </TableCell>
               </TableRow>
             ) : queue.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} align="center">
+                <TableCell colSpan={8} align="center">
                   <Typography variant="body1" color="text.secondary" sx={{ py: 4 }}>
                     No patients in queue
                   </Typography>
@@ -283,7 +406,7 @@ const QueueManagementPage = () => {
               </TableRow>
             ) : (
               queue.map((entry, index) => (
-                <TableRow 
+                <TableRow
                   key={entry.id}
                   sx={{
                     backgroundColor: entry.isEmergency ? 'error.light' : 'inherit'
@@ -301,20 +424,29 @@ const QueueManagementPage = () => {
                   </TableCell>
                   <TableCell>{entry.clinicName || '-'}</TableCell>
                   <TableCell>
+                    <PriorityBadge
+                      priority={entry.priority || (entry.isEmergency ? 'emergency' : 'routine')}
+                      size="small"
+                    />
+                  </TableCell>
+                  <TableCell>
                     <Typography
                       fontWeight="bold"
                       color={getWaitTimeColor(entry.waitingMinutes || 0)}
                     >
                       {entry.waitingMinutes || 0} min
                     </Typography>
+                    <Tooltip title="Target &lt; 30 min" placement="top">
+                      <LinearProgress
+                        variant="determinate"
+                        value={Math.min(100, ((entry.waitingMinutes || 0) / 60) * 100)}
+                        color={getWaitTimeVariant(entry.waitingMinutes || 0)}
+                        sx={{ mt: 1, height: 6, borderRadius: 999 }}
+                      />
+                    </Tooltip>
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      label={entry.status}
-                      color={getStatusColor(entry.status)}
-                      size="small"
-                      icon={entry.status === 'completed' ? <CheckCircleIcon /> : undefined}
-                    />
+                    <StatusPill status={entry.status} size="small" />
                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', gap: 1 }}>
@@ -343,6 +475,9 @@ const QueueManagementPage = () => {
           <Chip label="Called" color="info" size="small" />
           <Chip label="In Service" color="primary" size="small" />
           <Chip label="Completed" color="success" size="small" icon={<CheckCircleIcon />} />
+          <PriorityBadge priority="routine" />
+          <PriorityBadge priority="urgent" />
+          <PriorityBadge priority="stat" />
         </Box>
       </Paper>
     </Container>

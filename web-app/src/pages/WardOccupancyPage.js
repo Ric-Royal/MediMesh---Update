@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Container,
   Paper,
@@ -21,14 +21,17 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Button,
-  CircularProgress
+  CircularProgress,
+  Fade
 } from '@mui/material';
 import ViewListIcon from '@mui/icons-material/ViewList';
 import ViewModuleIcon from '@mui/icons-material/ViewModule';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import BedIcon from '@mui/icons-material/Bed';
 import PersonIcon from '@mui/icons-material/Person';
-import AppLayout from '../components/layout/AppLayout';
+import StatusPill from '../components/common/StatusPill';
+import ProgressStat from '../components/common/ProgressStat';
+import { useNotification } from '../contexts/NotificationContext';
 
 const WardOccupancyPage = () => {
   const [selectedWard, setSelectedWard] = useState('');
@@ -37,6 +40,7 @@ const WardOccupancyPage = () => {
   const [statistics, setStatistics] = useState(null);
   const [viewMode, setViewMode] = useState('table');
   const [loading, setLoading] = useState(false);
+  const { notifySuccess, notifyError } = useNotification();
 
   useEffect(() => {
     fetchWards();
@@ -63,6 +67,7 @@ const WardOccupancyPage = () => {
       }
     } catch (error) {
       console.error('Error fetching wards:', error);
+      notifyError('Unable to load wards');
     }
   };
 
@@ -79,6 +84,7 @@ const WardOccupancyPage = () => {
       }
     } catch (error) {
       console.error('Error fetching occupancy:', error);
+      notifyError('Unable to load occupancy');
     } finally {
       setLoading(false);
     }
@@ -96,8 +102,25 @@ const WardOccupancyPage = () => {
       }
     } catch (error) {
       console.error('Error fetching statistics:', error);
+      notifyError('Unable to load ward statistics');
     }
   };
+
+  const handleRefresh = () => {
+    fetchOccupancy();
+    fetchStatistics();
+    notifySuccess('Ward data refreshed');
+  };
+
+  const occupancyRate = useMemo(() => {
+    if (!statistics) return 0;
+    return Math.round(((statistics.occupied || 0) / (statistics.total_beds || 1)) * 100);
+  }, [statistics]);
+
+  const availabilityRate = useMemo(() => {
+    if (!statistics) return 0;
+    return Math.round(((statistics.available || 0) / (statistics.total_beds || 1)) * 100);
+  }, [statistics]);
 
   const getBedStatusColor = (status) => {
     const colors = {
@@ -111,8 +134,7 @@ const WardOccupancyPage = () => {
   };
 
   return (
-    <AppLayout>
-      <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Container sx={{ mt: 4, mb: 4 }}>
         {/* Header */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4" component="h1" fontWeight="bold">
@@ -134,7 +156,7 @@ const WardOccupancyPage = () => {
             </ToggleButtonGroup>
             <Button
               startIcon={<RefreshIcon />}
-              onClick={() => { fetchOccupancy(); fetchStatistics(); }}
+              onClick={handleRefresh}
               disabled={loading}
             >
               Refresh
@@ -142,71 +164,109 @@ const WardOccupancyPage = () => {
           </Box>
         </Box>
 
-        {/* Statistics Cards */}
-        {statistics && (
+      {/* Statistics Cards */}
+      {statistics && (
+        <>
+          <Fade in>
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom variant="body2">
+                      Total Beds
+                    </Typography>
+                    <Typography variant="h3" component="div">
+                      {statistics.total_beds || 0}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom variant="body2">
+                      Occupied
+                    </Typography>
+                    <Typography variant="h3" component="div" color="error.main">
+                      {statistics.occupied || 0}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom variant="body2">
+                      Available
+                    </Typography>
+                    <Typography variant="h3" component="div" color="success.main">
+                      {statistics.available || 0}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom variant="body2">
+                      Isolation
+                    </Typography>
+                    <Typography variant="h3" component="div" color="warning.main">
+                      {statistics.isolation || 0}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+              <Grid item xs={12} sm={6} md={2.4}>
+                <Card>
+                  <CardContent>
+                    <Typography color="text.secondary" gutterBottom variant="body2">
+                      Discharges Today
+                    </Typography>
+                    <Typography variant="h3" component="div" color="primary">
+                      {statistics.discharges_today || 0}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+          </Fade>
           <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid item xs={12} sm={6} md={2.4}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom variant="body2">
-                    Total Beds
-                  </Typography>
-                  <Typography variant="h3" component="div">
-                    {statistics.total_beds || 0}
-                  </Typography>
-                </CardContent>
-              </Card>
+            <Grid item xs={12} md={6}>
+              <Paper sx={{ p: 3 }}>
+                <Typography variant="h6" gutterBottom>
+                  Occupancy Snapshot
+                </Typography>
+                <ProgressStat
+                  label="Bed Occupancy"
+                  value={occupancyRate}
+                  color="error"
+                  helperText={`${statistics.occupied || 0} / ${statistics.total_beds || 0} beds in use`}
+                />
+                <ProgressStat
+                  label="Availability"
+                  value={availabilityRate}
+                  color="success"
+                  helperText={`${statistics.available || 0} beds free`}
+                />
+              </Paper>
             </Grid>
-            <Grid item xs={12} sm={6} md={2.4}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom variant="body2">
-                    Occupied
-                  </Typography>
-                  <Typography variant="h3" component="div" color="error.main">
-                    {statistics.occupied || 0}
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} sm={6} md={2.4}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom variant="body2">
-                    Available
-                  </Typography>
-                  <Typography variant="h3" component="div" color="success.main">
-                    {statistics.available || 0}
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} sm={6} md={2.4}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom variant="body2">
-                    Isolation
-                  </Typography>
-                  <Typography variant="h3" component="div" color="warning.main">
-                    {statistics.isolation || 0}
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} sm={6} md={2.4}>
-              <Card>
-                <CardContent>
-                  <Typography color="text.secondary" gutterBottom variant="body2">
-                    Discharges Today
-                  </Typography>
-                  <Typography variant="h3" component="div" color="primary">
-                    {statistics.discharges_today || 0}
-                  </Typography>
-                </CardContent>
-              </Card>
+            <Grid item xs={12} md={6}>
+              <Paper sx={{ p: 3 }}>
+                <Typography variant="h6" gutterBottom>
+                  Daily Flow
+                </Typography>
+                <ProgressStat
+                  label="Discharge Turnover"
+                  value={Math.min(100, (statistics.discharges_today || 0) * 10)}
+                  color="info"
+                  helperText={`${statistics.discharges_today || 0} discharges today`}
+                />
+              </Paper>
             </Grid>
           </Grid>
-        )}
+        </>
+      )}
 
         {/* Ward Selector */}
         <Paper sx={{ p: 2, mb: 3 }}>
@@ -258,7 +318,7 @@ const WardOccupancyPage = () => {
                   </TableRow>
                 ) : (
                   occupancy.map((bed) => (
-                    <TableRow 
+                    <TableRow
                       key={bed.id}
                       sx={{
                         backgroundColor: bed.status === 'occupied' ? 'action.hover' : 'inherit'
@@ -305,11 +365,7 @@ const WardOccupancyPage = () => {
                         ) : '-'}
                       </TableCell>
                       <TableCell>
-                        <Chip 
-                          label={bed.status} 
-                          color={getBedStatusColor(bed.status)}
-                          size="small"
-                        />
+                        <StatusPill status={bed.status} size="small" />
                       </TableCell>
                     </TableRow>
                   ))
@@ -330,7 +386,7 @@ const WardOccupancyPage = () => {
               </Grid>
             ) : occupancy.map((bed) => (
               <Grid item xs={12} sm={6} md={4} lg={3} key={bed.id}>
-                <Card 
+                <Card
                   sx={{
                     border: bed.status === 'occupied' ? '2px solid' : '1px solid',
                     borderColor: bed.status === 'occupied' ? 'error.main' : 'divider',
@@ -342,13 +398,9 @@ const WardOccupancyPage = () => {
                       <Typography variant="h6" fontWeight="bold">
                         {bed.bed_number}
                       </Typography>
-                      <Chip 
-                        label={bed.status} 
-                        color={getBedStatusColor(bed.status)}
-                        size="small"
-                      />
+                      <StatusPill status={bed.status} size="small" />
                     </Box>
-                    
+
                     {bed.first_name ? (
                       <>
                         <Typography variant="body1" fontWeight="medium" gutterBottom>
@@ -362,9 +414,9 @@ const WardOccupancyPage = () => {
                             Dr. {bed.doctor_last_name}
                           </Typography>
                         )}
-                        <Chip 
-                          label={bed.payment_type} 
-                          size="small" 
+                        <Chip
+                          label={bed.payment_type}
+                          size="small"
                           sx={{ mt: 1 }}
                         />
                       </>
@@ -394,9 +446,7 @@ const WardOccupancyPage = () => {
           </Box>
         </Paper>
       </Container>
-    </AppLayout>
   );
 };
 
 export default WardOccupancyPage;
-

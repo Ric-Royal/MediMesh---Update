@@ -80,7 +80,7 @@ const PharmacyManagementPage = () => {
       const url = searchTerm
         ? `http://localhost:3001/api/pharmacy/drugs?search=${searchTerm}`
         : 'http://localhost:3001/api/pharmacy/drugs';
-      
+
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
       });
@@ -139,7 +139,7 @@ const PharmacyManagementPage = () => {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Container sx={{ mt: 4, mb: 4 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -164,8 +164,8 @@ const PharmacyManagementPage = () => {
 
       {/* Reorder Alerts */}
       {reorderAlerts.length > 0 && (
-        <Alert 
-          severity="warning" 
+        <Alert
+          severity="warning"
           icon={<WarningIcon />}
           sx={{ mb: 3 }}
         >
@@ -232,22 +232,22 @@ const PharmacyManagementPage = () => {
       {/* Tabs */}
       <Paper sx={{ mb: 2 }}>
         <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
-          <Tab 
-            icon={<InventoryIcon />} 
-            label="Drug Inventory" 
+          <Tab
+            icon={<InventoryIcon />}
+            label="Drug Inventory"
             iconPosition="start"
           />
-          <Tab 
+          <Tab
             icon={
               <Badge badgeContent={statistics?.pending_prescriptions || 0} color="warning">
                 <ReceiptIcon />
               </Badge>
-            } 
-            label="Prescriptions Queue" 
+            }
+            label="Prescriptions Queue"
             iconPosition="start"
           />
-          <Tab 
-            icon={<WarningIcon />} 
+          <Tab
+            icon={<WarningIcon />}
             label={`Reorder Alerts (${reorderAlerts.length})`}
             iconPosition="start"
           />
@@ -300,8 +300,8 @@ const PharmacyManagementPage = () => {
               <TableBody>
                 {drugs.map((drug) => (
                   <TableRow key={drug.id} sx={{
-                    backgroundColor: drug.current_stock === 0 ? 'error.light' : 
-                                   drug.needs_reorder ? 'warning.light' : 'inherit'
+                    backgroundColor: drug.current_stock === 0 ? 'error.light' :
+                      drug.needs_reorder ? 'warning.light' : 'inherit'
                   }}>
                     <TableCell>
                       <Typography variant="body2" fontWeight="bold">
@@ -325,11 +325,11 @@ const PharmacyManagementPage = () => {
                       {drug.strength} {drug.dosage_form}
                     </TableCell>
                     <TableCell>
-                      <Typography 
+                      <Typography
                         fontWeight="bold"
                         color={
                           drug.current_stock === 0 ? 'error.main' :
-                          drug.needs_reorder ? 'warning.main' : 'success.main'
+                            drug.needs_reorder ? 'warning.main' : 'success.main'
                         }
                       >
                         {drug.current_stock} {drug.unit_of_measure}
@@ -345,7 +345,7 @@ const PharmacyManagementPage = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Chip 
+                      <Chip
                         label={getStockStatusLabel(drug.current_stock, drug.reorder_level)}
                         color={getStockStatusColor(drug.current_stock, drug.reorder_level)}
                         size="small"
@@ -407,7 +407,7 @@ const PharmacyManagementPage = () => {
                       <Chip label={rx.uhid} size="small" />
                     </TableCell>
                     <TableCell>
-                      <Chip 
+                      <Chip
                         label={`${rx.pending_items} pending`}
                         color="warning"
                         size="small"
@@ -417,7 +417,7 @@ const PharmacyManagementPage = () => {
                       <Typography
                         color={
                           rx.waiting_minutes > 30 ? 'error.main' :
-                          rx.waiting_minutes > 15 ? 'warning.main' : 'text.primary'
+                            rx.waiting_minutes > 15 ? 'warning.main' : 'text.primary'
                         }
                         fontWeight="bold"
                       >
@@ -430,7 +430,7 @@ const PharmacyManagementPage = () => {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Chip 
+                      <Chip
                         label={rx.status}
                         color={rx.status === 'pending' ? 'warning' : 'info'}
                         size="small"

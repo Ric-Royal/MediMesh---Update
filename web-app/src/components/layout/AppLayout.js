@@ -17,7 +17,8 @@ import {
   Menu,
   MenuItem,
   Divider,
-  Chip
+  Chip,
+  Tooltip,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -25,7 +26,6 @@ import {
   People as PeopleIcon,
   Description as DescriptionIcon,
   Settings as SettingsIcon,
-  AccountCircle,
   Logout,
   LocalHospital as HospitalIcon,
   Queue as QueueIcon,
@@ -33,9 +33,13 @@ import {
   LocalPharmacy as PharmacyIcon,
   Science as LabIcon,
   Receipt as BillingIcon,
-  CameraAlt as RadiologyIcon
+  CameraAlt as RadiologyIcon,
+  DarkMode as DarkModeIcon,
+  LightMode as LightModeIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTheme } from '../../contexts/ThemeContext';
+import QuickActionsFab from '../common/QuickActionsFab';
 
 const drawerWidth = 280;
 
@@ -43,6 +47,7 @@ const AppLayout = ({ children }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuAnchor, setUserMenuAnchor] = useState(null);
   const { user, logout, hasRole } = useAuth();
+  const { isDark, toggleThemeMode } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -144,6 +149,29 @@ const AppLayout = ({ children }) => {
     return 'default';
   };
 
+  const quickActions = [
+    {
+      name: 'New Patient',
+      icon: <PeopleIcon fontSize="small" />,
+      onClick: () => handleNavigation('/patients/new'),
+    },
+    {
+      name: 'New Record',
+      icon: <DescriptionIcon fontSize="small" />,
+      onClick: () => handleNavigation('/records/new'),
+    },
+    {
+      name: 'Queue Board',
+      icon: <QueueIcon fontSize="small" />,
+      onClick: () => handleNavigation('/queue'),
+    },
+    {
+      name: 'Create Invoice',
+      icon: <BillingIcon fontSize="small" />,
+      onClick: () => handleNavigation('/billing'),
+    },
+  ];
+
   const drawer = (
     <div>
       <Toolbar>
@@ -210,6 +238,11 @@ const AppLayout = ({ children }) => {
           
           {/* User Info and Menu */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Tooltip title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
+              <IconButton color="inherit" onClick={toggleThemeMode}>
+                {isDark ? <LightModeIcon /> : <DarkModeIcon />}
+              </IconButton>
+            </Tooltip>
             <Box sx={{ display: { xs: 'none', md: 'flex' }, alignItems: 'center', gap: 1 }}>
               <Typography variant="body2">
                 {user?.fullName || user?.username}
@@ -320,6 +353,7 @@ const AppLayout = ({ children }) => {
       >
         <Toolbar />
         {children}
+        <QuickActionsFab actions={quickActions} />
       </Box>
     </Box>
   );

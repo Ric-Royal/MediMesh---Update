@@ -93,7 +93,7 @@ const LabWorkflowPage = () => {
       const url = searchTerm
         ? `http://localhost:3001/api/lab/orders?search=${searchTerm}`
         : 'http://localhost:3001/api/lab/orders';
-      
+
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
       });
@@ -155,7 +155,7 @@ const LabWorkflowPage = () => {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Container sx={{ mt: 4, mb: 4 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -322,7 +322,7 @@ const LabWorkflowPage = () => {
                         fontWeight="bold"
                         color={
                           entry.waiting_minutes > 30 ? 'error.main' :
-                          entry.waiting_minutes > 15 ? 'warning.main' : 'text.primary'
+                            entry.waiting_minutes > 15 ? 'warning.main' : 'text.primary'
                         }
                       >
                         {Math.round(entry.waiting_minutes || 0)} min
