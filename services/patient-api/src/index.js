@@ -8,6 +8,7 @@ require('dotenv').config();
 const { logger } = require('./utils/logger');
 const { connectDB } = require('./utils/database');
 const { connectRedis } = require('./utils/redis');
+const { initializeWebSocket } = require('./utils/websocket');
 const { authenticateToken } = require('./middleware/auth');
 const { auditLogger } = require('./middleware/audit');
 const FileAttachment = require('./models/FileAttachment');
@@ -146,7 +147,7 @@ async function initialize() {
     await SystemSettings.createTable();
     await Payment.createTable();
     
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       logger.info(`MediMesh Patient API server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
       if (process.env.NODE_ENV === 'development') {
@@ -154,6 +155,11 @@ async function initialize() {
         logger.info('Rate limiting: Relaxed for development (1000 req/15min)');
       }
     });
+
+    // Initialize WebSocket
+    initializeWebSocket(server);
+    logger.info('✅ WebSocket server initialized');
+    
   } catch (error) {
     logger.error('Failed to initialize server:', error);
     process.exit(1);

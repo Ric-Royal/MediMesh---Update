@@ -4,6 +4,7 @@ const Encounter = require('../models/Encounter');
 const QueueEntry = require('../models/QueueEntry');
 const Patient = require('../models/Patient');
 const { logger } = require('../utils/logger');
+const { emitQueueUpdate } = require('../utils/websocket');
 
 // Get queue for a specific clinic
 router.get('/clinic/:clinicId', async (req, res) => {
@@ -103,6 +104,14 @@ router.put('/:id/status', async (req, res) => {
     
     await queueEntry.update(updates);
     
+    // Emit real-time update via WebSocket
+    if (queueEntry.clinicId) {
+      emitQueueUpdate(queueEntry.clinicId, {
+        action: 'status-updated',
+        queueEntry
+      });
+    }
+    
     logger.info(`Queue entry ${id} status updated to ${status}`);
     
     res.json({
@@ -131,6 +140,14 @@ router.put('/:id/move', async (req, res) => {
     if (priorityLevel) updates.priorityLevel = priorityLevel;
     
     await queueEntry.update(updates);
+    
+    // Emit real-time update via WebSocket
+    if (queueEntry.clinicId) {
+      emitQueueUpdate(queueEntry.clinicId, {
+        action: 'position-updated',
+        queueEntry
+      });
+    }
     
     res.json({
       success: true,
