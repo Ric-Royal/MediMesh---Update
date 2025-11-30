@@ -23,6 +23,8 @@ import QueueManagementPage from './pages/QueueManagementPage';
 import WardOccupancyPage from './pages/WardOccupancyPage';
 import PharmacyManagementPage from './pages/PharmacyManagementPage';
 import LabWorkflowPage from './pages/LabWorkflowPage';
+import BillingManagementPage from './pages/BillingManagementPage';
+import RadiologyWorkflowPage from './pages/RadiologyWorkflowPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 // Protected Route component
@@ -102,6 +104,12 @@ function App() {
                   
                   {/* Lab Workflow - PHASE 2! */}
                   <Route path="/lab" element={<LabWorkflowPage />} />
+                  
+                  {/* Billing - PHASE 3! */}
+                  <Route path="/billing" element={<BillingManagementPage />} />
+                  
+                  {/* Radiology - PHASE 3! */}
+                  <Route path="/radiology" element={<RadiologyWorkflowPage />} />
                   
                   {/* Settings */}
                   <Route path="/settings" element={<SettingsPage />} />

@@ -30,6 +30,8 @@ const queueRoutes = require('./routes/queue');
 const wardRoutes = require('./routes/wards');
 const pharmacyRoutes = require('./routes/pharmacy');
 const labRoutes = require('./routes/lab');
+const billingRoutes = require('./routes/billing');
+const radiologyRoutes = require('./routes/radiology');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -107,6 +109,8 @@ app.use('/api/queue', authenticateToken, queueRoutes);
 app.use('/api/wards', authenticateToken, wardRoutes);
 app.use('/api/pharmacy', authenticateToken, pharmacyRoutes);
 app.use('/api/lab', authenticateToken, labRoutes);
+app.use('/api/billing', authenticateToken, billingRoutes);
+app.use('/api/radiology', authenticateToken, radiologyRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

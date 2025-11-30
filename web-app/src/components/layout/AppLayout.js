@@ -31,7 +31,9 @@ import {
   Queue as QueueIcon,
   Hotel as BedIcon,
   LocalPharmacy as PharmacyIcon,
-  Science as LabIcon
+  Science as LabIcon,
+  Receipt as BillingIcon,
+  CameraAlt as RadiologyIcon
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -78,6 +80,20 @@ const AppLayout = ({ children }) => {
       path: '/lab',
       roles: ['lab-tech', 'doctor', 'admin'],
       badge: 'PHASE 2'
+    },
+    {
+      text: 'Billing',
+      icon: <BillingIcon />,
+      path: '/billing',
+      roles: ['billing', 'admin'],
+      badge: 'PHASE 3'
+    },
+    {
+      text: 'Radiology',
+      icon: <RadiologyIcon />,
+      path: '/radiology',
+      roles: ['radiographer', 'radiologist', 'doctor', 'admin'],
+      badge: 'PHASE 3'
     },
     {
       text: 'Patients',
