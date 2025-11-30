@@ -22,6 +22,7 @@ import SettingsPage from './pages/SettingsPage';
 import QueueManagementPage from './pages/QueueManagementPage';
 import WardOccupancyPage from './pages/WardOccupancyPage';
 import PharmacyManagementPage from './pages/PharmacyManagementPage';
+import LabWorkflowPage from './pages/LabWorkflowPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 // Protected Route component
@@ -98,6 +99,9 @@ function App() {
                   
                   {/* Pharmacy Management - PHASE 2! */}
                   <Route path="/pharmacy" element={<PharmacyManagementPage />} />
+                  
+                  {/* Lab Workflow - PHASE 2! */}
+                  <Route path="/lab" element={<LabWorkflowPage />} />
                   
                   {/* Settings */}
                   <Route path="/settings" element={<SettingsPage />} />

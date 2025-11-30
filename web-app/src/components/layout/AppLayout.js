@@ -30,7 +30,8 @@ import {
   LocalHospital as HospitalIcon,
   Queue as QueueIcon,
   Hotel as BedIcon,
-  LocalPharmacy as PharmacyIcon
+  LocalPharmacy as PharmacyIcon,
+  Science as LabIcon
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -69,6 +70,13 @@ const AppLayout = ({ children }) => {
       icon: <PharmacyIcon />,
       path: '/pharmacy',
       roles: ['pharmacist', 'doctor', 'admin'],
+      badge: 'PHASE 2'
+    },
+    {
+      text: 'Laboratory',
+      icon: <LabIcon />,
+      path: '/lab',
+      roles: ['lab-tech', 'doctor', 'admin'],
       badge: 'PHASE 2'
     },
     {
