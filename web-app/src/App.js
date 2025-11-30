@@ -20,6 +20,7 @@ import EditPatientPage from './pages/EditPatientPage';
 import EditRecordPage from './pages/EditRecordPage';
 import SettingsPage from './pages/SettingsPage';
 import QueueManagementPage from './pages/QueueManagementPage';
+import WardOccupancyPage from './pages/WardOccupancyPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 // Protected Route component
@@ -90,6 +91,9 @@ function App() {
                   
                   {/* Queue Management - NEW! */}
                   <Route path="/queue" element={<QueueManagementPage />} />
+                  
+                  {/* Ward Occupancy - NEW! */}
+                  <Route path="/wards" element={<WardOccupancyPage />} />
                   
                   {/* Settings */}
                   <Route path="/settings" element={<SettingsPage />} />

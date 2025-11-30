@@ -28,7 +28,8 @@ import {
   AccountCircle,
   Logout,
   LocalHospital as HospitalIcon,
-  Queue as QueueIcon
+  Queue as QueueIcon,
+  Hotel as BedIcon
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -53,6 +54,13 @@ const AppLayout = ({ children }) => {
       icon: <QueueIcon />,
       path: '/queue',
       roles: ['doctor', 'nurse', 'admin', 'receptionist'],
+      badge: 'NEW'
+    },
+    {
+      text: 'Ward Occupancy',
+      icon: <BedIcon />,
+      path: '/wards',
+      roles: ['doctor', 'nurse', 'admin'],
       badge: 'NEW'
     },
     {

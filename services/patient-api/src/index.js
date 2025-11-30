@@ -26,6 +26,7 @@ const settingsRoutes = require('./routes/settings');
 const paymentRoutes = require('./routes/payments');
 const encounterRoutes = require('./routes/encounters');
 const queueRoutes = require('./routes/queue');
+const wardRoutes = require('./routes/wards');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -100,6 +101,7 @@ app.use('/api/settings', authenticateToken, settingsRoutes);
 app.use('/api/payments', conditionalAuth, paymentRoutes);
 app.use('/api/encounters', authenticateToken, encounterRoutes);
 app.use('/api/queue', authenticateToken, queueRoutes);
+app.use('/api/wards', authenticateToken, wardRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
