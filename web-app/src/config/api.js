@@ -42,6 +42,7 @@ export const API_CONFIG = {
       tests: `${API_BASE_URL}/api/lab/tests`,
       orders: `${API_BASE_URL}/api/lab/orders`,
       samples: `${API_BASE_URL}/api/lab/samples`,
+      catalog: `${API_BASE_URL}/api/lab/tests/catalog`,
     },
     
     // Billing
@@ -49,6 +50,10 @@ export const API_CONFIG = {
       invoices: `${API_BASE_URL}/api/billing/invoices`,
       payments: `${API_BASE_URL}/api/billing/payments`,
       statistics: `${API_BASE_URL}/api/billing/statistics`,
+      pendingPayment: `${API_BASE_URL}/api/billing/invoices/pending-payment`,
+      byEncounter: (encounterId) => `${API_BASE_URL}/api/billing/invoices/encounter/${encounterId}`,
+      finalize: (invoiceId) => `${API_BASE_URL}/api/billing/invoices/${invoiceId}/finalize`,
+      processPayment: (invoiceId) => `${API_BASE_URL}/api/billing/invoices/${invoiceId}/payment`,
     },
     
     // Radiology
@@ -56,6 +61,8 @@ export const API_CONFIG = {
       orders: `${API_BASE_URL}/api/radiology/orders`,
       reports: `${API_BASE_URL}/api/radiology/reports`,
       queue: `${API_BASE_URL}/api/radiology/queue`,
+      catalog: `${API_BASE_URL}/api/radiology/studies/catalog`,
+      modalities: `${API_BASE_URL}/api/radiology/modalities`,
     },
     
     // Encounters
@@ -72,6 +79,9 @@ export const API_CONFIG = {
     
     // Staff
     staff: `${API_BASE_URL}/api/staff`,
+    
+    // Consultations
+    consultations: `${API_BASE_URL}/api/consultations`,
   },
   
   // Helper function to get auth headers

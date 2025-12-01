@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../utils/database');
+const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 
 // ============================================
@@ -58,7 +58,7 @@ router.get('/invoices', async (req, res) => {
     query += ` ORDER BY i.invoice_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(limit, offset);
     
-    const result = await pool.query(query, params);
+    const result = await getDB().query(query, params);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching invoices:', error);
@@ -82,7 +82,7 @@ router.get('/invoices/:id', async (req, res) => {
       LEFT JOIN staff s ON i.billed_by = s.id
       WHERE i.id = $1
     `;
-    const invoiceResult = await pool.query(invoiceQuery, [id]);
+    const invoiceResult = await getDB().query(invoiceQuery, [id]);
     
     if (invoiceResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Invoice not found' });
@@ -99,7 +99,7 @@ router.get('/invoices/:id', async (req, res) => {
       WHERE ii.invoice_id = $1
       ORDER BY ii.created_at
     `;
-    const itemsResult = await pool.query(itemsQuery, [id]);
+    const itemsResult = await getDB().query(itemsQuery, [id]);
     
     const invoice = invoiceResult.rows[0];
     invoice.items = itemsResult.rows;
@@ -111,9 +111,52 @@ router.get('/invoices/:id', async (req, res) => {
   }
 });
 
+// Get invoice by encounter ID (real-time invoice for patient journey)
+router.get('/invoices/encounter/:encounterId', async (req, res) => {
+  try {
+    const { encounterId } = req.params;
+    
+    // Get invoice with all details
+    const invoiceQuery = `
+      SELECT i.*,
+             p.first_name || ' ' || p.last_name as patient_name,
+             p.uhid, p.phone_number,
+             e.encounter_type, e.status as encounter_status
+      FROM invoices i
+      LEFT JOIN patients p ON i.patient_id = p.id
+      LEFT JOIN encounters e ON i.encounter_id = e.id
+      WHERE i.encounter_id = $1
+    `;
+    const invoiceResult = await getDB().query(invoiceQuery, [encounterId]);
+    
+    if (invoiceResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Invoice not found for this encounter' });
+    }
+    
+    // Get line items with detailed breakdown
+    const lineItemsQuery = `
+      SELECT ili.*,
+             s.first_name || ' ' || s.last_name as provider_name
+      FROM invoice_line_items ili
+      LEFT JOIN staff s ON ili.provider_id = s.id
+      WHERE ili.invoice_id = $1
+      ORDER BY ili.billed_at
+    `;
+    const lineItemsResult = await getDB().query(lineItemsQuery, [invoiceResult.rows[0].id]);
+    
+    const invoice = invoiceResult.rows[0];
+    invoice.line_items = lineItemsResult.rows;
+    
+    res.json({ success: true, data: invoice });
+  } catch (error) {
+    logger.error('Error fetching invoice by encounter:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Create invoice
 router.post('/invoices', async (req, res) => {
-  const client = await pool.connect();
+  const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     
@@ -178,7 +221,7 @@ router.put('/invoices/:id/status', async (req, res) => {
       WHERE id = $2
       RETURNING *
     `;
-    const result = await pool.query(query, [status, id]);
+    const result = await getDB().query(query, [status, id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Invoice not found' });
@@ -242,7 +285,7 @@ router.get('/payments', async (req, res) => {
     query += ` ORDER BY bp.payment_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(limit, offset);
     
-    const result = await pool.query(query, params);
+    const result = await getDB().query(query, params);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching payments:', error);
@@ -252,7 +295,7 @@ router.get('/payments', async (req, res) => {
 
 // Record payment
 router.post('/payments', async (req, res) => {
-  const client = await pool.connect();
+  const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     
@@ -325,7 +368,7 @@ router.get('/statistics', async (req, res) => {
         (SELECT COALESCE(SUM(total_amount), 0) FROM invoices WHERE DATE(invoice_date) = CURRENT_DATE) as invoiced_today,
         (SELECT COUNT(*) FROM insurance_claims WHERE status = 'pending') as pending_claims
     `;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     logger.error('Error fetching billing statistics:', error);
@@ -349,7 +392,7 @@ router.get('/patients/:patientId/summary', async (req, res) => {
       FROM patients p
       WHERE p.id = $1
     `;
-    const result = await pool.query(query, [patientId]);
+    const result = await getDB().query(query, [patientId]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Patient not found' });
@@ -359,6 +402,119 @@ router.get('/patients/:patientId/summary', async (req, res) => {
   } catch (error) {
     logger.error('Error fetching patient billing summary:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ============================================
+// REAL-TIME INVOICE MANAGEMENT
+// ============================================
+
+// Get pending invoices for billing queue
+router.get('/invoices/pending-payment', async (req, res) => {
+  try {
+    const query = `
+      SELECT i.*,
+             p.first_name || ' ' || p.last_name as patient_name,
+             p.uhid,
+             e.encounter_type,
+             (SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = i.id) as item_count
+      FROM invoices i
+      LEFT JOIN patients p ON i.patient_id = p.id
+      LEFT JOIN encounters e ON i.encounter_id = e.id
+      WHERE i.status IN ('draft', 'finalized')
+        AND i.total > 0
+      ORDER BY i.last_updated DESC
+    `;
+    const result = await getDB().query(query);
+    res.json({ success: true, data: result.rows, count: result.rows.length });
+  } catch (error) {
+    logger.error('Error fetching pending invoices:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Finalize invoice (mark ready for payment)
+router.put('/invoices/:id/finalize', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const query = `
+      UPDATE invoices
+      SET status = 'finalized', last_updated = NOW()
+      WHERE id = $1
+      RETURNING *
+    `;
+    const result = await getDB().query(query, [id]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Invoice not found' });
+    }
+    
+    logger.info(`Invoice ${id} finalized for payment`);
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    logger.error('Error finalizing invoice:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Process payment for invoice
+router.post('/invoices/:id/payment', async (req, res) => {
+  const client = await getDB().connect();
+  try {
+    await client.query('BEGIN');
+    
+    const { id } = req.params;
+    const { payment_method, amount, reference_number, notes } = req.body;
+    
+    // Get invoice
+    const invoiceResult = await client.query('SELECT * FROM invoices WHERE id = $1', [id]);
+    if (invoiceResult.rows.length === 0) {
+      throw new Error('Invoice not found');
+    }
+    
+    const invoice = invoiceResult.rows[0];
+    
+    // Create payment record
+    const paymentQuery = `
+      INSERT INTO billing_payments (
+        patient_id, invoice_id, payment_method, amount,
+        bank_reference, notes, received_by, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed')
+      RETURNING *
+    `;
+    const paymentResult = await client.query(paymentQuery, [
+      invoice.patient_id, id, payment_method, amount,
+      reference_number, notes, req.user?.userId
+    ]);
+    
+    // Update invoice status to paid
+    await client.query(`
+      UPDATE invoices
+      SET status = 'paid', last_updated = NOW()
+      WHERE id = $1
+    `, [id]);
+    
+    // Update encounter status to completed if all services done
+    await client.query(`
+      UPDATE encounters
+      SET status = 'completed', discharge_date = NOW()
+      WHERE id = $1
+        AND pending_lab_orders = 0
+        AND pending_pharmacy_orders = 0
+        AND pending_radiology_orders = 0
+    `, [invoice.encounter_id]);
+    
+    await client.query('COMMIT');
+    
+    logger.info(`Payment processed for invoice ${id}: ${amount} via ${payment_method}`);
+    res.json({ success: true, data: paymentResult.rows[0], message: 'Payment processed successfully' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    logger.error('Error processing payment:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    client.release();
   }
 });
 

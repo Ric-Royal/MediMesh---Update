@@ -43,6 +43,7 @@ import StatusPill from '../components/common/StatusPill';
 import PriorityBadge from '../components/common/PriorityBadge';
 import ProgressStat from '../components/common/ProgressStat';
 import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog';
+import ConsultationForm from '../components/consultation/ConsultationForm';
 import { useNotification } from '../contexts/NotificationContext';
 import API_CONFIG from '../config/api';
 
@@ -55,7 +56,10 @@ const QueueManagementPage = () => {
   const [wsConnected, setWsConnected] = useState(false);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const [addPatientDialogOpen, setAddPatientDialogOpen] = useState(false);
+  const [consultationFormOpen, setConsultationFormOpen] = useState(false);
   const [selectedQueueEntry, setSelectedQueueEntry] = useState(null);
+  const [selectedPatient, setSelectedPatient] = useState(null);
+  const [selectedEncounter, setSelectedEncounter] = useState(null);
   const [nextQueue, setNextQueue] = useState('discharge');
   const socketRef = useRef(null);
   const { notifySuccess, notifyError } = useNotification();
@@ -220,24 +224,65 @@ const QueueManagementPage = () => {
     }
   };
 
-  const handleStartService = async (queueEntryId) => {
-    try {
-      const response = await fetch(`${API_CONFIG.baseURL}/api/queue/${queueEntryId}/status`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          ...API_CONFIG.getAuthHeaders()
-        },
-        body: JSON.stringify({ status: 'in-service' })
-      });
+  const handleStartService = async (queueEntry) => {
+    // For consultation queue, open the consultation form
+    if (selectedQueueType === 'consultation' || queueEntry.queueType === 'consultation' || queueEntry.queue_type === 'consultation') {
+      // Fetch patient and encounter details
+      try {
+        const [patientRes, encounterRes] = await Promise.all([
+          fetch(`${API_CONFIG.endpoints.patients}/${queueEntry.patientId || queueEntry.patient_id}`, {
+            headers: API_CONFIG.getAuthHeaders()
+          }),
+          fetch(`${API_CONFIG.endpoints.encounters}/${queueEntry.encounterId || queueEntry.encounter_id}`, {
+            headers: API_CONFIG.getAuthHeaders()
+          })
+        ]);
 
-      if (response.ok) {
-        fetchQueue({ silent: true });
-        notifySuccess('Service started');
+        if (patientRes.ok && encounterRes.ok) {
+          const patientData = await patientRes.json();
+          const encounterData = await encounterRes.json();
+          
+          setSelectedPatient(patientData.data);
+          setSelectedEncounter(encounterData.data);
+          setSelectedQueueEntry(queueEntry);
+          setConsultationFormOpen(true);
+
+          // Update queue status to in-service
+          await fetch(`${API_CONFIG.baseURL}/api/queue/${queueEntry.id}/status`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              ...API_CONFIG.getAuthHeaders()
+            },
+            body: JSON.stringify({ status: 'in-service' })
+          });
+
+          fetchQueue({ silent: true });
+        }
+      } catch (error) {
+        console.error('Error fetching patient/encounter:', error);
+        notifyError('Failed to load patient details');
       }
-    } catch (error) {
-      console.error('Error starting service:', error);
-      notifyError('Failed to start service');
+    } else {
+      // For other queues, just update status
+      try {
+        const response = await fetch(`${API_CONFIG.baseURL}/api/queue/${queueEntry.id}/status`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...API_CONFIG.getAuthHeaders()
+          },
+          body: JSON.stringify({ status: 'in-service' })
+        });
+
+        if (response.ok) {
+          fetchQueue({ silent: true });
+          notifySuccess('Service started');
+        }
+      } catch (error) {
+        console.error('Error starting service:', error);
+        notifyError('Failed to start service');
+      }
     }
   };
 
@@ -629,7 +674,7 @@ const QueueManagementPage = () => {
                         <Button 
                           size="small" 
                           variant="contained"
-                          onClick={() => handleStartService(entry.id)}
+                          onClick={() => handleStartService(entry)}
                         >
                           Start
                         </Button>
@@ -755,6 +800,25 @@ const QueueManagementPage = () => {
           fetchQueue({ silent: true });
         }}
       />
+
+      {/* Consultation Form Dialog */}
+      {consultationFormOpen && selectedPatient && selectedEncounter && (
+        <ConsultationForm
+          open={consultationFormOpen}
+          onClose={() => {
+            setConsultationFormOpen(false);
+            setSelectedPatient(null);
+            setSelectedEncounter(null);
+            setSelectedQueueEntry(null);
+          }}
+          encounter={selectedEncounter}
+          patient={selectedPatient}
+          onSuccess={() => {
+            fetchQueue({ silent: true });
+            notifySuccess('Consultation completed! Patient added to service queues.');
+          }}
+        />
+      )}
     </Container>
   );
 };

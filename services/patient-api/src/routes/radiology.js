@@ -1,7 +1,28 @@
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../utils/database');
+const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+
+// ============================================
+// RADIOLOGY STUDY CATALOG (For Ordering)
+// ============================================
+
+// Get radiology study catalog
+router.get('/study-catalog', async (req, res) => {
+  try {
+    const db = getDB();
+    const result = await db.query(`
+      SELECT * FROM radiology_study_catalog
+      WHERE is_active = TRUE
+      ORDER BY modality, study_name
+    `);
+    
+    res.json({ success: true, data: result.rows, count: result.rows.length });
+  } catch (error) {
+    logger.error('Error fetching radiology study catalog:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // ============================================
 // RADIOLOGY TESTS CATALOG

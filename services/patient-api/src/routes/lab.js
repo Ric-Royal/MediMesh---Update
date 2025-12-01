@@ -1,8 +1,29 @@
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../utils/database');
+const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { emitQueueUpdate } = require('../utils/websocket');
+
+// ============================================
+// LAB TEST CATALOG (For Ordering)
+// ============================================
+
+// Get lab test catalog
+router.get('/test-catalog', async (req, res) => {
+  try {
+    const db = getDB();
+    const result = await db.query(`
+      SELECT * FROM lab_test_catalog
+      WHERE is_active = TRUE
+      ORDER BY test_category, test_name
+    `);
+    
+    res.json({ success: true, data: result.rows, count: result.rows.length });
+  } catch (error) {
+    logger.error('Error fetching lab test catalog:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // ============================================
 // LAB TESTS CATALOG
@@ -11,6 +32,7 @@ const { emitQueueUpdate } = require('../utils/websocket');
 // Get all lab tests
 router.get('/tests', async (req, res) => {
   try {
+    const db = getDB();
     const { search, category, active = 'true' } = req.query;
     
     let query = `
@@ -34,7 +56,7 @@ router.get('/tests', async (req, res) => {
     
     query += ` ORDER BY test_name`;
     
-    const result = await pool.query(query, params);
+    const result = await db.query(query, params);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching lab tests:', error);
@@ -45,8 +67,9 @@ router.get('/tests', async (req, res) => {
 // Get test by ID
 router.get('/tests/:id', async (req, res) => {
   try {
+    const db = getDB();
     const { id } = req.params;
-    const result = await pool.query('SELECT * FROM lab_tests WHERE id = $1', [id]);
+    const result = await db.query('SELECT * FROM lab_tests WHERE id = $1', [id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Test not found' });
