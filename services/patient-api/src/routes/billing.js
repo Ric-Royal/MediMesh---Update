@@ -66,7 +66,78 @@ router.get('/invoices', async (req, res) => {
   }
 });
 
+// Get invoice by encounter ID (real-time invoice for patient journey)
+// NOTE: This must come BEFORE /invoices/:id to avoid route collision
+router.get('/invoices/encounter/:encounterId', async (req, res) => {
+  try {
+    const { encounterId } = req.params;
+    
+    // Get invoice with all details
+    const invoiceQuery = `
+      SELECT i.*,
+             p.first_name || ' ' || p.last_name as patient_name,
+             p.uhid, p.phone as phone_number,
+             e.encounter_type, e.status as encounter_status
+      FROM invoices i
+      LEFT JOIN patients p ON i.patient_id = p.id
+      LEFT JOIN encounters e ON i.encounter_id = e.id
+      WHERE i.encounter_id = $1
+    `;
+    const invoiceResult = await getDB().query(invoiceQuery, [encounterId]);
+    
+    if (invoiceResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Invoice not found for this encounter' });
+    }
+    
+    // Get line items with detailed breakdown
+    const lineItemsQuery = `
+      SELECT ili.*,
+             s.first_name || ' ' || s.last_name as provider_name
+      FROM invoice_line_items ili
+      LEFT JOIN staff s ON ili.provider_id = s.id
+      WHERE ili.invoice_id = $1
+      ORDER BY ili.billed_at
+    `;
+    const lineItemsResult = await getDB().query(lineItemsQuery, [invoiceResult.rows[0].id]);
+    
+    const invoice = invoiceResult.rows[0];
+    invoice.line_items = lineItemsResult.rows;
+    
+    res.json({ success: true, data: invoice });
+  } catch (error) {
+    logger.error('Error fetching invoice by encounter:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Get pending invoices for billing queue
+// NOTE: This must come BEFORE /invoices/:id to avoid route collision
+router.get('/invoices/pending-payment', async (req, res) => {
+  try {
+    const query = `
+      SELECT i.*,
+             i.total_amount as total,
+             p.first_name || ' ' || p.last_name as patient_name,
+             p.uhid,
+             e.encounter_type,
+             (SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = i.id) as item_count
+      FROM invoices i
+      LEFT JOIN patients p ON i.patient_id = p.id
+      LEFT JOIN encounters e ON i.encounter_id = e.id
+      WHERE i.status IN ('draft', 'finalized')
+        AND i.total_amount > 0
+      ORDER BY i.invoice_date DESC
+    `;
+    const result = await getDB().query(query);
+    res.json({ success: true, data: result.rows, count: result.rows.length });
+  } catch (error) {
+    logger.error('Error fetching pending invoices:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Get invoice by ID (with items)
+// NOTE: This must come AFTER specific routes like /invoices/pending-payment
 router.get('/invoices/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -107,49 +178,6 @@ router.get('/invoices/:id', async (req, res) => {
     res.json({ success: true, data: invoice });
   } catch (error) {
     logger.error('Error fetching invoice:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Get invoice by encounter ID (real-time invoice for patient journey)
-router.get('/invoices/encounter/:encounterId', async (req, res) => {
-  try {
-    const { encounterId } = req.params;
-    
-    // Get invoice with all details
-    const invoiceQuery = `
-      SELECT i.*,
-             p.first_name || ' ' || p.last_name as patient_name,
-             p.uhid, p.phone as phone_number,
-             e.encounter_type, e.status as encounter_status
-      FROM invoices i
-      LEFT JOIN patients p ON i.patient_id = p.id
-      LEFT JOIN encounters e ON i.encounter_id = e.id
-      WHERE i.encounter_id = $1
-    `;
-    const invoiceResult = await getDB().query(invoiceQuery, [encounterId]);
-    
-    if (invoiceResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Invoice not found for this encounter' });
-    }
-    
-    // Get line items with detailed breakdown
-    const lineItemsQuery = `
-      SELECT ili.*,
-             s.first_name || ' ' || s.last_name as provider_name
-      FROM invoice_line_items ili
-      LEFT JOIN staff s ON ili.provider_id = s.id
-      WHERE ili.invoice_id = $1
-      ORDER BY ili.billed_at
-    `;
-    const lineItemsResult = await getDB().query(lineItemsQuery, [invoiceResult.rows[0].id]);
-    
-    const invoice = invoiceResult.rows[0];
-    invoice.line_items = lineItemsResult.rows;
-    
-    res.json({ success: true, data: invoice });
-  } catch (error) {
-    logger.error('Error fetching invoice by encounter:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -408,30 +436,6 @@ router.get('/patients/:patientId/summary', async (req, res) => {
 // ============================================
 // REAL-TIME INVOICE MANAGEMENT
 // ============================================
-
-// Get pending invoices for billing queue
-router.get('/invoices/pending-payment', async (req, res) => {
-  try {
-    const query = `
-      SELECT i.*,
-             p.first_name || ' ' || p.last_name as patient_name,
-             p.uhid,
-             e.encounter_type,
-             (SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = i.id) as item_count
-      FROM invoices i
-      LEFT JOIN patients p ON i.patient_id = p.id
-      LEFT JOIN encounters e ON i.encounter_id = e.id
-      WHERE i.status IN ('draft', 'finalized')
-        AND i.total > 0
-      ORDER BY i.last_updated DESC
-    `;
-    const result = await getDB().query(query);
-    res.json({ success: true, data: result.rows, count: result.rows.length });
-  } catch (error) {
-    logger.error('Error fetching pending invoices:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
 
 // Finalize invoice (mark ready for payment)
 router.put('/invoices/:id/finalize', async (req, res) => {
