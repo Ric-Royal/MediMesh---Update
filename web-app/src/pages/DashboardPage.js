@@ -34,6 +34,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../contexts/NotificationContext';
 import MetricCard from '../components/common/MetricCard';
 import ProgressStat from '../components/common/ProgressStat';
+import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog';
 
 const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -51,6 +52,7 @@ const DashboardPage = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [addPatientDialogOpen, setAddPatientDialogOpen] = useState(false);
 
   const { user, hasRole } = useAuth();
   const { notifySuccess, notifyError } = useNotification();
@@ -214,14 +216,23 @@ const DashboardPage = () => {
           >
             Refresh
           </Button>
-          {(hasRole('doctor') || hasRole('nurse') || hasRole('admin')) && (
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => navigate('/patients/new')}
-            >
-              Quick Admit
-            </Button>
+          {(hasRole('doctor') || hasRole('nurse') || hasRole('admin') || hasRole('receptionist')) && (
+            <>
+              <Button
+                variant="outlined"
+                startIcon={<AddIcon />}
+                onClick={() => setAddPatientDialogOpen(true)}
+              >
+                Add to Queue
+              </Button>
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => navigate('/patients/new')}
+              >
+                New Patient
+              </Button>
+            </>
           )}
         </Box>
       </Box>
@@ -461,6 +472,15 @@ const DashboardPage = () => {
           </Paper>
         </Grid>
       </Grid>
+
+      {/* Add Patient to Queue Dialog */}
+      <AddPatientToQueueDialog
+        open={addPatientDialogOpen}
+        onClose={() => setAddPatientDialogOpen(false)}
+        onSuccess={() => {
+          fetchDashboardData({ silent: true });
+        }}
+      />
     </Box>
   );
 };

@@ -37,6 +37,7 @@ import LocalPharmacyIcon from '@mui/icons-material/LocalPharmacy';
 import InventoryIcon from '@mui/icons-material/Inventory';
 import ReceiptIcon from '@mui/icons-material/Receipt';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import API_CONFIG from '../config/api';
 
 const PharmacyManagementPage = () => {
   const [activeTab, setActiveTab] = useState(0);
@@ -62,8 +63,8 @@ const PharmacyManagementPage = () => {
 
   const fetchStatistics = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/pharmacy/statistics', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.pharmacy.drugs}/statistics`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -78,8 +79,8 @@ const PharmacyManagementPage = () => {
     setLoading(true);
     try {
       const url = searchTerm
-        ? `http://localhost:3001/api/pharmacy/drugs?search=${searchTerm}`
-        : 'http://localhost:3001/api/pharmacy/drugs';
+        ? `${API_CONFIG.endpoints.pharmacy.drugs}?search=${searchTerm}`
+        : `${API_CONFIG.endpoints.pharmacy.drugs}`;
 
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
@@ -98,8 +99,8 @@ const PharmacyManagementPage = () => {
   const fetchPrescriptions = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/pharmacy/prescriptions/queue/pending', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.pharmacy.prescriptions}/queue/pending`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -114,8 +115,8 @@ const PharmacyManagementPage = () => {
 
   const fetchReorderAlerts = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/pharmacy/drugs/alerts/reorder', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.pharmacy.drugs}/alerts/reorder`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();

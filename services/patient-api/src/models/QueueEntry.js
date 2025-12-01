@@ -1,5 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
-const { pool } = require('../utils/database');
+const { getDB } = require('../utils/database');
 
 class QueueEntry {
   static async create(queueData) {
@@ -24,8 +24,47 @@ class QueueEntry {
       queueData.priorityLevel || 5
     ];
     
-    const result = await pool.query(query, values);
+    const result = await getDB().query(query, values);
     return result.rows[0];
+  }
+  
+  static async getAll({ queueType, status } = {}) {
+    let query = `
+      SELECT q.*,
+             p.first_name, p.last_name, p.uhid,
+             e.triage_level, e.payment_type, e.chief_complaint,
+             s.first_name as doctor_first_name, s.last_name as doctor_last_name,
+             c.clinic_name,
+             CONCAT(p.first_name, ' ', p.last_name) as patient_name,
+             EXTRACT(EPOCH FROM (NOW() - q.joined_at)) / 60 as waiting_minutes
+      FROM queue_entries q
+      LEFT JOIN patients p ON q.patient_id = p.id
+      LEFT JOIN encounters e ON q.encounter_id = e.id
+      LEFT JOIN staff s ON q.doctor_id = s.id
+      LEFT JOIN clinics c ON q.clinic_id = c.id
+      WHERE 1=1
+    `;
+    
+    const values = [];
+    let paramCount = 1;
+    
+    if (queueType) {
+      query += ` AND q.queue_type = $${paramCount++}`;
+      values.push(queueType);
+    }
+    
+    if (status) {
+      query += ` AND q.status = $${paramCount++}`;
+      values.push(status);
+    } else {
+      // Default to active statuses
+      query += ` AND q.status IN ('waiting', 'called', 'in-service')`;
+    }
+    
+    query += ` ORDER BY q.priority_level ASC, q.queue_position ASC, q.joined_at ASC`;
+    
+    const result = await getDB().query(query, values);
+    return result.rows;
   }
   
   static async findByPk(id) {
@@ -33,14 +72,18 @@ class QueueEntry {
       SELECT q.*,
              p.first_name, p.last_name, p.uhid,
              e.triage_level, e.payment_type, e.chief_complaint,
-             s.first_name as doctor_first_name, s.last_name as doctor_last_name
+             s.first_name as doctor_first_name, s.last_name as doctor_last_name,
+             c.clinic_name,
+             CONCAT(p.first_name, ' ', p.last_name) as patient_name,
+             EXTRACT(EPOCH FROM (NOW() - q.joined_at)) / 60 as waiting_minutes
       FROM queue_entries q
       LEFT JOIN patients p ON q.patient_id = p.id
       LEFT JOIN encounters e ON q.encounter_id = e.id
       LEFT JOIN staff s ON q.doctor_id = s.id
+      LEFT JOIN clinics c ON q.clinic_id = c.id
       WHERE q.id = $1
     `;
-    const result = await pool.query(query, [id]);
+    const result = await getDB().query(query, [id]);
     return result.rows[0];
   }
   
@@ -49,17 +92,21 @@ class QueueEntry {
       SELECT q.*,
              p.first_name, p.last_name, p.uhid,
              e.triage_level, e.payment_type, e.chief_complaint,
-             s.first_name as doctor_first_name, s.last_name as doctor_last_name
+             s.first_name as doctor_first_name, s.last_name as doctor_last_name,
+             c.clinic_name,
+             CONCAT(p.first_name, ' ', p.last_name) as patient_name,
+             EXTRACT(EPOCH FROM (NOW() - q.joined_at)) / 60 as waiting_minutes
       FROM queue_entries q
       LEFT JOIN patients p ON q.patient_id = p.id
       LEFT JOIN encounters e ON q.encounter_id = e.id
       LEFT JOIN staff s ON q.doctor_id = s.id
+      LEFT JOIN clinics c ON q.clinic_id = c.id
       WHERE q.clinic_id = $1 
         AND q.queue_type = $2
-        AND q.status IN ('waiting', 'called')
+        AND q.status IN ('waiting', 'called', 'in-service')
       ORDER BY q.priority_level ASC, q.queue_position ASC
     `;
-    const result = await pool.query(query, [clinicId, queueType]);
+    const result = await getDB().query(query, [clinicId, queueType]);
     return result.rows;
   }
   
@@ -67,15 +114,21 @@ class QueueEntry {
     const query = `
       SELECT q.*,
              p.first_name, p.last_name, p.uhid,
-             e.triage_level, e.payment_type
+             e.triage_level, e.payment_type, e.chief_complaint,
+             s.first_name as doctor_first_name, s.last_name as doctor_last_name,
+             c.clinic_name,
+             CONCAT(p.first_name, ' ', p.last_name) as patient_name,
+             EXTRACT(EPOCH FROM (NOW() - q.joined_at)) / 60 as waiting_minutes
       FROM queue_entries q
       LEFT JOIN patients p ON q.patient_id = p.id
       LEFT JOIN encounters e ON q.encounter_id = e.id
+      LEFT JOIN staff s ON q.doctor_id = s.id
+      LEFT JOIN clinics c ON q.clinic_id = c.id
       WHERE q.doctor_id = $1 
-        AND q.status IN ('waiting', 'called')
+        AND q.status IN ('waiting', 'called', 'in-service')
       ORDER BY q.priority_level ASC, q.queue_position ASC
     `;
-    const result = await pool.query(query, [doctorId]);
+    const result = await getDB().query(query, [doctorId]);
     return result.rows;
   }
   
@@ -90,7 +143,7 @@ class QueueEntry {
       WHERE clinic_id = $1 
         AND status IN ('waiting', 'called')
     `;
-    const result = await pool.query(query, [clinicId]);
+    const result = await getDB().query(query, [clinicId]);
     return result.rows[0];
   }
   
@@ -113,7 +166,7 @@ class QueueEntry {
       RETURNING *
     `;
     
-    const result = await pool.query(query, values);
+    const result = await getDB().query(query, values);
     return result.rows[0];
   }
 }

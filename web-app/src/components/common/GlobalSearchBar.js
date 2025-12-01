@@ -18,6 +18,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import CloseIcon from '@mui/icons-material/Close';
 import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import { debounce } from '@mui/material/utils';
+import API_CONFIG from '../../config/api';
 
 export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID, Name, or Phone (Ctrl+K)" }) => {
   const [query, setQuery] = useState('');
@@ -51,10 +52,8 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
           filter: searchFilter,
           includeArchived: includeArchived ? '1' : '0',
         });
-        const response = await fetch(`http://localhost:3001/api/patients?${params.toString()}`, {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}`
-          }
+        const response = await fetch(`${API_CONFIG.endpoints.patients}?${params.toString()}`, {
+          headers: API_CONFIG.getAuthHeaders()
         });
         
         if (response.ok) {

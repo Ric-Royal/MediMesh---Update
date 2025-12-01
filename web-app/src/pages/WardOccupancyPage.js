@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import API_CONFIG from '../config/api';
 import {
   Container,
   Paper,
@@ -55,8 +56,8 @@ const WardOccupancyPage = () => {
 
   const fetchWards = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/wards', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.wards}`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -75,8 +76,8 @@ const WardOccupancyPage = () => {
     if (!selectedWard) return;
     setLoading(true);
     try {
-      const response = await fetch(`http://localhost:3001/api/wards/${selectedWard}/occupancy`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.wards}/${selectedWard}/occupancy`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -93,8 +94,8 @@ const WardOccupancyPage = () => {
   const fetchStatistics = async () => {
     if (!selectedWard) return;
     try {
-      const response = await fetch(`http://localhost:3001/api/wards/${selectedWard}/statistics`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.wards}/${selectedWard}/statistics`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();

@@ -7,6 +7,9 @@
 -- Timeline: Weeks 13-16
 -- ============================================
 
+-- Ensure we're connected to the medimesh database
+\c medimesh;
+
 -- 1. Billing Accounts (Patient financial account)
 CREATE TABLE IF NOT EXISTS billing_accounts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -247,15 +250,35 @@ CREATE TABLE IF NOT EXISTS price_list (
 -- ============================================
 
 -- Billing Account Number
-CREATE SEQUENCE IF NOT EXISTS billing_account_seq START 1;
+CREATE SEQUENCE IF NOT EXISTS billing_account_seq START 1000;
 
 CREATE OR REPLACE FUNCTION generate_billing_account_number()
 RETURNS TRIGGER AS $$
+DECLARE
+    new_account_number TEXT;
+    max_attempts INTEGER := 10;
+    attempt INTEGER := 0;
 BEGIN
-  IF NEW.account_number IS NULL OR NEW.account_number = '' THEN
-    NEW.account_number := 'ACC-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || LPAD(nextval('billing_account_seq')::TEXT, 4, '0');
-  END IF;
-  RETURN NEW;
+    IF NEW.account_number IS NULL OR NEW.account_number = '' THEN
+        LOOP
+            -- Generate account_number: ACC-YYYYMMDD-XXXX
+            new_account_number := 'ACC-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || 
+                                 LPAD(NEXTVAL('billing_account_seq')::TEXT, 4, '0');
+            
+            -- Check if this account_number already exists
+            IF NOT EXISTS (SELECT 1 FROM billing_accounts WHERE account_number = new_account_number) THEN
+                NEW.account_number := new_account_number;
+                EXIT; -- Success, exit loop
+            END IF;
+            
+            -- Increment attempt counter
+            attempt := attempt + 1;
+            IF attempt >= max_attempts THEN
+                RAISE EXCEPTION 'Failed to generate unique billing account_number after % attempts', max_attempts;
+            END IF;
+        END LOOP;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -264,15 +287,35 @@ BEFORE INSERT ON billing_accounts
 FOR EACH ROW EXECUTE FUNCTION generate_billing_account_number();
 
 -- Invoice Number
-CREATE SEQUENCE IF NOT EXISTS invoice_number_seq START 1;
+CREATE SEQUENCE IF NOT EXISTS invoice_number_seq START 1000;
 
 CREATE OR REPLACE FUNCTION generate_invoice_number()
 RETURNS TRIGGER AS $$
+DECLARE
+    new_invoice_number TEXT;
+    max_attempts INTEGER := 10;
+    attempt INTEGER := 0;
 BEGIN
-  IF NEW.invoice_number IS NULL OR NEW.invoice_number = '' THEN
-    NEW.invoice_number := 'INV-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || LPAD(nextval('invoice_number_seq')::TEXT, 4, '0');
-  END IF;
-  RETURN NEW;
+    IF NEW.invoice_number IS NULL OR NEW.invoice_number = '' THEN
+        LOOP
+            -- Generate invoice_number: INV-YYYYMMDD-XXXX
+            new_invoice_number := 'INV-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || 
+                                 LPAD(NEXTVAL('invoice_number_seq')::TEXT, 4, '0');
+            
+            -- Check if this invoice_number already exists
+            IF NOT EXISTS (SELECT 1 FROM invoices WHERE invoice_number = new_invoice_number) THEN
+                NEW.invoice_number := new_invoice_number;
+                EXIT; -- Success, exit loop
+            END IF;
+            
+            -- Increment attempt counter
+            attempt := attempt + 1;
+            IF attempt >= max_attempts THEN
+                RAISE EXCEPTION 'Failed to generate unique invoice_number after % attempts', max_attempts;
+            END IF;
+        END LOOP;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 

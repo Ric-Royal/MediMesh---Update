@@ -30,6 +30,7 @@ import StatusPill from '../components/common/StatusPill';
 import PriorityBadge from '../components/common/PriorityBadge';
 import ProgressStat from '../components/common/ProgressStat';
 import { useNotification } from '../contexts/NotificationContext';
+import API_CONFIG from '../config/api';
 
 const RadiologyWorkflowPage = () => {
   const [activeTab, setActiveTab] = useState(0);
@@ -50,8 +51,8 @@ const RadiologyWorkflowPage = () => {
 
   const fetchStatistics = async (silent = true) => {
     try {
-      const response = await fetch('http://localhost:3001/api/radiology/statistics', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.baseURL}/api/radiology/statistics`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -68,8 +69,8 @@ const RadiologyWorkflowPage = () => {
   const fetchRadiologyQueue = async (silent = true) => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/radiology/queue', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.radiology.queue}`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -88,8 +89,8 @@ const RadiologyWorkflowPage = () => {
   const fetchRadiologyOrders = async (silent = true) => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/radiology/orders', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.radiology.orders}`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();

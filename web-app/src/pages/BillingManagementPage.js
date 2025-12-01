@@ -28,6 +28,7 @@ import TrendSparkline from '../components/common/TrendSparkline';
 import StatusPill from '../components/common/StatusPill';
 import ProgressStat from '../components/common/ProgressStat';
 import { useNotification } from '../contexts/NotificationContext';
+import API_CONFIG from '../config/api';
 
 const BillingManagementPage = () => {
   const [activeTab, setActiveTab] = useState(0);
@@ -78,8 +79,8 @@ const BillingManagementPage = () => {
 
   const fetchStatistics = async (silent = true) => {
     try {
-      const response = await fetch('http://localhost:3001/api/billing/statistics', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.billing.statistics}`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -96,8 +97,8 @@ const BillingManagementPage = () => {
   const fetchInvoices = async (silent = true) => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/billing/invoices', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.billing.invoices}`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -116,8 +117,8 @@ const BillingManagementPage = () => {
   const fetchPayments = async (silent = true) => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/billing/payments', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.billing.payments}`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();

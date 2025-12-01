@@ -6,6 +6,24 @@ const Patient = require('../models/Patient');
 const { logger } = require('../utils/logger');
 const { emitQueueUpdate } = require('../utils/websocket');
 
+// Get all queue entries (for "all clinics" view)
+router.get('/', async (req, res) => {
+  try {
+    const { queueType = 'consultation', status } = req.query;
+    
+    const queue = await QueueEntry.getAll({ queueType, status });
+    
+    res.json({
+      success: true,
+      data: queue,
+      count: queue.length
+    });
+  } catch (error) {
+    logger.error('Error fetching all queue entries:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Get queue for a specific clinic
 router.get('/clinic/:clinicId', async (req, res) => {
   try {
@@ -85,30 +103,137 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Update queue entry status
+// Update queue entry status with workflow logic
 router.put('/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, nextQueue } = req.body; // nextQueue: 'pharmacy', 'lab', 'billing', 'discharge'
     
     const queueEntry = await QueueEntry.findByPk(id);
     if (!queueEntry) {
       return res.status(404).json({ success: false, error: 'Queue entry not found' });
     }
     
+    const db = require('../utils/database').getDB();
+    const currentQueueType = queueEntry.queue_type;
+    
     // Update timestamps based on status
     const updates = { status };
-    if (status === 'called') updates.calledAt = new Date();
-    if (status === 'in-service') updates.servedAt = new Date();
-    if (status === 'completed') updates.completedAt = new Date();
+    if (status === 'called') updates.called_at = new Date();
+    if (status === 'in-service') updates.served_at = new Date();
+    if (status === 'completed') {
+      updates.completed_at = new Date();
+      
+      // HOSPITAL WORKFLOW LOGIC - Queue-Type Aware Routing
+      // Determine where patient should go next based on current queue and user selection
+      
+      let targetQueue = nextQueue;
+      let shouldCreateOrder = false;
+      
+      // If user explicitly selected a queue, use that
+      if (nextQueue && nextQueue !== 'discharge') {
+        targetQueue = nextQueue;
+        shouldCreateOrder = (currentQueueType === 'consultation'); // Only create orders from consultation
+      } 
+      // Auto-routing: If completing non-consultation queues, automatically route to billing
+      else if (currentQueueType !== 'consultation' && (!nextQueue || nextQueue === 'discharge')) {
+        targetQueue = 'billing';
+        shouldCreateOrder = false;
+        logger.info(`Auto-routing patient from ${currentQueueType} to billing`);
+      }
+      
+      // Create queue entry for next stage if not discharging
+      if (targetQueue && targetQueue !== 'discharge') {
+        try {
+          await QueueEntry.create({
+            encounterId: queueEntry.encounter_id,
+            patientId: queueEntry.patient_id,
+            clinicId: queueEntry.clinic_id,
+            doctorId: queueEntry.doctor_id,
+            queueType: targetQueue,
+            isEmergency: queueEntry.is_emergency,
+            waitingLocation: targetQueue === 'pharmacy' ? 'pharmacy-waiting' : 
+                            targetQueue === 'lab' ? 'lab-waiting' :
+                            targetQueue === 'radiology' ? 'radiology-waiting' : 'billing-counter',
+            priorityLevel: queueEntry.priority_level
+          });
+          
+          logger.info(`✅ Patient ${queueEntry.patient_id} added to ${targetQueue} queue`);
+          
+          // Auto-create orders ONLY when moving FROM consultation TO lab/pharmacy/radiology
+          if (shouldCreateOrder) {
+            try {
+              if (targetQueue === 'lab') {
+                const labOrderResult = await db.query(`
+                  INSERT INTO lab_orders (
+                    patient_id, encounter_id, ordering_doctor_id, 
+                    order_date, status, priority, clinical_notes
+                  ) VALUES ($1, $2, $3, NOW(), 'pending', $4, $5)
+                  RETURNING id, lab_order_number
+                `, [
+                  queueEntry.patient_id,
+                  queueEntry.encounter_id,
+                  queueEntry.doctor_id,
+                  queueEntry.is_emergency ? 'urgent' : 'routine',
+                  'Lab tests ordered - awaiting test selection by lab technician'
+                ]);
+                
+                logger.info(`✅ Auto-created lab order ${labOrderResult.rows[0].lab_order_number}`);
+              } else if (targetQueue === 'pharmacy') {
+                const prescriptionResult = await db.query(`
+                  INSERT INTO prescriptions (
+                    patient_id, encounter_id, doctor_id,
+                    prescription_date, status, notes
+                  ) VALUES ($1, $2, $3, NOW(), 'pending', $4)
+                  RETURNING id, prescription_number
+                `, [
+                  queueEntry.patient_id,
+                  queueEntry.encounter_id,
+                  queueEntry.doctor_id,
+                  'Prescription pending - awaiting medication entry by pharmacist'
+                ]);
+                
+                logger.info(`✅ Auto-created prescription ${prescriptionResult.rows[0].prescription_number}`);
+              } else if (targetQueue === 'radiology') {
+                const radiologyOrderResult = await db.query(`
+                  INSERT INTO radiology_orders (
+                    patient_id, encounter_id, ordering_doctor_id,
+                    order_date, status, priority, reason_for_study
+                  ) VALUES ($1, $2, $3, NOW(), 'ordered', $4, $5)
+                  RETURNING id, radiology_order_number
+                `, [
+                  queueEntry.patient_id,
+                  queueEntry.encounter_id,
+                  queueEntry.doctor_id,
+                  queueEntry.is_emergency ? 'urgent' : 'routine',
+                  'Imaging ordered - awaiting study selection by radiology staff'
+                ]);
+                
+                logger.info(`✅ Auto-created radiology order ${radiologyOrderResult.rows[0].radiology_order_number}`);
+              }
+            } catch (orderError) {
+              // Log error but don't fail the queue movement
+              logger.error(`⚠️ Failed to create order for ${targetQueue}, but patient still moved to queue:`, orderError);
+            }
+          }
+          
+          logger.info(`✅ Workflow: ${currentQueueType} → ${targetQueue} (Patient: ${queueEntry.patient_id})`);
+        } catch (queueError) {
+          logger.error(`❌ Failed to add patient to ${targetQueue} queue:`, queueError);
+          throw queueError;
+        }
+      } else {
+        logger.info(`✅ Patient ${queueEntry.patient_id} discharged from ${currentQueueType}`);
+      }
+    }
     
-    await queueEntry.update(updates);
+    const updatedEntry = await QueueEntry.update(id, updates);
     
     // Emit real-time update via WebSocket
-    if (queueEntry.clinicId) {
-      emitQueueUpdate(queueEntry.clinicId, {
-        action: 'status-updated',
-        queueEntry
+    if (updatedEntry.clinic_id) {
+      emitQueueUpdate(updatedEntry.clinic_id, {
+        action: status === 'completed' ? 'patient-completed' : 'status-updated',
+        queueEntry: updatedEntry
       });
     }
     
@@ -116,7 +241,10 @@ router.put('/:id/status', async (req, res) => {
     
     res.json({
       success: true,
-      data: queueEntry
+      data: updatedEntry,
+      message: status === 'completed' && nextQueue ? 
+        `Patient moved to ${nextQueue} queue` : 
+        'Status updated successfully'
     });
   } catch (error) {
     logger.error('Error updating queue status:', error);

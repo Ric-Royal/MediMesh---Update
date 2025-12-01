@@ -25,6 +25,7 @@ import PharmacyManagementPage from './pages/PharmacyManagementPage';
 import LabWorkflowPage from './pages/LabWorkflowPage';
 import BillingManagementPage from './pages/BillingManagementPage';
 import RadiologyWorkflowPage from './pages/RadiologyWorkflowPage';
+import AppointmentsPage from './pages/AppointmentsPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 // Protected Route component
@@ -92,6 +93,9 @@ function App() {
                   <Route path="/records/new" element={<CreateRecordPage />} />
                   <Route path="/records/:id" element={<RecordDetailPage />} />
                   <Route path="/records/:id/edit" element={<EditRecordPage />} />
+                  
+                  {/* Appointments & Scheduling */}
+                  <Route path="/appointments" element={<AppointmentsPage />} />
                   
                   {/* Queue Management - NEW! */}
                   <Route path="/queue" element={<QueueManagementPage />} />

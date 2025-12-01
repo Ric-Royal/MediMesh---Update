@@ -24,7 +24,15 @@ import {
   Alert,
   LinearProgress,
   Fade,
-  Tooltip
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  RadioGroup,
+  FormControlLabel,
+  Radio,
+  FormLabel
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
@@ -34,20 +42,27 @@ import TrendSparkline from '../components/common/TrendSparkline';
 import StatusPill from '../components/common/StatusPill';
 import PriorityBadge from '../components/common/PriorityBadge';
 import ProgressStat from '../components/common/ProgressStat';
+import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog';
 import { useNotification } from '../contexts/NotificationContext';
+import API_CONFIG from '../config/api';
 
 const QueueManagementPage = () => {
   const [queue, setQueue] = useState([]);
   const [statistics, setStatistics] = useState(null);
   const [selectedClinic, setSelectedClinic] = useState('all');
+  const [selectedQueueType, setSelectedQueueType] = useState('consultation');
   const [loading, setLoading] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
+  const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
+  const [addPatientDialogOpen, setAddPatientDialogOpen] = useState(false);
+  const [selectedQueueEntry, setSelectedQueueEntry] = useState(null);
+  const [nextQueue, setNextQueue] = useState('discharge');
   const socketRef = useRef(null);
   const { notifySuccess, notifyError } = useNotification();
 
   useEffect(() => {
     // Initialize WebSocket connection
-    const socket = io('http://localhost:3001', {
+    const socket = io(API_CONFIG.wsURL, {
       transports: ['websocket', 'polling']
     });
 
@@ -100,25 +115,46 @@ const QueueManagementPage = () => {
       }
     }, 30000);
 
-    return () => clearInterval(interval);
-  }, [selectedClinic, wsConnected]);
+    // Update waiting times every 10 seconds for live timer
+    const timerInterval = setInterval(() => {
+      fetchQueue({ silent: true, showSpinner: false });
+    }, 10000);
+
+    return () => {
+      clearInterval(interval);
+      clearInterval(timerInterval);
+    };
+  }, [selectedClinic, selectedQueueType, wsConnected]);
 
   const fetchQueue = async ({ silent = true, showSpinner = true } = {}) => {
     if (showSpinner) {
       setLoading(true);
     }
     try {
-      const endpoint = selectedClinic === 'all'
-        ? 'http://localhost:3001/api/queue'
-        : `http://localhost:3001/api/queue/clinic/${selectedClinic}`;
+      let endpoint = selectedClinic === 'all'
+        ? `${API_CONFIG.endpoints.queue}`
+        : `${API_CONFIG.endpoints.queue}/clinic/${selectedClinic}`;
+      
+      // Add queue type filter
+      endpoint += `?queueType=${selectedQueueType}`;
 
       const response = await fetch(endpoint, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+        headers: API_CONFIG.getAuthHeaders()
       });
 
       if (response.ok) {
         const data = await response.json();
-        setQueue(data.data || []);
+        // Transform snake_case to camelCase for frontend
+        const transformedQueue = (data.data || []).map(entry => ({
+          ...entry,
+          patientName: entry.patient_name || `${entry.first_name || ''} ${entry.last_name || ''}`.trim(),
+          clinicName: entry.clinic_name,
+          waitingMinutes: Math.round(entry.waiting_minutes || 0),
+          isEmergency: entry.is_emergency,
+          priorityLevel: entry.priority_level,
+          queueType: entry.queue_type
+        }));
+        setQueue(transformedQueue);
         if (!silent) {
           notifySuccess('Queue updated');
         }
@@ -142,8 +178,8 @@ const QueueManagementPage = () => {
     }
 
     try {
-      const response = await fetch(`http://localhost:3001/api/queue/clinic/${selectedClinic}/statistics`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.queue}/clinic/${selectedClinic}/statistics`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
 
       if (response.ok) {
@@ -161,6 +197,107 @@ const QueueManagementPage = () => {
   const handleRefresh = () => {
     fetchQueue({ silent: false });
     fetchStatistics({ silent: true });
+  };
+
+  const handleCallPatient = async (queueEntryId) => {
+    try {
+      const response = await fetch(`${API_CONFIG.baseURL}/api/queue/${queueEntryId}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...API_CONFIG.getAuthHeaders()
+        },
+        body: JSON.stringify({ status: 'called' })
+      });
+
+      if (response.ok) {
+        fetchQueue({ silent: true });
+        notifySuccess('Patient called');
+      }
+    } catch (error) {
+      console.error('Error calling patient:', error);
+      notifyError('Failed to call patient');
+    }
+  };
+
+  const handleStartService = async (queueEntryId) => {
+    try {
+      const response = await fetch(`${API_CONFIG.baseURL}/api/queue/${queueEntryId}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...API_CONFIG.getAuthHeaders()
+        },
+        body: JSON.stringify({ status: 'in-service' })
+      });
+
+      if (response.ok) {
+        fetchQueue({ silent: true });
+        notifySuccess('Service started');
+      }
+    } catch (error) {
+      console.error('Error starting service:', error);
+      notifyError('Failed to start service');
+    }
+  };
+
+  const handleOpenCompleteDialog = (queueEntry) => {
+    setSelectedQueueEntry(queueEntry);
+    
+    // Smart default based on current queue type
+    // Consultation can go anywhere, other queues default to billing
+    if (queueEntry.queueType === 'consultation' || queueEntry.queue_type === 'consultation') {
+      setNextQueue('billing'); // Most common path
+    } else {
+      setNextQueue('billing'); // Lab/Pharmacy/Radiology → Billing
+    }
+    
+    setCompleteDialogOpen(true);
+  };
+
+  const handleCloseCompleteDialog = () => {
+    setCompleteDialogOpen(false);
+    setSelectedQueueEntry(null);
+    setNextQueue('discharge');
+  };
+
+  const handleCompleteService = async () => {
+    if (!selectedQueueEntry) return;
+    
+    try {
+      console.log('Completing service:', {
+        queueEntryId: selectedQueueEntry.id,
+        currentQueue: selectedQueueEntry.queueType || selectedQueueEntry.queue_type,
+        nextQueue: nextQueue
+      });
+      
+      const response = await fetch(`${API_CONFIG.baseURL}/api/queue/${selectedQueueEntry.id}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...API_CONFIG.getAuthHeaders()
+        },
+        body: JSON.stringify({ 
+          status: 'completed',
+          nextQueue: nextQueue === 'discharge' ? null : nextQueue
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Service completed successfully:', result);
+        fetchQueue({ silent: true });
+        handleCloseCompleteDialog();
+        notifySuccess(result.message || `Service completed. Patient moved to ${nextQueue || 'discharge'}`);
+      } else {
+        const error = await response.json();
+        console.error('Failed to complete service:', error);
+        notifyError(error.error || 'Failed to complete service');
+      }
+    } catch (error) {
+      console.error('Error completing service:', error);
+      notifyError('Failed to complete service: ' + error.message);
+    }
   };
 
   const getStatusColor = (status) => {
@@ -275,13 +412,21 @@ const QueueManagementPage = () => {
             size="small"
           />
         </Box>
-        <Button
-          startIcon={<RefreshIcon />}
-          onClick={handleRefresh}
-          disabled={loading}
-        >
-          Refresh
-        </Button>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button
+            variant="outlined"
+            onClick={() => setAddPatientDialogOpen(true)}
+          >
+            + Add Patient
+          </Button>
+          <Button
+            startIcon={<RefreshIcon />}
+            onClick={handleRefresh}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+        </Box>
       </Box>
 
       {/* WebSocket Status Alert */}
@@ -316,21 +461,42 @@ const QueueManagementPage = () => {
         </Grid>
       </Fade>
 
-      {/* Clinic Filter */}
+      {/* Filters */}
       <Paper sx={{ p: 2, mb: 3 }}>
-        <FormControl fullWidth>
-          <InputLabel>Clinic</InputLabel>
-          <Select
-            value={selectedClinic}
-            label="Clinic"
-            onChange={(e) => setSelectedClinic(e.target.value)}
-          >
-            <MenuItem value="all">All Clinics</MenuItem>
-            <MenuItem value="1">General Medicine</MenuItem>
-            <MenuItem value="2">Pediatrics</MenuItem>
-            <MenuItem value="3">Surgery</MenuItem>
-          </Select>
-        </FormControl>
+        <Grid container spacing={2}>
+          <Grid item xs={12} md={6}>
+            <FormControl fullWidth>
+              <InputLabel>Queue Type</InputLabel>
+              <Select
+                value={selectedQueueType}
+                label="Queue Type"
+                onChange={(e) => setSelectedQueueType(e.target.value)}
+              >
+                <MenuItem value="consultation">🩺 Consultation Queue</MenuItem>
+                <MenuItem value="pharmacy">💊 Pharmacy Queue</MenuItem>
+                <MenuItem value="lab">🔬 Laboratory Queue</MenuItem>
+                <MenuItem value="radiology">📷 Radiology Queue</MenuItem>
+                <MenuItem value="billing">💳 Billing Queue</MenuItem>
+                <MenuItem value="triage">🚑 Triage Queue</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <FormControl fullWidth>
+              <InputLabel>Clinic</InputLabel>
+              <Select
+                value={selectedClinic}
+                label="Clinic"
+                onChange={(e) => setSelectedClinic(e.target.value)}
+              >
+                <MenuItem value="all">All Clinics</MenuItem>
+                <MenuItem value="1">General Medicine</MenuItem>
+                <MenuItem value="2">Pediatrics</MenuItem>
+                <MenuItem value="3">Surgery</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+        </Grid>
       </Paper>
 
       <Grid container spacing={3} sx={{ mb: 3 }}>
@@ -450,12 +616,34 @@ const QueueManagementPage = () => {
                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Button size="small" variant="outlined">
-                        Call
-                      </Button>
-                      <Button size="small" variant="contained">
-                        Start
-                      </Button>
+                      {entry.status === 'waiting' && (
+                        <Button 
+                          size="small" 
+                          variant="outlined"
+                          onClick={() => handleCallPatient(entry.id)}
+                        >
+                          Call
+                        </Button>
+                      )}
+                      {(entry.status === 'waiting' || entry.status === 'called') && (
+                        <Button 
+                          size="small" 
+                          variant="contained"
+                          onClick={() => handleStartService(entry.id)}
+                        >
+                          Start
+                        </Button>
+                      )}
+                      {entry.status === 'in-service' && (
+                        <Button 
+                          size="small" 
+                          variant="contained"
+                          color="success"
+                          onClick={() => handleOpenCompleteDialog(entry)}
+                        >
+                          Complete
+                        </Button>
+                      )}
                     </Box>
                   </TableCell>
                 </TableRow>
@@ -480,6 +668,93 @@ const QueueManagementPage = () => {
           <PriorityBadge priority="stat" />
         </Box>
       </Paper>
+
+      {/* Complete Service Dialog - Hospital Workflow (Queue-Type Aware) */}
+      <Dialog open={completeDialogOpen} onClose={handleCloseCompleteDialog} maxWidth="sm" fullWidth>
+        <DialogTitle>
+          Complete {selectedQueueEntry?.queueType || selectedQueueEntry?.queue_type || 'Service'} - Next Step
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 2 }}>
+            <Alert severity="info" sx={{ mb: 3 }}>
+              {(selectedQueueEntry?.queueType === 'consultation' || selectedQueueEntry?.queue_type === 'consultation') 
+                ? 'Where should the patient go next?' 
+                : 'Service completed. Patient will automatically move to billing unless you select another destination.'}
+            </Alert>
+            
+            {selectedQueueEntry && (
+              <Box sx={{ mb: 3, p: 2, bgcolor: 'primary.light', borderRadius: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  <strong>Patient:</strong> {selectedQueueEntry.patientName || selectedQueueEntry.patient_name}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  <strong>UHID:</strong> {selectedQueueEntry.uhid}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  <strong>Current Queue:</strong> {selectedQueueEntry.queueType || selectedQueueEntry.queue_type}
+                </Typography>
+              </Box>
+            )}
+
+            <FormControl component="fieldset" fullWidth>
+              <FormLabel component="legend">Next Destination</FormLabel>
+              <RadioGroup
+                value={nextQueue}
+                onChange={(e) => setNextQueue(e.target.value)}
+              >
+                {(selectedQueueEntry?.queueType === 'consultation' || selectedQueueEntry?.queue_type === 'consultation') && (
+                  <>
+                    <FormControlLabel 
+                      value="pharmacy" 
+                      control={<Radio />} 
+                      label="🏥 Pharmacy - Patient needs medication" 
+                    />
+                    <FormControlLabel 
+                      value="lab" 
+                      control={<Radio />} 
+                      label="🔬 Laboratory - Patient needs lab tests" 
+                    />
+                    <FormControlLabel 
+                      value="radiology" 
+                      control={<Radio />} 
+                      label="📷 Radiology - Patient needs imaging" 
+                    />
+                  </>
+                )}
+                <FormControlLabel 
+                  value="billing" 
+                  control={<Radio />} 
+                  label="💳 Billing - Patient ready to pay and leave" 
+                />
+                <FormControlLabel 
+                  value="discharge" 
+                  control={<Radio />} 
+                  label="✅ Discharge - Patient can leave (no further action)" 
+                />
+              </RadioGroup>
+            </FormControl>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseCompleteDialog}>Cancel</Button>
+          <Button 
+            onClick={handleCompleteService} 
+            variant="contained" 
+            color="success"
+          >
+            Complete & Move Patient
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Patient to Queue Dialog */}
+      <AddPatientToQueueDialog
+        open={addPatientDialogOpen}
+        onClose={() => setAddPatientDialogOpen(false)}
+        onSuccess={() => {
+          fetchQueue({ silent: true });
+        }}
+      />
     </Container>
   );
 };

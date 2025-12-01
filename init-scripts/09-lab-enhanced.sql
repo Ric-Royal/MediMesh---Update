@@ -7,6 +7,9 @@
 -- Timeline: Weeks 9-12
 -- ============================================
 
+-- Ensure we're connected to the medimesh database
+\c medimesh;
+
 -- 1. Lab Test Catalog (Enhanced)
 CREATE TABLE IF NOT EXISTS lab_tests (
   id SERIAL PRIMARY KEY,
@@ -197,15 +200,35 @@ CREATE TABLE IF NOT EXISTS lab_equipment (
 -- ============================================
 
 -- Lab Order Number Sequence
-CREATE SEQUENCE IF NOT EXISTS lab_order_number_seq START 1;
+CREATE SEQUENCE IF NOT EXISTS lab_order_number_seq START 1000;
 
 CREATE OR REPLACE FUNCTION generate_lab_order_number()
 RETURNS TRIGGER AS $$
+DECLARE
+    new_order_number TEXT;
+    max_attempts INTEGER := 10;
+    attempt INTEGER := 0;
 BEGIN
-  IF NEW.order_number IS NULL OR NEW.order_number = '' THEN
-    NEW.order_number := 'LAB-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || LPAD(nextval('lab_order_number_seq')::TEXT, 4, '0');
-  END IF;
-  RETURN NEW;
+    IF NEW.order_number IS NULL OR NEW.order_number = '' THEN
+        LOOP
+            -- Generate order_number: LAB-YYYYMMDD-XXXX
+            new_order_number := 'LAB-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || 
+                               LPAD(NEXTVAL('lab_order_number_seq')::TEXT, 4, '0');
+            
+            -- Check if this order_number already exists
+            IF NOT EXISTS (SELECT 1 FROM lab_orders WHERE order_number = new_order_number) THEN
+                NEW.order_number := new_order_number;
+                EXIT; -- Success, exit loop
+            END IF;
+            
+            -- Increment attempt counter
+            attempt := attempt + 1;
+            IF attempt >= max_attempts THEN
+                RAISE EXCEPTION 'Failed to generate unique lab order_number after % attempts', max_attempts;
+            END IF;
+        END LOOP;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 

@@ -33,6 +33,7 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import BarChart from '@mui/icons-material/BarChart';
 import WarningIcon from '@mui/icons-material/Warning';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import API_CONFIG from '../config/api';
 
 const LabWorkflowPage = () => {
   const [activeTab, setActiveTab] = useState(0);
@@ -58,8 +59,8 @@ const LabWorkflowPage = () => {
 
   const fetchStatistics = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/lab/statistics', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.baseURL}/api/lab/statistics`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -73,8 +74,8 @@ const LabWorkflowPage = () => {
   const fetchLabQueue = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/lab/queue', {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.baseURL}/api/lab/queue`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
@@ -91,8 +92,8 @@ const LabWorkflowPage = () => {
     setLoading(true);
     try {
       const url = searchTerm
-        ? `http://localhost:3001/api/lab/orders?search=${searchTerm}`
-        : 'http://localhost:3001/api/lab/orders';
+        ? `${API_CONFIG.endpoints.lab.orders}?search=${searchTerm}`
+        : `${API_CONFIG.endpoints.lab.orders}`;
 
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
@@ -110,8 +111,8 @@ const LabWorkflowPage = () => {
 
   const handleViewDetails = async (orderId) => {
     try {
-      const response = await fetch(`http://localhost:3001/api/lab/orders/${orderId}`, {
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || 'dev-token'}` }
+      const response = await fetch(`${API_CONFIG.endpoints.lab.orders}/${orderId}`, {
+        headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();

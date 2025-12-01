@@ -164,59 +164,62 @@ class UserSettings {
     }
   }
 
-  // Update user settings
+  // Update user settings (with UPSERT logic)
   static async update(userId, settingsData) {
     try {
       const db = getDB();
       
-      // Build update query dynamically based on provided fields
-      const updateFields = [];
-      const values = [userId];
-      let paramCount = 1;
+      // First, try to get existing settings to merge with
+      let existing;
+      try {
+        existing = await this.findByUserId(userId);
+      } catch (err) {
+        // If not found, use defaults
+        existing = this.getDefaultSettings();
+      }
+      
+      // Merge with existing settings
+      const merged = {
+        profile: { ...existing.profile, ...(settingsData.profile || {}) },
+        preferences: { ...existing.preferences, ...(settingsData.preferences || {}) },
+        notifications: { ...existing.notifications, ...(settingsData.notifications || {}) },
+        medical_defaults: { ...existing.medical_defaults, ...(settingsData.medical_defaults || {}) },
+        working_hours: { ...existing.working_hours, ...(settingsData.working_hours || {}) }
+      };
 
-      if (settingsData.profile) {
-        updateFields.push(`profile = $${++paramCount}`);
-        values.push(JSON.stringify(settingsData.profile));
-      }
-      if (settingsData.preferences) {
-        updateFields.push(`preferences = $${++paramCount}`);
-        values.push(JSON.stringify(settingsData.preferences));
-      }
-      if (settingsData.notifications) {
-        updateFields.push(`notifications = $${++paramCount}`);
-        values.push(JSON.stringify(settingsData.notifications));
-      }
-      if (settingsData.medical_defaults) {
-        updateFields.push(`medical_defaults = $${++paramCount}`);
-        values.push(JSON.stringify(settingsData.medical_defaults));
-      }
-      if (settingsData.working_hours) {
-        updateFields.push(`working_hours = $${++paramCount}`);
-        values.push(JSON.stringify(settingsData.working_hours));
-      }
-
-      updateFields.push(`updated_at = NOW()`);
-
+      // Use UPSERT query (INSERT ... ON CONFLICT UPDATE)
       const query = `
-        UPDATE user_settings 
-        SET ${updateFields.join(', ')}
-        WHERE user_id = $1
+        INSERT INTO user_settings (
+          user_id, profile, preferences, notifications, medical_defaults, working_hours, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        ON CONFLICT (user_id) 
+        DO UPDATE SET 
+          profile = EXCLUDED.profile,
+          preferences = EXCLUDED.preferences,
+          notifications = EXCLUDED.notifications,
+          medical_defaults = EXCLUDED.medical_defaults,
+          working_hours = EXCLUDED.working_hours,
+          updated_at = NOW()
         RETURNING *
       `;
 
-      const result = await db.query(query, values);
-      
-      if (result.rows.length === 0) {
-        throw new Error('User settings not found');
-      }
+      const values = [
+        userId,
+        JSON.stringify(merged.profile),
+        JSON.stringify(merged.preferences),
+        JSON.stringify(merged.notifications),
+        JSON.stringify(merged.medical_defaults),
+        JSON.stringify(merged.working_hours)
+      ];
 
+      const result = await db.query(query, values);
       const settings = new UserSettings(result.rows[0]);
       
       // Update cache
       const cacheKey = `user_settings:${userId}`;
       await cache.set(cacheKey, result.rows[0], 3600);
       
-      logger.info('User settings updated', { userId });
+      logger.info('User settings updated/created', { userId });
       return settings;
     } catch (error) {
       logger.error('Error updating user settings:', error);

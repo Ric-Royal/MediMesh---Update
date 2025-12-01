@@ -1,5 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
-const { pool } = require('../utils/database');
+const { getDB } = require('../utils/database');
 
 class Encounter {
   static async create(encounterData) {
@@ -29,7 +29,7 @@ class Encounter {
       encounterData.createdBy
     ];
     
-    const result = await pool.query(query, values);
+    const result = await getDB().query(query, values);
     return result.rows[0];
   }
   
@@ -100,7 +100,7 @@ class Encounter {
       RETURNING *
     `;
     
-    const result = await pool.query(query, values);
+    const result = await getDB().query(query, values);
     return result.rows[0];
   }
 }

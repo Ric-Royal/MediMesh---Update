@@ -36,16 +36,16 @@ router.post('/', async (req, res) => {
     
     const encounter = await Encounter.create(encounterData);
     
-    // Auto-add to consultation queue if outpatient
-    if (encounter.encounterType === 'outpatient' && encounter.clinicId) {
+    // Auto-add to consultation queue if outpatient or emergency
+    if (encounter.encounter_type === 'outpatient' || encounter.encounter_type === 'emergency') {
       await QueueEntry.create({
         encounterId: encounter.id,
-        patientId: encounter.patientId,
-        clinicId: encounter.clinicId,
-        doctorId: encounter.doctorId,
+        patientId: encounter.patient_id,
+        clinicId: encounter.clinic_id || null,
+        doctorId: encounter.doctor_id || null,
         queueType: 'consultation',
-        isEmergency: encounter.triageLevel === 'emergency',
-        waitingLocation: encounter.waitingLocation || 'reception'
+        isEmergency: encounter.triage_level === 'emergency',
+        waitingLocation: encounter.waiting_location || 'reception'
       });
     }
     

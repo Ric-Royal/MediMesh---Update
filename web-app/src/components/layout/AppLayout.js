@@ -36,6 +36,7 @@ import {
   CameraAlt as RadiologyIcon,
   DarkMode as DarkModeIcon,
   LightMode as LightModeIcon,
+  Event as EventIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -59,18 +60,23 @@ const AppLayout = ({ children }) => {
       roles: ['doctor', 'nurse', 'admin']
     },
     {
+      text: 'Appointments',
+      icon: <EventIcon />,
+      path: '/appointments',
+      roles: ['doctor', 'nurse', 'admin', 'receptionist'],
+      badge: 'NEW'
+    },
+    {
       text: 'Queue Management',
       icon: <QueueIcon />,
       path: '/queue',
-      roles: ['doctor', 'nurse', 'admin', 'receptionist'],
-      badge: 'NEW'
+      roles: ['doctor', 'nurse', 'admin', 'receptionist']
     },
     {
       text: 'Ward Occupancy',
       icon: <BedIcon />,
       path: '/wards',
-      roles: ['doctor', 'nurse', 'admin'],
-      badge: 'NEW'
+      roles: ['doctor', 'nurse', 'admin']
     },
     {
       text: 'Pharmacy',

@@ -7,6 +7,9 @@
 -- Timeline: Weeks 13-16
 -- ============================================
 
+-- Ensure we're connected to the medimesh database
+\c medimesh;
+
 -- 1. Imaging Modalities (Equipment types)
 CREATE TABLE IF NOT EXISTS imaging_modalities (
   id SERIAL PRIMARY KEY,
@@ -228,15 +231,35 @@ CREATE TABLE IF NOT EXISTS radiology_queue (
 -- ============================================
 
 -- Radiology Order Number
-CREATE SEQUENCE IF NOT EXISTS radiology_order_seq START 1;
+CREATE SEQUENCE IF NOT EXISTS radiology_order_seq START 1000;
 
 CREATE OR REPLACE FUNCTION generate_radiology_order_number()
 RETURNS TRIGGER AS $$
+DECLARE
+    new_order_number TEXT;
+    max_attempts INTEGER := 10;
+    attempt INTEGER := 0;
 BEGIN
-  IF NEW.order_number IS NULL OR NEW.order_number = '' THEN
-    NEW.order_number := 'RAD-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || LPAD(nextval('radiology_order_seq')::TEXT, 4, '0');
-  END IF;
-  RETURN NEW;
+    IF NEW.order_number IS NULL OR NEW.order_number = '' THEN
+        LOOP
+            -- Generate order_number: RAD-YYYYMMDD-XXXX
+            new_order_number := 'RAD-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || 
+                               LPAD(NEXTVAL('radiology_order_seq')::TEXT, 4, '0');
+            
+            -- Check if this order_number already exists
+            IF NOT EXISTS (SELECT 1 FROM radiology_orders WHERE order_number = new_order_number) THEN
+                NEW.order_number := new_order_number;
+                EXIT; -- Success, exit loop
+            END IF;
+            
+            -- Increment attempt counter
+            attempt := attempt + 1;
+            IF attempt >= max_attempts THEN
+                RAISE EXCEPTION 'Failed to generate unique radiology order_number after % attempts', max_attempts;
+            END IF;
+        END LOOP;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -245,15 +268,35 @@ BEFORE INSERT ON radiology_orders
 FOR EACH ROW EXECUTE FUNCTION generate_radiology_order_number();
 
 -- Radiology Report Number
-CREATE SEQUENCE IF NOT EXISTS radiology_report_seq START 1;
+CREATE SEQUENCE IF NOT EXISTS radiology_report_seq START 1000;
 
 CREATE OR REPLACE FUNCTION generate_radiology_report_number()
 RETURNS TRIGGER AS $$
+DECLARE
+    new_report_number TEXT;
+    max_attempts INTEGER := 10;
+    attempt INTEGER := 0;
 BEGIN
-  IF NEW.report_number IS NULL OR NEW.report_number = '' THEN
-    NEW.report_number := 'REP-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || LPAD(nextval('radiology_report_seq')::TEXT, 4, '0');
-  END IF;
-  RETURN NEW;
+    IF NEW.report_number IS NULL OR NEW.report_number = '' THEN
+        LOOP
+            -- Generate report_number: REP-YYYYMMDD-XXXX
+            new_report_number := 'REP-' || TO_CHAR(CURRENT_DATE, 'YYYYMMDD') || '-' || 
+                                LPAD(NEXTVAL('radiology_report_seq')::TEXT, 4, '0');
+            
+            -- Check if this report_number already exists
+            IF NOT EXISTS (SELECT 1 FROM radiology_reports WHERE report_number = new_report_number) THEN
+                NEW.report_number := new_report_number;
+                EXIT; -- Success, exit loop
+            END IF;
+            
+            -- Increment attempt counter
+            attempt := attempt + 1;
+            IF attempt >= max_attempts THEN
+                RAISE EXCEPTION 'Failed to generate unique radiology report_number after % attempts', max_attempts;
+            END IF;
+        END LOOP;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -374,4 +417,38 @@ COMMENT ON TABLE radiology_order_items IS 'Individual imaging tests within an or
 COMMENT ON TABLE radiology_reports IS 'Radiology reports by radiologists';
 COMMENT ON TABLE radiology_images IS 'Image file metadata and PACS integration';
 COMMENT ON TABLE radiology_queue IS 'Real-time imaging queue management';
+
+-- ============================================
+-- FINAL PERMISSIONS GRANT
+-- Ensure medimesh_user has all necessary permissions
+-- ============================================
+
+-- Grant all permissions on all tables to medimesh_user
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO medimesh_user;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO medimesh_user;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO medimesh_user;
+
+-- Change ownership of all tables to medimesh_user
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public')
+    LOOP
+        EXECUTE 'ALTER TABLE ' || quote_ident(r.tablename) || ' OWNER TO medimesh_user';
+    END LOOP;
+END $$;
+
+-- Change ownership of all sequences to medimesh_user
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN (SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public')
+    LOOP
+        EXECUTE 'ALTER SEQUENCE ' || quote_ident(r.sequence_name) || ' OWNER TO medimesh_user';
+    END LOOP;
+    
+    RAISE NOTICE 'All database objects ownership transferred to medimesh_user';
+END $$;
 
