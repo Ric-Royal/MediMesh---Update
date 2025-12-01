@@ -148,7 +148,7 @@ router.get('/orders', async (req, res) => {
     query += ` ORDER BY lo.order_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(limit, offset);
     
-    const result = await pool.query(query, params);
+    const result = await getDB().query(query, params);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching lab orders:', error);
@@ -174,7 +174,7 @@ router.get('/orders/:id', async (req, res) => {
       LEFT JOIN clinics c ON lo.clinic_id = c.id
       WHERE lo.id = $1
     `;
-    const orderResult = await pool.query(orderQuery, [id]);
+    const orderResult = await getDB().query(orderQuery, [id]);
     
     if (orderResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Lab order not found' });
@@ -190,7 +190,7 @@ router.get('/orders/:id', async (req, res) => {
       WHERE loi.lab_order_id = $1
       ORDER BY loi.created_at
     `;
-    const itemsResult = await pool.query(itemsQuery, [id]);
+    const itemsResult = await getDB().query(itemsQuery, [id]);
     
     const order = orderResult.rows[0];
     order.items = itemsResult.rows;
@@ -275,7 +275,7 @@ router.put('/orders/:id/status', async (req, res) => {
       WHERE id = $2
       RETURNING *
     `;
-    const result = await pool.query(query, [status, id]);
+    const result = await getDB().query(query, [status, id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Lab order not found' });
@@ -376,7 +376,7 @@ router.get('/samples/:barcode', async (req, res) => {
       LEFT JOIN lab_tests lt ON loi.test_id = lt.id
       WHERE ls.barcode = $1
     `;
-    const result = await pool.query(query, [barcode]);
+    const result = await getDB().query(query, [barcode]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Sample not found' });
@@ -413,7 +413,7 @@ router.post('/orders/:id/items/:itemId/result', async (req, res) => {
       RETURNING *
     `;
     
-    const result = await pool.query(query, [
+    const result = await getDB().query(query, [
       result_value, result_unit, result_notes,
       reference_min, reference_max, itemId, id
     ]);
@@ -449,7 +449,7 @@ router.get('/queue', async (req, res) => {
       WHERE lq.status IN ('waiting', 'sample-collection')
       ORDER BY lo.priority DESC, lq.joined_queue_at ASC
     `;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching lab queue:', error);
@@ -471,7 +471,7 @@ router.get('/statistics', async (req, res) => {
         (SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (COALESCE(called_at, CURRENT_TIMESTAMP) - joined_queue_at))/60), 0) 
          FROM lab_queue WHERE DATE(joined_queue_at) = CURRENT_DATE) as avg_wait_time_minutes
     `;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     logger.error('Error fetching lab statistics:', error);

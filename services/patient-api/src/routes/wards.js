@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../utils/database');
+const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 
 // Get all wards
@@ -15,7 +15,7 @@ router.get('/', async (req, res) => {
       WHERE w.is_active = true
       ORDER BY w.ward_name
     `;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching wards:', error);
@@ -47,7 +47,7 @@ router.get('/:wardId/occupancy', async (req, res) => {
       WHERE b.ward_id = $1 AND b.is_active = true
       ORDER BY b.bed_number
     `;
-    const result = await pool.query(query, [wardId]);
+    const result = await getDB().query(query, [wardId]);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching ward occupancy:', error);
@@ -73,7 +73,7 @@ router.get('/:wardId/statistics', async (req, res) => {
       WHERE w.id = $1
       GROUP BY w.id, w.total_beds
     `;
-    const result = await pool.query(query, [wardId]);
+    const result = await getDB().query(query, [wardId]);
     res.json({ success: true, data: result.rows[0] || {} });
   } catch (error) {
     logger.error('Error fetching ward statistics:', error);

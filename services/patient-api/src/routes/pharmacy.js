@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { pool } = require('../utils/database');
+const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 
 // ============================================
@@ -44,11 +44,11 @@ router.get('/drugs', async (req, res) => {
     query += ` ORDER BY d.generic_name LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(limit, offset);
     
-    const result = await pool.query(query, params);
+    const result = await getDB().query(query, params);
     
     // Get total count
     const countQuery = query.replace(/SELECT .* FROM/, 'SELECT COUNT(*) FROM').split('ORDER BY')[0];
-    const countResult = await pool.query(countQuery, params.slice(0, -2));
+    const countResult = await getDB().query(countQuery, params.slice(0, -2));
     
     res.json({
       success: true,
@@ -77,7 +77,7 @@ router.get('/drugs/:id', async (req, res) => {
       LEFT JOIN drug_categories dc ON d.category_id = dc.id
       WHERE d.id = $1
     `;
-    const result = await pool.query(query, [id]);
+    const result = await getDB().query(query, [id]);
     
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Drug not found' });
@@ -110,7 +110,7 @@ router.post('/drugs', async (req, res) => {
       RETURNING *
     `;
     
-    const result = await pool.query(query, [
+    const result = await getDB().query(query, [
       generic_name, brand_name, category_id, dosage_form, strength,
       unit_of_measure, manufacturer, description, reorder_level || 50,
       current_stock || 0, unit_price, selling_price, is_controlled_substance || false,
@@ -139,7 +139,7 @@ router.post('/drugs/:id/stock', async (req, res) => {
       RETURNING *
     `;
     
-    const result = await pool.query(query, [
+    const result = await getDB().query(query, [
       id, movement_type, quantity, unit_cost, batch_number,
       expiry_date, reference_number, notes, req.user?.userId
     ]);
@@ -162,7 +162,7 @@ router.get('/drugs/alerts/reorder', async (req, res) => {
       WHERE d.current_stock <= d.reorder_level AND d.is_active = true
       ORDER BY d.current_stock ASC
     `;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching reorder alerts:', error);
@@ -229,7 +229,7 @@ router.get('/prescriptions', async (req, res) => {
     query += ` ORDER BY p.prescription_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(limit, offset);
     
-    const result = await pool.query(query, params);
+    const result = await getDB().query(query, params);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching prescriptions:', error);
@@ -255,7 +255,7 @@ router.get('/prescriptions/:id', async (req, res) => {
       LEFT JOIN clinics c ON p.clinic_id = c.id
       WHERE p.id = $1
     `;
-    const prescriptionResult = await pool.query(prescriptionQuery, [id]);
+    const prescriptionResult = await getDB().query(prescriptionQuery, [id]);
     
     if (prescriptionResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Prescription not found' });
@@ -273,7 +273,7 @@ router.get('/prescriptions/:id', async (req, res) => {
       WHERE pi.prescription_id = $1
       ORDER BY pi.id
     `;
-    const itemsResult = await pool.query(itemsQuery, [id]);
+    const itemsResult = await getDB().query(itemsQuery, [id]);
     
     const prescription = prescriptionResult.rows[0];
     prescription.items = itemsResult.rows;
@@ -357,7 +357,7 @@ router.post('/prescriptions/:id/items/:itemId/dispense', async (req, res) => {
       RETURNING *
     `;
     
-    const result = await pool.query(query, [
+    const result = await getDB().query(query, [
       quantity_dispensed, req.user?.userId, batch_number, itemId, id
     ]);
     
@@ -387,7 +387,7 @@ router.get('/prescriptions/queue/pending', async (req, res) => {
       WHERE p.status IN ('pending', 'partially-dispensed')
       ORDER BY p.prescription_date ASC
     `;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching pharmacy queue:', error);
@@ -407,7 +407,7 @@ router.get('/statistics', async (req, res) => {
         (SELECT COALESCE(SUM(final_amount), 0) FROM pharmacy_transactions WHERE DATE(transaction_date) = CURRENT_DATE) as sales_today,
         (SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (dispensed_date - prescription_date))/60), 0) FROM prescriptions WHERE DATE(prescription_date) = CURRENT_DATE AND dispensed_date IS NOT NULL) as avg_wait_time_minutes
     `;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     logger.error('Error fetching pharmacy statistics:', error);

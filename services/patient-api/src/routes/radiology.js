@@ -57,7 +57,7 @@ router.get('/tests', async (req, res) => {
     
     query += ` ORDER BY rt.test_name`;
     
-    const result = await pool.query(query, params);
+    const result = await getDB().query(query, params);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching radiology tests:', error);
@@ -69,7 +69,7 @@ router.get('/tests', async (req, res) => {
 router.get('/modalities', async (req, res) => {
   try {
     const query = 'SELECT * FROM imaging_modalities WHERE is_active = true ORDER BY modality_name';
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching modalities:', error);
@@ -123,7 +123,7 @@ router.get('/orders', async (req, res) => {
     query += ` ORDER BY ro.order_date DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
     params.push(limit, offset);
     
-    const result = await pool.query(query, params);
+    const result = await getDB().query(query, params);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching radiology orders:', error);
@@ -147,7 +147,7 @@ router.get('/orders/:id', async (req, res) => {
       LEFT JOIN staff s ON ro.ordering_doctor_id = s.id
       WHERE ro.id = $1
     `;
-    const orderResult = await pool.query(orderQuery, [id]);
+    const orderResult = await getDB().query(orderQuery, [id]);
     
     if (orderResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Radiology order not found' });
@@ -164,7 +164,7 @@ router.get('/orders/:id', async (req, res) => {
       WHERE roi.radiology_order_id = $1
       ORDER BY roi.created_at
     `;
-    const itemsResult = await pool.query(itemsQuery, [id]);
+    const itemsResult = await getDB().query(itemsQuery, [id]);
     
     // Get reports
     const reportsQuery = `
@@ -175,7 +175,7 @@ router.get('/orders/:id', async (req, res) => {
       WHERE rr.radiology_order_id = $1
       ORDER BY rr.created_at DESC
     `;
-    const reportsResult = await pool.query(reportsQuery, [id]);
+    const reportsResult = await getDB().query(reportsQuery, [id]);
     
     const order = orderResult.rows[0];
     order.items = itemsResult.rows;
@@ -268,7 +268,7 @@ router.get('/queue', async (req, res) => {
       WHERE rq.status IN ('waiting', 'called', 'in-room')
       ORDER BY ro.priority DESC, rq.joined_queue_at ASC
     `;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows, count: result.rows.length });
   } catch (error) {
     logger.error('Error fetching radiology queue:', error);
@@ -287,7 +287,7 @@ router.get('/statistics', async (req, res) => {
         (SELECT COUNT(*) FROM radiology_reports WHERE critical_finding = true AND DATE(created_at) = CURRENT_DATE) as critical_findings_today,
         (SELECT COUNT(*) FROM radiology_queue WHERE status = 'waiting') as queue_waiting
     `;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     logger.error('Error fetching radiology statistics:', error);

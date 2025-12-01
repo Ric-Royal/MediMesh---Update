@@ -21,14 +21,10 @@ import EditRecordPage from './pages/EditRecordPage';
 import SettingsPage from './pages/SettingsPage';
 import QueueManagementPage from './pages/QueueManagementPage';
 import WardOccupancyPage from './pages/WardOccupancyPage';
-import PharmacyManagementPage from './pages/PharmacyManagementPage';
-import PharmacyPage from './pages/PharmacyPage'; // New workspace
-import LabWorkflowPage from './pages/LabWorkflowPage';
-import LaboratoryPage from './pages/LaboratoryPage'; // New workspace
-import BillingManagementPage from './pages/BillingManagementPage';
+import PharmacyPage from './pages/PharmacyPage';
+import LaboratoryPage from './pages/LaboratoryPage';
 import EnhancedBillingPage from './pages/EnhancedBillingPage';
-import RadiologyWorkflowPage from './pages/RadiologyWorkflowPage';
-import RadiologyPage from './pages/RadiologyPage'; // New workspace
+import RadiologyPage from './pages/RadiologyPage';
 import AppointmentsPage from './pages/AppointmentsPage';
 import NotFoundPage from './pages/NotFoundPage';
 
@@ -109,19 +105,15 @@ function App() {
                   
                   {/* Pharmacy Management - PHASE 2! */}
                   <Route path="/pharmacy" element={<PharmacyPage />} />
-                  <Route path="/pharmacy/old" element={<PharmacyManagementPage />} />
                   
                   {/* Lab Workflow - PHASE 2! */}
                   <Route path="/lab" element={<LaboratoryPage />} />
-                  <Route path="/lab/old" element={<LabWorkflowPage />} />
                   
                   {/* Billing - PHASE 3! */}
                   <Route path="/billing" element={<EnhancedBillingPage />} />
-                  <Route path="/billing/old" element={<BillingManagementPage />} />
                   
                   {/* Radiology - PHASE 3! */}
                   <Route path="/radiology" element={<RadiologyPage />} />
-                  <Route path="/radiology/old" element={<RadiologyWorkflowPage />} />
                   
                   {/* Settings */}
                   <Route path="/settings" element={<SettingsPage />} />

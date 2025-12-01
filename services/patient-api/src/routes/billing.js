@@ -75,7 +75,7 @@ router.get('/invoices/:id', async (req, res) => {
     const invoiceQuery = `
       SELECT i.*,
              p.first_name || ' ' || p.last_name as patient_name,
-             p.uhid, p.phone_number,
+             p.uhid, p.phone as phone_number,
              s.first_name || ' ' || s.last_name as billed_by_name
       FROM invoices i
       LEFT JOIN patients p ON i.patient_id = p.id
@@ -120,7 +120,7 @@ router.get('/invoices/encounter/:encounterId', async (req, res) => {
     const invoiceQuery = `
       SELECT i.*,
              p.first_name || ' ' || p.last_name as patient_name,
-             p.uhid, p.phone_number,
+             p.uhid, p.phone as phone_number,
              e.encounter_type, e.status as encounter_status
       FROM invoices i
       LEFT JOIN patients p ON i.patient_id = p.id
