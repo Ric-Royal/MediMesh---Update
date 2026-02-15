@@ -16,28 +16,49 @@ const authenticateToken = (req, res, next) => {
 
   try {
     // Handle development tokens for testing
+    // Supports: dev_token_admin, dev_token_doctor, dev_token_nurse, etc.
+    // Extended: dev_token_<role>_<staffId> for staff-specific auth (e.g., dev_token_doctor_21a897fd-...)
     if (process.env.NODE_ENV === 'development' && token.startsWith('dev_token_')) {
-      const role = token.split('_')[2] || 'user'; // Extract role from dev_token_admin, dev_token_doctor, etc.
+      const parts = token.split('_');
+      const role = parts[2] || 'user';
+      // If there are more parts after role, they form the staff UUID
+      const staffId = parts.length > 3 ? parts.slice(3).join('_') : null;
       
-      // Generate consistent UUIDs for development users
+      // Generate consistent UUIDs for development users (fallback when no staffId provided)
       const devUserIds = {
         'admin': '550e8400-e29b-41d4-a716-446655440000',
         'doctor': '550e8400-e29b-41d4-a716-446655440001', 
         'nurse': '550e8400-e29b-41d4-a716-446655440002',
+        'receptionist': '550e8400-e29b-41d4-a716-446655440004',
+        'lab-tech': '550e8400-e29b-41d4-a716-446655440005',
+        'pharmacist': '550e8400-e29b-41d4-a716-446655440006',
+        'radiologist': '550e8400-e29b-41d4-a716-446655440007',
+        'billing': '550e8400-e29b-41d4-a716-446655440008',
         'user': '550e8400-e29b-41d4-a716-446655440003'
       };
       
+      // Map role aliases for convenience (e.g., 'labtech' -> 'lab-tech')
+      const roleAliases = {
+        'labtech': 'lab-tech',
+        'lab': 'lab-tech',
+        'pharma': 'pharmacist',
+        'rad': 'radiologist',
+        'reception': 'receptionist'
+      };
+      const resolvedRole = roleAliases[role] || role;
+      
       req.user = {
-        id: devUserIds[role] || uuidv4(),
-        username: role,
-        email: `${role}@medimesh.dev`,
-        roles: [role, 'user'],
+        id: staffId || devUserIds[resolvedRole] || uuidv4(),
+        username: resolvedRole,
+        email: `${resolvedRole}@medimesh.dev`,
+        roles: [resolvedRole, 'user'],
         scope: 'read write'
       };
 
       logger.info('User authenticated (dev mode)', {
         userId: req.user.id,
         username: req.user.username,
+        role: resolvedRole,
         ip: req.ip
       });
 

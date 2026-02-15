@@ -78,7 +78,7 @@ const logQuerySchema = Joi.object({
 
 // GET /api/settings/user - Get current user's settings
 router.get('/user', 
-  authorize(['doctor', 'nurse', 'admin', 'user']),
+  authorize(['doctor', 'nurse', 'admin', 'user', 'receptionist', 'lab-tech', 'pharmacist', 'radiologist', 'billing']),
   async (req, res) => {
     try {
       const settings = await UserSettings.findByUserId(req.user.id);
@@ -106,7 +106,7 @@ router.get('/user',
 
 // PUT /api/settings/user - Update user settings
 router.put('/user',
-  authorize(['doctor', 'nurse', 'admin', 'user']),
+  authorize(['doctor', 'nurse', 'admin', 'user', 'receptionist', 'lab-tech', 'pharmacist', 'radiologist', 'billing']),
   async (req, res) => {
     try {
       // Validate request body
@@ -161,7 +161,7 @@ router.put('/user',
 
 // POST /api/settings/user/reset - Reset user settings to defaults
 router.post('/user/reset',
-  authorize(['doctor', 'nurse', 'admin', 'user']),
+  authorize(['doctor', 'nurse', 'admin', 'user', 'receptionist', 'lab-tech', 'pharmacist', 'radiologist', 'billing']),
   async (req, res) => {
     try {
       const currentSettings = await UserSettings.findByUserId(req.user.id);
@@ -202,7 +202,7 @@ router.post('/user/reset',
 
 // GET /api/settings/user/schema - Get settings schema for UI
 router.get('/user/schema',
-  authorize(['doctor', 'nurse', 'admin', 'user']),
+  authorize(['doctor', 'nurse', 'admin', 'user', 'receptionist', 'lab-tech', 'pharmacist', 'radiologist', 'billing']),
   async (req, res) => {
     try {
       const schema = {

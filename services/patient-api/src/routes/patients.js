@@ -18,7 +18,7 @@ const { logger } = require('../utils/logger');
 
 // GET /api/patients - List all patients with search and pagination
 router.get('/',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validateQuery(patientSearchSchema),
   dlpMiddleware,
   async (req, res) => {
@@ -91,7 +91,7 @@ router.get('/statistics',
 
 // GET /api/patients/:id - Get a specific patient
 router.get('/:id',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validateParams(Joi.object({ id: uuidSchema })),
   async (req, res) => {
     try {
@@ -138,7 +138,7 @@ router.post('/',
     });
     next();
   },
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   (req, res, next) => {
     logger.info('POST /api/patients - AFTER AUTH', {
       user: req.user,
@@ -195,7 +195,7 @@ router.post('/',
 
 // PUT /api/patients/:id - Update a patient
 router.put('/:id',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validateParams(Joi.object({ id: uuidSchema })),
   validate(patientUpdateSchema),
   captureDataChanges('patient'),
@@ -283,7 +283,7 @@ router.delete('/:id',
 
 // GET /api/patients/:id/records - Get medical records for a patient
 router.get('/:id/records',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validateParams(Joi.object({ id: uuidSchema })),
   validateQuery(Joi.object({
     limit: Joi.number().integer().min(1).max(100).default(50),
