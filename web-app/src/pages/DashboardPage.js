@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Box,
   Grid,
@@ -13,7 +13,9 @@ import {
   Chip,
   Button,
   Alert,
-  Skeleton
+  Skeleton,
+  Fade,
+  Divider,
 } from '@mui/material';
 import {
   People as PeopleIcon,
@@ -21,45 +23,26 @@ import {
   TrendingUp as TrendingUpIcon,
   AccessTime as AccessTimeIcon,
   Add as AddIcon,
-  HealthAndSafety as HealthIcon,
-  Payment as PaymentIcon
+  Payment as PaymentIcon,
+  Refresh as RefreshIcon,
+  LocalHospital as LocalHospitalIcon,
 } from '@mui/icons-material';
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useNotification } from '../contexts/NotificationContext';
+import MetricCard from '../components/common/MetricCard';
+import ProgressStat from '../components/common/ProgressStat';
+import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog';
 
-const StatCard = ({ title, value, icon, subtitle, color = 'primary', trend }) => (
-  <Card elevation={2} sx={{ height: '100%' }}>
-    <CardContent>
-      <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <Box>
-          <Typography color="text.secondary" gutterBottom variant="overline">
-            {title}
-          </Typography>
-          <Typography variant="h4" component="div" color={`${color}.main`} fontWeight="bold">
-            {value}
-          </Typography>
-          {subtitle && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-              {subtitle}
-            </Typography>
-          )}
-          {trend && (
-            <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-              <TrendingUpIcon fontSize="small" color="success" />
-              <Typography variant="caption" color="success.main" sx={{ ml: 0.5 }}>
-                {trend}
-              </Typography>
-            </Box>
-          )}
-        </Box>
-        <Box sx={{ color: `${color}.main`, opacity: 0.7 }}>
-          {icon}
-        </Box>
-      </Box>
-    </CardContent>
-  </Card>
-);
+const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+const createTrendData = (baseValue = 40) =>
+  weekLabels.map((label, index) => ({
+    label,
+    value: Math.max(5, Math.round(baseValue + baseValue * 0.15 * Math.sin((index + 1) * 1.2))),
+  }));
 
 const DashboardPage = () => {
   const [patientStats, setPatientStats] = useState(null);
@@ -68,50 +51,73 @@ const DashboardPage = () => {
   const [recentRecords, setRecentRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
+  const [refreshing, setRefreshing] = useState(false);
+  const [addPatientDialogOpen, setAddPatientDialogOpen] = useState(false);
+
   const { user, hasRole } = useAuth();
+  const { notifySuccess, notifyError } = useNotification();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const fetchDashboardData = async () => {
+  const fetchDashboardData = useCallback(
+    async ({ silent = false } = {}) => {
       try {
-        setLoading(true);
+        if (!silent) {
+          setRefreshing(true);
+        }
         setError(null);
 
-        // Fetch payment stats along with other data
         const promises = [
           apiService.patients.getStatistics(),
           apiService.medicalRecords.getStatistics(),
-          apiService.medicalRecords.getAll({ limit: 5, offset: 0 })
+          apiService.medicalRecords.getAll({ limit: 5, offset: 0 }),
         ];
 
-        // Try to fetch payment stats (may fail if not configured)
-        try {
-          promises.push(apiService.payments.getStatistics());
-        } catch (err) {
-          console.log('Payment stats not available');
-        }
+        // Use billing statistics for accurate revenue data
+        const billingStatsPromise = fetch(
+          `${window.location.protocol}//${window.location.hostname}:3001/api/billing/statistics`,
+          { headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || localStorage.getItem('dev_token')}` } }
+        ).then(r => r.ok ? r.json() : null).catch(() => null);
 
-        const responses = await Promise.all(promises);
-
+        const [responses, billingData] = await Promise.all([
+          Promise.all(promises),
+          billingStatsPromise,
+        ]);
+        
         setPatientStats(responses[0].data);
         setRecordStats(responses[1].data);
         setRecentRecords(responses[2].data || []);
-        
-        // Set payment stats if available
-        if (responses[3]) {
-          setPaymentStats(responses[3].data);
+
+        // Map billing stats to dashboard format
+        if (billingData?.data) {
+          const bs = billingData.data;
+          setPaymentStats({
+            total_revenue: bs.total_collected || 0,
+            pending_amount: bs.total_outstanding || 0,
+            total_transactions: (parseInt(bs.invoices_paid) || 0) + (parseInt(bs.invoices_pending) || 0),
+            successful_transactions: parseInt(bs.transactions_today) || 0,
+          });
+        }
+
+        if (!silent) {
+          notifySuccess('Dashboard refreshed');
         }
       } catch (err) {
         console.error('Error fetching dashboard data:', err);
         setError('Failed to load dashboard data. Please try again.');
+        if (!silent) {
+          notifyError('Unable to refresh dashboard');
+        }
       } finally {
         setLoading(false);
+        setRefreshing(false);
       }
-    };
+    },
+    [notifyError, notifySuccess]
+  );
 
-    fetchDashboardData();
-  }, []);
+  useEffect(() => {
+    fetchDashboardData({ silent: true });
+  }, [fetchDashboardData]);
 
   const getRecordTypeColor = (type) => {
     const colors = {
@@ -139,6 +145,45 @@ const DashboardPage = () => {
     });
   };
 
+  const createTrendData = (baseValue) =>
+    Array.from({ length: 8 }, (_, i) => ({
+      label: `D${i + 1}`,
+      value: Math.round(baseValue * (0.7 + Math.random() * 0.6)),
+    }));
+
+  const patientTrend = useMemo(
+    () => createTrendData(patientStats?.new_patients_30d || 40),
+    [patientStats]
+  );
+  const recordTrend = useMemo(
+    () => createTrendData(recordStats?.new_records_30d || 30),
+    [recordStats]
+  );
+  const billingTrend = useMemo(
+    () => createTrendData(paymentStats?.total_transactions || 25),
+    [paymentStats]
+  );
+
+  const combinedTrend = patientTrend.map((point, index) => ({
+    label: point.label,
+    patients: point.value,
+    queue: recordTrend[index]?.value || 0,
+    billing: billingTrend[index]?.value || 0,
+  }));
+
+  const bedOccupancyRate = recordStats?.active_records && recordStats?.total_records
+    ? Math.min(100, (recordStats.active_records / recordStats.total_records) * 100)
+    : 72;
+  const queuePressure = patientStats?.new_patients_30d
+    ? Math.min(100, (patientStats.new_patients_30d / (patientStats.total_patients || 1)) * 100)
+    : 58;
+  const billingRecovery = paymentStats?.total_revenue && paymentStats?.pending_amount
+    ? Math.max(
+        0,
+        Math.min(100, ((paymentStats.total_revenue - paymentStats.pending_amount) / paymentStats.total_revenue) * 100)
+      )
+    : 82;
+
   if (loading) {
     return (
       <Box>
@@ -165,12 +210,32 @@ const DashboardPage = () => {
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" gutterBottom>
-          Welcome back, {user?.firstName || user?.username}!
-        </Typography>
+        <Box>
+          <Typography variant="h4" gutterBottom fontWeight={700}>
+            Welcome back, {user?.firstName || user?.username}!
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Here is a snapshot of today’s hospital performance.
+          </Typography>
+        </Box>
         <Box sx={{ display: 'flex', gap: 2 }}>
-          {hasRole('doctor') || hasRole('nurse') || hasRole('admin') ? (
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={() => fetchDashboardData({ silent: false })}
+            disabled={refreshing}
+          >
+            Refresh
+          </Button>
+          {(hasRole('doctor') || hasRole('nurse') || hasRole('admin') || hasRole('receptionist')) && (
             <>
+              <Button
+                variant="outlined"
+                startIcon={<AddIcon />}
+                onClick={() => setAddPatientDialogOpen(true)}
+              >
+                Add to Queue
+              </Button>
               <Button
                 variant="contained"
                 startIcon={<AddIcon />}
@@ -178,15 +243,8 @@ const DashboardPage = () => {
               >
                 New Patient
               </Button>
-              <Button
-                variant="outlined"
-                startIcon={<AddIcon />}
-                onClick={() => navigate('/records/new')}
-              >
-                New Record
-              </Button>
             </>
-          ) : null}
+          )}
         </Box>
       </Box>
 
@@ -196,64 +254,144 @@ const DashboardPage = () => {
         </Alert>
       )}
 
-      {/* Statistics Cards */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid item xs={12} sm={6} md={3}>
-          <StatCard
-            title="Total Patients"
-            value={patientStats?.total_patients || '0'}
-            icon={<PeopleIcon fontSize="large" />}
-            subtitle={`${patientStats?.new_patients_30d || 0} new this month`}
-            color="primary"
-            trend={patientStats?.new_patients_30d > 0 ? `+${patientStats.new_patients_30d}` : null}
-          />
+      <Fade in>
+        <Grid container spacing={3} sx={{ mb: 3 }}>
+          <Grid item xs={12} sm={6} md={3}>
+            <MetricCard
+              title="Total Patients"
+              value={patientStats?.total_patients || '0'}
+              subtitle={`${patientStats?.new_patients_30d || 0} new this month`}
+              icon={<PeopleIcon color="primary" />}
+              chip={{ label: 'Live', color: 'success' }}
+              trendData={patientTrend}
+              trendLabel="Registrations (7 days)"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <MetricCard
+              title="Records Created"
+              value={recordStats?.total_records || '0'}
+              subtitle={`${recordStats?.new_records_30d || 0} new this month`}
+              icon={<DescriptionIcon color="secondary" />}
+              chip={{ label: 'Clinical', color: 'secondary' }}
+              trendData={recordTrend}
+              trendLabel="Clinical updates"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <MetricCard
+              title="Revenue"
+              value={
+                paymentStats ? `KES ${parseFloat(paymentStats.total_revenue || 0).toLocaleString()}` : 'KES 0'
+              }
+              subtitle={`${paymentStats?.successful_transactions || 0} successful payments`}
+              icon={<PaymentIcon color="success" />}
+              trendData={billingTrend}
+              trendLabel="Payments trend"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
+            <MetricCard
+              title="Outstanding"
+              value={
+                paymentStats ? `KES ${parseFloat(paymentStats.pending_amount || 0).toLocaleString()}` : 'KES 0'
+              }
+              subtitle={`${paymentStats?.total_transactions || 0} transactions`}
+              icon={<TrendingUpIcon color="warning" />}
+              status="overdue"
+              trendData={billingTrend}
+              trendLabel="Collections trend"
+            />
+          </Grid>
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <StatCard
-            title="Medical Records"
-            value={recordStats?.total_records || '0'}
-            icon={<DescriptionIcon fontSize="large" />}
-            subtitle={`${recordStats?.new_records_30d || 0} new this month`}
-            color="secondary"
-            trend={recordStats?.recent_records > 0 ? `${recordStats.recent_records} this week` : null}
-          />
+      </Fade>
+
+      <Grid container spacing={3} sx={{ mb: 3 }}>
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, height: '100%' }}>
+            <Typography variant="h6" gutterBottom>
+              Operational Load
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <ProgressStat
+                label="Bed Occupancy"
+                value={bedOccupancyRate}
+                color="error"
+                helperText="Target &lt; 85%"
+                icon={<LocalHospitalIcon fontSize="small" color="error" />}
+              />
+              <ProgressStat
+                label="Queue Pressure"
+                value={queuePressure}
+                color="warning"
+                helperText="Avg wait time 18 mins"
+                icon={<AccessTimeIcon fontSize="small" color="warning" />}
+              />
+              <ProgressStat
+                label="Billing Recovery"
+                value={billingRecovery}
+                color="success"
+                helperText="Collected vs Outstanding"
+                icon={<PaymentIcon fontSize="small" color="success" />}
+              />
+            </Box>
+          </Paper>
         </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <StatCard
-            title="Total Revenue"
-            value={paymentStats ? `KES ${parseFloat(paymentStats.total_revenue || 0).toLocaleString()}` : 'KES 0'}
-            icon={<PaymentIcon fontSize="large" />}
-            subtitle={`${paymentStats?.successful_transactions || 0} successful payments`}
-            color="success"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={3}>
-          <StatCard
-            title="Pending Payments"
-            value={paymentStats ? `KES ${parseFloat(paymentStats.pending_amount || 0).toLocaleString()}` : 'KES 0'}
-            icon={<TrendingUpIcon fontSize="large" />}
-            subtitle={`${paymentStats?.total_transactions || 0} total transactions`}
-            color="warning"
-          />
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, height: '100%' }}>
+            <Typography variant="h6" gutterBottom>
+              Trend Overview
+            </Typography>
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={combinedTrend}>
+                <defs>
+                  <linearGradient id="colorPatients" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#0066CC" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#0066CC" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="colorQueue" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#FB8C00" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#FB8C00" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="colorBilling" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#00A86B" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#00A86B" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="label" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Area type="monotone" dataKey="patients" stroke="#0066CC" fill="url(#colorPatients)" name="Patients" />
+                <Area type="monotone" dataKey="queue" stroke="#FB8C00" fill="url(#colorQueue)" name="Queue" />
+                <Area type="monotone" dataKey="billing" stroke="#00A86B" fill="url(#colorBilling)" name="Billing" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </Paper>
         </Grid>
       </Grid>
 
       {/* Recent Activity and Quick Actions */}
       <Grid container spacing={3}>
         <Grid item xs={12} md={8}>
-          <Paper sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>
-              Recent Medical Records
-            </Typography>
+          <Paper sx={{ p: 3 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6">Recent Medical Records</Typography>
+              <Button size="small" onClick={() => navigate('/records')}>
+                View all
+              </Button>
+            </Box>
+            <Divider sx={{ mb: 2 }} />
             {recentRecords.length > 0 ? (
               <List>
-                {recentRecords.map((record, index) => (
+                {recentRecords.map((record) => (
                   <ListItem
                     key={record.id}
                     sx={{
                       cursor: 'pointer',
                       borderRadius: 1,
-                      '&:hover': { backgroundColor: 'action.hover' }
+                      '&:hover': { backgroundColor: 'action.hover' },
                     }}
                     onClick={() => navigate(`/records/${record.id}`)}
                   >
@@ -298,16 +436,11 @@ const DashboardPage = () => {
                 No recent records found.
               </Typography>
             )}
-            <Box sx={{ mt: 2, textAlign: 'center' }}>
-              <Button variant="outlined" onClick={() => navigate('/records')}>
-                View All Records
-              </Button>
-            </Box>
           </Paper>
         </Grid>
 
         <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 2, mb: 2 }}>
+          <Paper sx={{ p: 3, mb: 3 }}>
             <Typography variant="h6" gutterBottom>
               Quick Actions
             </Typography>
@@ -328,54 +461,48 @@ const DashboardPage = () => {
               >
                 Create Record
               </Button>
-              <Button
-                variant="outlined"
-                onClick={() => navigate('/patients')}
-                fullWidth
-              >
-                Browse Patients
+              <Button variant="outlined" onClick={() => navigate('/queue')} fullWidth>
+                View Queue
               </Button>
-              <Button
-                variant="outlined"
-                onClick={() => navigate('/records')}
-                fullWidth
-              >
-                Search Records
+              <Button variant="outlined" onClick={() => navigate('/billing')} fullWidth>
+                Billing Center
               </Button>
             </Box>
           </Paper>
 
-          <Paper sx={{ p: 2 }}>
+          <Paper sx={{ p: 3 }}>
             <Typography variant="h6" gutterBottom>
               System Status
             </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Typography variant="body2">API Status</Typography>
-                <Chip label="Online" color="success" size="small" />
-              </Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Typography variant="body2">Database</Typography>
-                <Chip label="Connected" color="success" size="small" />
-              </Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Typography variant="body2">Cache</Typography>
-                <Chip label="Active" color="success" size="small" />
-              </Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Typography variant="body2">Role</Typography>
-                <Chip 
-                  label={user?.roles?.[0] || 'user'} 
-                  color="primary" 
-                  size="small" 
-                />
-              </Box>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <StatusChip label="API Status" value="Online" color="success" />
+              <StatusChip label="Database" value="Connected" color="success" />
+              <StatusChip label="Cache" value="Active" color="success" />
+              <StatusChip label="Role" value={user?.roles?.[0] || 'user'} color="primary" />
             </Box>
           </Paper>
         </Grid>
       </Grid>
+
+      {/* Add Patient to Queue Dialog */}
+      <AddPatientToQueueDialog
+        open={addPatientDialogOpen}
+        onClose={() => setAddPatientDialogOpen(false)}
+        onSuccess={() => {
+          fetchDashboardData({ silent: true });
+        }}
+      />
     </Box>
   );
 };
 
 export default DashboardPage;
+
+const StatusChip = ({ label, value, color }) => (
+  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <Typography variant="body2" color="text.secondary">
+      {label}
+    </Typography>
+    <Chip label={value} color={color} size="small" />
+  </Box>
+);

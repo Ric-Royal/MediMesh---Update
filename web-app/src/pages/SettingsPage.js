@@ -48,7 +48,7 @@ import {
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';
-import { useThemeSettings } from '../contexts/ThemeContext';
+import { useTheme } from '../contexts/ThemeContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 
 // Custom hook for debouncing values
@@ -78,7 +78,18 @@ const SettingsPage = () => {
     updateSystemSetting,
     getSetting
   } = useSettings();
-  const { changeTheme } = useThemeSettings();
+  const { updateTheme } = useTheme();
+  
+  const changeTheme = async (newTheme) => {
+    updateTheme(newTheme);
+    try {
+      await updateUserSettings({
+        preferences: { theme: newTheme }
+      });
+    } catch (error) {
+      console.error('Failed to save theme preference:', error);
+    }
+  };
   
   const [activeTab, setActiveTab] = useState(0);
   const [saveSuccess, setSaveSuccess] = useState(false);

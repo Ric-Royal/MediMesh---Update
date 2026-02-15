@@ -6,6 +6,7 @@ import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { NotificationProvider } from './contexts/NotificationContext';
 
 // Error boundary component
 class ErrorBoundary extends React.Component {
@@ -45,8 +46,10 @@ root.render(
         <AuthProvider>
           <SettingsProvider>
             <ThemeProvider>
-              <CssBaseline />
-              <App />
+              <NotificationProvider>
+                <CssBaseline />
+                <App />
+              </NotificationProvider>
             </ThemeProvider>
           </SettingsProvider>
         </AuthProvider>
