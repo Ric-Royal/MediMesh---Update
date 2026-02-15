@@ -5,7 +5,7 @@ const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
 
 // GET /api/staff - Get all staff with optional role filter
-router.get('/', async (req, res) => {
+router.get('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
   try {
     const db = getDB();
     const { role, department_id, status = 'active' } = req.query;

@@ -5,7 +5,7 @@ const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
 
 // GET /api/clinics - Get all clinics
-router.get('/', async (req, res) => {
+router.get('/', authorize(['doctor', 'nurse', 'admin', 'receptionist', 'lab-tech', 'pharmacist', 'radiologist', 'billing']), async (req, res) => {
   try {
     const db = getDB();
     const query = `

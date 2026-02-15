@@ -33,6 +33,7 @@ const authenticateToken = (req, res, next) => {
         'lab-tech': '550e8400-e29b-41d4-a716-446655440005',
         'pharmacist': '550e8400-e29b-41d4-a716-446655440006',
         'radiologist': '550e8400-e29b-41d4-a716-446655440007',
+        'billing': '550e8400-e29b-41d4-a716-446655440008',
         'user': '550e8400-e29b-41d4-a716-446655440003'
       };
       
@@ -42,8 +43,7 @@ const authenticateToken = (req, res, next) => {
         'lab': 'lab-tech',
         'pharma': 'pharmacist',
         'rad': 'radiologist',
-        'reception': 'receptionist',
-        'billing': 'admin'
+        'reception': 'receptionist'
       };
       const resolvedRole = roleAliases[role] || role;
       

@@ -97,24 +97,33 @@ class Payment {
     try {
       const db = getDB();
       
-      let whereClause = '';
+      let dateFilter = '';
+      let billingDateFilter = '';
       const values = [];
       
       if (filters.start_date && filters.end_date) {
         values.push(filters.start_date, filters.end_date);
-        whereClause = `WHERE created_at BETWEEN $1 AND $2`;
+        dateFilter = `WHERE created_at BETWEEN $1 AND $2`;
+        billingDateFilter = `WHERE payment_date BETWEEN $1 AND $2`;
       }
       
+      // Unified statistics from both payments (M-Pesa/external) and billing_payments (in-house)
       const query = `
+        WITH unified_payments AS (
+          SELECT amount, status, payment_method, created_at
+          FROM payments ${dateFilter}
+          UNION ALL
+          SELECT amount, status, payment_method, payment_date as created_at
+          FROM billing_payments ${billingDateFilter}
+        )
         SELECT 
           COUNT(*) as total_transactions,
-          SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END) as total_revenue,
-          SUM(CASE WHEN status = 'pending' THEN amount ELSE 0 END) as pending_amount,
+          COALESCE(SUM(CASE WHEN status = 'completed' THEN amount ELSE 0 END), 0) as total_revenue,
+          COALESCE((SELECT SUM(total_amount - COALESCE(amount_paid, 0)) FROM invoices WHERE status NOT IN ('paid', 'cancelled', 'refunded')), 0) as pending_amount,
           COUNT(CASE WHEN status = 'completed' THEN 1 END) as successful_transactions,
           COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed_transactions,
           COUNT(CASE WHEN payment_method = 'mpesa' THEN 1 END) as mpesa_transactions
-        FROM payments
-        ${whereClause}
+        FROM unified_payments
       `;
       
       const result = await db.query(query, values);

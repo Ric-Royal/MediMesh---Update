@@ -37,6 +37,8 @@ const scheduleRoutes = require('./routes/schedules');
 const clinicRoutes = require('./routes/clinics');
 const staffRoutes = require('./routes/staff');
 const consultationRoutes = require('./routes/consultations');
+const diagnosesRoutes = require('./routes/diagnoses');
+const observationsRoutes = require('./routes/observations');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -121,6 +123,8 @@ app.use('/api/schedules', authenticateToken, scheduleRoutes);
 app.use('/api/clinics', authenticateToken, clinicRoutes);
 app.use('/api/staff', authenticateToken, staffRoutes);
 app.use('/api/consultations', authenticateToken, consultationRoutes);
+app.use('/api/diagnoses', authenticateToken, diagnosesRoutes);
+app.use('/api/observations', authenticateToken, observationsRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
 
 // ============================================
 // RADIOLOGY STUDY CATALOG (For Ordering)
 // ============================================
 
 // Get radiology study catalog
-router.get('/study-catalog', async (req, res) => {
+router.get('/study-catalog', authorize(['doctor', 'nurse', 'radiologist', 'admin']), async (req, res) => {
   try {
     const db = getDB();
     const result = await db.query(`
@@ -29,7 +30,7 @@ router.get('/study-catalog', async (req, res) => {
 // ============================================
 
 // Get all radiology tests
-router.get('/tests', async (req, res) => {
+router.get('/tests', authorize(['doctor', 'nurse', 'radiologist', 'admin']), async (req, res) => {
   try {
     const { modality, search } = req.query;
     
@@ -66,7 +67,7 @@ router.get('/tests', async (req, res) => {
 });
 
 // Get imaging modalities
-router.get('/modalities', async (req, res) => {
+router.get('/modalities', authorize(['doctor', 'nurse', 'radiologist', 'admin']), async (req, res) => {
   try {
     const query = 'SELECT * FROM imaging_modalities WHERE is_active = true ORDER BY modality_name';
     const result = await getDB().query(query);
@@ -82,7 +83,7 @@ router.get('/modalities', async (req, res) => {
 // ============================================
 
 // Get all radiology orders
-router.get('/orders', async (req, res) => {
+router.get('/orders', authorize(['doctor', 'nurse', 'radiologist', 'admin']), async (req, res) => {
   try {
     const { patient_id, status, priority, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
@@ -132,7 +133,7 @@ router.get('/orders', async (req, res) => {
 });
 
 // Get radiology order by ID (with items & reports)
-router.get('/orders/:id', async (req, res) => {
+router.get('/orders/:id', authorize(['doctor', 'nurse', 'radiologist', 'admin']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -189,8 +190,8 @@ router.get('/orders/:id', async (req, res) => {
 });
 
 // Create radiology order
-router.post('/orders', async (req, res) => {
-  const client = await pool.connect();
+router.post('/orders', authorize(['doctor', 'admin']), async (req, res) => {
+  const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     
@@ -253,7 +254,7 @@ router.post('/orders', async (req, res) => {
 });
 
 // Get radiology queue
-router.get('/queue', async (req, res) => {
+router.get('/queue', authorize(['radiologist', 'nurse', 'admin']), async (req, res) => {
   try {
     const query = `
       SELECT rq.*,
@@ -277,7 +278,7 @@ router.get('/queue', async (req, res) => {
 });
 
 // Get radiology statistics
-router.get('/statistics', async (req, res) => {
+router.get('/statistics', authorize(['radiologist', 'admin']), async (req, res) => {
   try {
     const query = `
       SELECT

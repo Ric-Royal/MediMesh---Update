@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
 
 // ============================================
 // INVOICES
 // ============================================
 
 // Get all invoices (with filters)
-router.get('/invoices', async (req, res) => {
+router.get('/invoices', authorize(['doctor', 'nurse', 'admin', 'billing', 'receptionist']), async (req, res) => {
   try {
     const { patient_id, status, payment_status, date_from, date_to, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
@@ -17,7 +18,8 @@ router.get('/invoices', async (req, res) => {
       SELECT i.*,
              p.first_name || ' ' || p.last_name as patient_name,
              p.uhid,
-             (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
+             (SELECT COUNT(*) FROM invoice_items ii WHERE ii.invoice_id = i.id) as item_count,
+             COALESCE((SELECT SUM(bp.amount) FROM billing_payments bp WHERE bp.invoice_id = i.id AND bp.status = 'completed'), 0) as total_paid
       FROM invoices i
       LEFT JOIN patients p ON i.patient_id = p.id
       WHERE 1=1
@@ -68,7 +70,7 @@ router.get('/invoices', async (req, res) => {
 
 // Get invoice by encounter ID (real-time invoice for patient journey)
 // NOTE: This must come BEFORE /invoices/:id to avoid route collision
-router.get('/invoices/encounter/:encounterId', async (req, res) => {
+router.get('/invoices/encounter/:encounterId', authorize(['doctor', 'nurse', 'admin', 'billing', 'receptionist']), async (req, res) => {
   try {
     const { encounterId } = req.params;
     
@@ -91,12 +93,12 @@ router.get('/invoices/encounter/:encounterId', async (req, res) => {
     
     // Get line items with detailed breakdown
     const lineItemsQuery = `
-      SELECT ili.*,
+      SELECT ii.*,
              s.first_name || ' ' || s.last_name as provider_name
-      FROM invoice_line_items ili
-      LEFT JOIN staff s ON ili.provider_id = s.id
-      WHERE ili.invoice_id = $1
-      ORDER BY ili.billed_at
+      FROM invoice_items ii
+      LEFT JOIN staff s ON ii.provider_id = s.id
+      WHERE ii.invoice_id = $1
+      ORDER BY ii.created_at
     `;
     const lineItemsResult = await getDB().query(lineItemsQuery, [invoiceResult.rows[0].id]);
     
@@ -112,7 +114,7 @@ router.get('/invoices/encounter/:encounterId', async (req, res) => {
 
 // Get pending invoices for billing queue
 // NOTE: This must come BEFORE /invoices/:id to avoid route collision
-router.get('/invoices/pending-payment', async (req, res) => {
+router.get('/invoices/pending-payment', authorize(['admin', 'billing', 'receptionist']), async (req, res) => {
   try {
     const query = `
       SELECT i.*,
@@ -120,7 +122,8 @@ router.get('/invoices/pending-payment', async (req, res) => {
              p.first_name || ' ' || p.last_name as patient_name,
              p.uhid,
              e.encounter_type,
-             (SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = i.id) as item_count
+             (SELECT COUNT(*) FROM invoice_items ii WHERE ii.invoice_id = i.id) as item_count,
+             COALESCE((SELECT SUM(bp.amount) FROM billing_payments bp WHERE bp.invoice_id = i.id AND bp.status = 'completed'), 0) as total_paid
       FROM invoices i
       LEFT JOIN patients p ON i.patient_id = p.id
       LEFT JOIN encounters e ON i.encounter_id = e.id
@@ -138,7 +141,7 @@ router.get('/invoices/pending-payment', async (req, res) => {
 
 // Get invoice by ID (with items)
 // NOTE: This must come AFTER specific routes like /invoices/pending-payment
-router.get('/invoices/:id', async (req, res) => {
+router.get('/invoices/:id', authorize(['doctor', 'nurse', 'admin', 'billing', 'receptionist']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -183,7 +186,7 @@ router.get('/invoices/:id', async (req, res) => {
 });
 
 // Create invoice
-router.post('/invoices', async (req, res) => {
+router.post('/invoices', authorize(['admin', 'billing']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -224,10 +227,32 @@ router.post('/invoices', async (req, res) => {
       ]);
     }
     
+    // Recalculate invoice totals from line items
+    const totalsResult = await client.query(`
+      SELECT 
+        COALESCE(SUM(quantity * unit_price), 0) as subtotal,
+        COALESCE(SUM(tax_amount), 0) as tax_total,
+        COALESCE(SUM(discount_amount), 0) as discount_total,
+        COALESCE(SUM(quantity * unit_price - discount_amount + tax_amount), 0) as grand_total
+      FROM invoice_items WHERE invoice_id = $1
+    `, [invoice.id]);
+    
+    const totals = totalsResult.rows[0];
+    const updatedInvoice = await client.query(`
+      UPDATE invoices SET
+        subtotal = $1,
+        tax_amount = $2,
+        discount_amount = $3,
+        total_amount = $4,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = $5
+      RETURNING *
+    `, [totals.subtotal, totals.tax_total, totals.discount_total, totals.grand_total, invoice.id]);
+    
     await client.query('COMMIT');
     
-    logger.info(`Invoice created: ${invoice.invoice_number}`);
-    res.status(201).json({ success: true, data: invoice });
+    logger.info(`Invoice created: ${invoice.invoice_number}, total: ${totals.grand_total}`);
+    res.status(201).json({ success: true, data: updatedInvoice.rows[0] });
   } catch (error) {
     await client.query('ROLLBACK');
     logger.error('Error creating invoice:', error);
@@ -238,7 +263,7 @@ router.post('/invoices', async (req, res) => {
 });
 
 // Update invoice status
-router.put('/invoices/:id/status', async (req, res) => {
+router.put('/invoices/:id/status', authorize(['admin', 'billing']), async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -268,7 +293,7 @@ router.put('/invoices/:id/status', async (req, res) => {
 // ============================================
 
 // Get all payments
-router.get('/payments', async (req, res) => {
+router.get('/payments', authorize(['admin', 'billing', 'receptionist']), async (req, res) => {
   try {
     const { patient_id, payment_method, date_from, date_to, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
@@ -322,7 +347,7 @@ router.get('/payments', async (req, res) => {
 });
 
 // Record payment
-router.post('/payments', async (req, res) => {
+router.post('/payments', authorize(['admin', 'billing']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -350,7 +375,7 @@ router.post('/payments', async (req, res) => {
     
     const payment = paymentResult.rows[0];
     
-    // Allocate to invoices
+    // Allocate to invoices and update their paid amounts
     if (allocations && allocations.length > 0) {
       for (const alloc of allocations) {
         const allocQuery = `
@@ -358,6 +383,24 @@ router.post('/payments', async (req, res) => {
           VALUES ($1, $2, $3)
         `;
         await client.query(allocQuery, [payment.id, alloc.invoice_id, alloc.allocated_amount]);
+        
+        // Update the invoice's amount_paid (balance_due is auto-calculated)
+        await client.query(`
+          UPDATE invoices SET
+            amount_paid = COALESCE(amount_paid, 0) + $1,
+            status = CASE
+              WHEN COALESCE(amount_paid, 0) + $1 >= total_amount THEN 'paid'
+              WHEN COALESCE(amount_paid, 0) + $1 > 0 THEN 'partially-paid'
+              ELSE status
+            END,
+            payment_status = CASE
+              WHEN COALESCE(amount_paid, 0) + $1 >= total_amount THEN 'paid'
+              WHEN COALESCE(amount_paid, 0) + $1 > 0 THEN 'partially-paid'
+              ELSE payment_status
+            END,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $2
+        `, [alloc.allocated_amount, alloc.invoice_id]);
       }
     } else if (invoice_id) {
       // Allocate full amount to single invoice
@@ -366,6 +409,24 @@ router.post('/payments', async (req, res) => {
         VALUES ($1, $2, $3)
       `;
       await client.query(allocQuery, [payment.id, invoice_id, amount]);
+      
+      // Update the invoice's amount_paid
+      await client.query(`
+        UPDATE invoices SET
+          amount_paid = COALESCE(amount_paid, 0) + $1,
+          status = CASE
+            WHEN COALESCE(amount_paid, 0) + $1 >= total_amount THEN 'paid'
+            WHEN COALESCE(amount_paid, 0) + $1 > 0 THEN 'partially-paid'
+            ELSE status
+          END,
+          payment_status = CASE
+            WHEN COALESCE(amount_paid, 0) + $1 >= total_amount THEN 'paid'
+            WHEN COALESCE(amount_paid, 0) + $1 > 0 THEN 'partially-paid'
+            ELSE payment_status
+          END,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2
+      `, [amount, invoice_id]);
     }
     
     await client.query('COMMIT');
@@ -385,16 +446,20 @@ router.post('/payments', async (req, res) => {
 // BILLING STATISTICS
 // ============================================
 
-router.get('/statistics', async (req, res) => {
+router.get('/statistics', authorize(['admin', 'billing']), async (req, res) => {
   try {
     const query = `
       SELECT
         (SELECT COUNT(*) FROM invoices WHERE status = 'issued') as invoices_issued,
         (SELECT COUNT(*) FROM invoices WHERE status = 'overdue') as invoices_overdue,
-        (SELECT COALESCE(SUM(balance_due), 0) FROM invoices WHERE status IN ('issued', 'partially-paid', 'overdue')) as total_outstanding,
-        (SELECT COALESCE(SUM(amount), 0) FROM billing_payments WHERE DATE(payment_date) = CURRENT_DATE) as payments_today,
+        (SELECT COALESCE(SUM(total_amount - COALESCE(amount_paid, 0)), 0) FROM invoices WHERE status IN ('issued', 'partially-paid', 'overdue')) as total_outstanding,
+        (SELECT COALESCE(SUM(amount), 0) FROM billing_payments WHERE DATE(payment_date) = CURRENT_DATE AND status = 'completed') as payments_today,
         (SELECT COALESCE(SUM(total_amount), 0) FROM invoices WHERE DATE(invoice_date) = CURRENT_DATE) as invoiced_today,
-        (SELECT COUNT(*) FROM insurance_claims WHERE status = 'pending') as pending_claims
+        (SELECT COUNT(*) FROM insurance_claims WHERE status = 'pending') as pending_claims,
+        (SELECT COALESCE(SUM(amount), 0) FROM billing_payments WHERE status = 'completed') as total_revenue,
+        (SELECT COUNT(*) FROM billing_payments WHERE status = 'completed') as successful_transactions,
+        (SELECT COUNT(*) FROM billing_payments) as total_transactions,
+        (SELECT COALESCE(SUM(total_amount - COALESCE(amount_paid, 0)), 0) FROM invoices WHERE status NOT IN ('paid', 'cancelled', 'refunded')) as pending_amount
     `;
     const result = await getDB().query(query);
     res.json({ success: true, data: result.rows[0] });
@@ -405,7 +470,7 @@ router.get('/statistics', async (req, res) => {
 });
 
 // Get patient billing summary
-router.get('/patients/:patientId/summary', async (req, res) => {
+router.get('/patients/:patientId/summary', authorize(['doctor', 'nurse', 'admin', 'billing']), async (req, res) => {
   try {
     const { patientId } = req.params;
     
@@ -413,10 +478,11 @@ router.get('/patients/:patientId/summary', async (req, res) => {
       SELECT
         p.first_name || ' ' || p.last_name as patient_name,
         p.uhid,
-        (SELECT COALESCE(SUM(total_amount), 0) FROM invoices WHERE patient_id = p.id) as total_billed,
+        (SELECT COALESCE(SUM(total_amount), 0) FROM invoices WHERE patient_id = p.id AND status NOT IN ('cancelled', 'refunded')) as total_billed,
         (SELECT COALESCE(SUM(amount), 0) FROM billing_payments WHERE patient_id = p.id AND status = 'completed') as total_paid,
-        (SELECT COALESCE(SUM(balance_due), 0) FROM invoices WHERE patient_id = p.id AND status IN ('issued', 'partially-paid', 'overdue')) as balance_due,
-        (SELECT COUNT(*) FROM invoices WHERE patient_id = p.id AND status = 'overdue') as overdue_invoices
+        (SELECT COALESCE(SUM(total_amount - COALESCE(amount_paid, 0)), 0) FROM invoices WHERE patient_id = p.id AND status IN ('issued', 'partially-paid', 'overdue')) as balance_due,
+        (SELECT COUNT(*) FROM invoices WHERE patient_id = p.id AND status = 'overdue') as overdue_invoices,
+        (SELECT COUNT(*) FROM invoices WHERE patient_id = p.id AND status NOT IN ('cancelled', 'refunded')) as total_invoices
       FROM patients p
       WHERE p.id = $1
     `;
@@ -438,7 +504,7 @@ router.get('/patients/:patientId/summary', async (req, res) => {
 // ============================================
 
 // Finalize invoice (mark ready for payment)
-router.put('/invoices/:id/finalize', async (req, res) => {
+router.put('/invoices/:id/finalize', authorize(['admin', 'billing']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -463,7 +529,7 @@ router.put('/invoices/:id/finalize', async (req, res) => {
 });
 
 // Process payment for invoice
-router.post('/invoices/:id/payment', async (req, res) => {
+router.post('/invoices/:id/payment', authorize(['admin', 'billing']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -492,22 +558,41 @@ router.post('/invoices/:id/payment', async (req, res) => {
       reference_number, notes, req.user?.userId
     ]);
     
-    // Update invoice status to paid
-    await client.query(`
-      UPDATE invoices
-      SET status = 'paid', last_updated = NOW()
-      WHERE id = $1
-    `, [id]);
+    // Update invoice amount_paid, status, and payment_status
+    const newAmountPaid = parseFloat(invoice.amount_paid || 0) + parseFloat(amount);
+    const fullyPaid = newAmountPaid >= parseFloat(invoice.total_amount);
     
-    // Update encounter status to completed if all services done
     await client.query(`
-      UPDATE encounters
-      SET status = 'completed', updated_at = NOW()
-      WHERE id = $1
-        AND pending_lab_orders = 0
-        AND pending_prescriptions = 0
-        AND pending_radiology_orders = 0
-    `, [invoice.encounter_id]);
+      UPDATE invoices SET
+        amount_paid = $1,
+        status = $2,
+        payment_status = $3,
+        updated_at = NOW()
+      WHERE id = $4
+    `, [
+      newAmountPaid,
+      fullyPaid ? 'paid' : 'partially-paid',
+      fullyPaid ? 'paid' : 'partially-paid',
+      id
+    ]);
+    
+    // Create payment allocation
+    await client.query(`
+      INSERT INTO payment_allocations (payment_id, invoice_id, allocated_amount)
+      VALUES ($1, $2, $3)
+    `, [paymentResult.rows[0].id, id, amount]);
+    
+    // Update encounter status to completed if all services done and fully paid
+    if (fullyPaid) {
+      await client.query(`
+        UPDATE encounters
+        SET status = 'completed', updated_at = NOW()
+        WHERE id = $1
+          AND pending_lab_orders = 0
+          AND pending_prescriptions = 0
+          AND pending_radiology_orders = 0
+      `, [invoice.encounter_id]);
+    }
     
     await client.query('COMMIT');
     

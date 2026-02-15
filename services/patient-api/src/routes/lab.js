@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
 const { emitQueueUpdate } = require('../utils/websocket');
 
 // ============================================
@@ -9,7 +10,7 @@ const { emitQueueUpdate } = require('../utils/websocket');
 // ============================================
 
 // Get lab test catalog
-router.get('/test-catalog', async (req, res) => {
+router.get('/test-catalog', authorize(['doctor', 'nurse', 'lab-tech', 'admin']), async (req, res) => {
   try {
     const db = getDB();
     const result = await db.query(`
@@ -30,7 +31,7 @@ router.get('/test-catalog', async (req, res) => {
 // ============================================
 
 // Get all lab tests
-router.get('/tests', async (req, res) => {
+router.get('/tests', authorize(['doctor', 'nurse', 'lab-tech', 'admin']), async (req, res) => {
   try {
     const db = getDB();
     const { search, category, active = 'true' } = req.query;
@@ -65,7 +66,7 @@ router.get('/tests', async (req, res) => {
 });
 
 // Get test by ID
-router.get('/tests/:id', async (req, res) => {
+router.get('/tests/:id', authorize(['doctor', 'nurse', 'lab-tech', 'admin']), async (req, res) => {
   try {
     const db = getDB();
     const { id } = req.params;
@@ -87,7 +88,7 @@ router.get('/tests/:id', async (req, res) => {
 // ============================================
 
 // Get all lab orders (with filters)
-router.get('/orders', async (req, res) => {
+router.get('/orders', authorize(['doctor', 'nurse', 'lab-tech', 'admin']), async (req, res) => {
   try {
     const { patient_id, doctor_id, status, priority, date_from, date_to, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
@@ -157,7 +158,7 @@ router.get('/orders', async (req, res) => {
 });
 
 // Get lab order by ID (with items)
-router.get('/orders/:id', async (req, res) => {
+router.get('/orders/:id', authorize(['doctor', 'nurse', 'lab-tech', 'admin']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -203,7 +204,7 @@ router.get('/orders/:id', async (req, res) => {
 });
 
 // Create lab order
-router.post('/orders', async (req, res) => {
+router.post('/orders', authorize(['doctor', 'admin']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -264,7 +265,7 @@ router.post('/orders', async (req, res) => {
 });
 
 // Update lab order status
-router.put('/orders/:id/status', async (req, res) => {
+router.put('/orders/:id/status', authorize(['lab-tech', 'admin']), async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -294,7 +295,7 @@ router.put('/orders/:id/status', async (req, res) => {
 // ============================================
 
 // Collect sample (generate barcode)
-router.post('/orders/:id/collect', async (req, res) => {
+router.post('/orders/:id/collect', authorize(['lab-tech', 'admin']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -359,7 +360,7 @@ router.post('/orders/:id/collect', async (req, res) => {
 });
 
 // Get sample by barcode
-router.get('/samples/:barcode', async (req, res) => {
+router.get('/samples/:barcode', authorize(['lab-tech', 'admin']), async (req, res) => {
   try {
     const { barcode } = req.params;
     
@@ -394,7 +395,7 @@ router.get('/samples/:barcode', async (req, res) => {
 // ============================================
 
 // Enter test result
-router.post('/orders/:id/items/:itemId/result', async (req, res) => {
+router.post('/orders/:id/items/:itemId/result', authorize(['lab-tech', 'admin']), async (req, res) => {
   try {
     const { id, itemId } = req.params;
     const { result_value, result_unit, result_notes, reference_min, reference_max } = req.body;
@@ -435,7 +436,7 @@ router.post('/orders/:id/items/:itemId/result', async (req, res) => {
 // ============================================
 
 // Get lab queue (pending sample collection)
-router.get('/queue', async (req, res) => {
+router.get('/queue', authorize(['doctor', 'nurse', 'lab-tech', 'admin']), async (req, res) => {
   try {
     const query = `
       SELECT lq.*,
@@ -458,7 +459,7 @@ router.get('/queue', async (req, res) => {
 });
 
 // Get lab statistics
-router.get('/statistics', async (req, res) => {
+router.get('/statistics', authorize(['lab-tech', 'admin']), async (req, res) => {
   try {
     const query = `
       SELECT
