@@ -2,13 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
 
 // ============================================
 // DRUGS MANAGEMENT
 // ============================================
 
 // Get all drugs (with filters)
-router.get('/drugs', async (req, res) => {
+router.get('/drugs', authorize(['doctor', 'nurse', 'admin', 'pharmacist']), async (req, res) => {
   try {
     const { search, category, inStock, page = 1, limit = 50 } = req.query;
     const offset = (page - 1) * limit;
@@ -66,7 +67,7 @@ router.get('/drugs', async (req, res) => {
 });
 
 // Get drug by ID
-router.get('/drugs/:id', async (req, res) => {
+router.get('/drugs/:id', authorize(['doctor', 'nurse', 'admin', 'pharmacist']), async (req, res) => {
   try {
     const { id } = req.params;
     const query = `
@@ -91,7 +92,7 @@ router.get('/drugs/:id', async (req, res) => {
 });
 
 // Create drug
-router.post('/drugs', async (req, res) => {
+router.post('/drugs', authorize(['admin', 'pharmacist']), async (req, res) => {
   try {
     const {
       generic_name, brand_name, category_id, dosage_form, strength,
@@ -126,7 +127,7 @@ router.post('/drugs', async (req, res) => {
 });
 
 // Update drug stock
-router.post('/drugs/:id/stock', async (req, res) => {
+router.post('/drugs/:id/stock', authorize(['admin', 'pharmacist']), async (req, res) => {
   try {
     const { id } = req.params;
     const { movement_type, quantity, unit_cost, batch_number, expiry_date, reference_number, notes } = req.body;
@@ -153,7 +154,7 @@ router.post('/drugs/:id/stock', async (req, res) => {
 });
 
 // Get drugs needing reorder
-router.get('/drugs/alerts/reorder', async (req, res) => {
+router.get('/drugs/alerts/reorder', authorize(['admin', 'pharmacist']), async (req, res) => {
   try {
     const query = `
       SELECT d.*, dc.category_name
@@ -175,7 +176,7 @@ router.get('/drugs/alerts/reorder', async (req, res) => {
 // ============================================
 
 // Get all prescriptions (with filters)
-router.get('/prescriptions', async (req, res) => {
+router.get('/prescriptions', authorize(['doctor', 'nurse', 'admin', 'pharmacist']), async (req, res) => {
   try {
     const { patient_id, doctor_id, status, date_from, date_to, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
@@ -238,7 +239,7 @@ router.get('/prescriptions', async (req, res) => {
 });
 
 // Get prescription by ID (with items)
-router.get('/prescriptions/:id', async (req, res) => {
+router.get('/prescriptions/:id', authorize(['doctor', 'nurse', 'admin', 'pharmacist']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -286,7 +287,7 @@ router.get('/prescriptions/:id', async (req, res) => {
 });
 
 // Create prescription
-router.post('/prescriptions', async (req, res) => {
+router.post('/prescriptions', authorize(['doctor', 'admin']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -341,7 +342,7 @@ router.post('/prescriptions', async (req, res) => {
 });
 
 // Dispense prescription item
-router.post('/prescriptions/:id/items/:itemId/dispense', async (req, res) => {
+router.post('/prescriptions/:id/items/:itemId/dispense', authorize(['pharmacist', 'admin']), async (req, res) => {
   try {
     const { id, itemId } = req.params;
     const { quantity_dispensed, batch_number } = req.body;
@@ -374,7 +375,7 @@ router.post('/prescriptions/:id/items/:itemId/dispense', async (req, res) => {
 });
 
 // Get pending prescriptions (for pharmacy queue)
-router.get('/prescriptions/queue/pending', async (req, res) => {
+router.get('/prescriptions/queue/pending', authorize(['pharmacist', 'admin']), async (req, res) => {
   try {
     const query = `
       SELECT p.*,
@@ -396,7 +397,7 @@ router.get('/prescriptions/queue/pending', async (req, res) => {
 });
 
 // Get pharmacy statistics
-router.get('/statistics', async (req, res) => {
+router.get('/statistics', authorize(['doctor', 'admin', 'pharmacist']), async (req, res) => {
   try {
     const query = `
       SELECT

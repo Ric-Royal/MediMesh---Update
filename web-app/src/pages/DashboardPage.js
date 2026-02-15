@@ -72,19 +72,30 @@ const DashboardPage = () => {
           apiService.medicalRecords.getAll({ limit: 5, offset: 0 }),
         ];
 
-        try {
-          promises.push(apiService.payments.getStatistics());
-        } catch {
-          // payments optional
-        }
+        // Use billing statistics for accurate revenue data
+        const billingStatsPromise = fetch(
+          `${window.location.protocol}//${window.location.hostname}:3001/api/billing/statistics`,
+          { headers: { 'Authorization': `Bearer ${localStorage.getItem('token') || localStorage.getItem('dev_token')}` } }
+        ).then(r => r.ok ? r.json() : null).catch(() => null);
 
-        const responses = await Promise.all(promises);
+        const [responses, billingData] = await Promise.all([
+          Promise.all(promises),
+          billingStatsPromise,
+        ]);
+        
         setPatientStats(responses[0].data);
         setRecordStats(responses[1].data);
         setRecentRecords(responses[2].data || []);
 
-        if (responses[3]) {
-          setPaymentStats(responses[3].data);
+        // Map billing stats to dashboard format
+        if (billingData?.data) {
+          const bs = billingData.data;
+          setPaymentStats({
+            total_revenue: bs.total_collected || 0,
+            pending_amount: bs.total_outstanding || 0,
+            total_transactions: (parseInt(bs.invoices_paid) || 0) + (parseInt(bs.invoices_pending) || 0),
+            successful_transactions: parseInt(bs.transactions_today) || 0,
+          });
         }
 
         if (!silent) {

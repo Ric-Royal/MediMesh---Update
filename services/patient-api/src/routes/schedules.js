@@ -91,7 +91,7 @@ router.get('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), asyn
       WHERE ds.id = $1
     `;
 
-    const result = await pool.query(query, [id]);
+    const result = await getDB().query(query, [id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Schedule not found' });
@@ -213,7 +213,7 @@ router.put('/:id', authorize(['admin', 'doctor']), async (req, res) => {
 
     // Check if schedule exists
     const checkQuery = 'SELECT * FROM doctor_schedules WHERE id = $1';
-    const checkResult = await pool.query(checkQuery, [id]);
+    const checkResult = await getDB().query(checkQuery, [id]);
 
     if (checkResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Schedule not found' });
@@ -290,7 +290,7 @@ router.delete('/:id', authorize(['admin', 'doctor']), async (req, res) => {
     const { id } = req.params;
 
     const query = 'DELETE FROM doctor_schedules WHERE id = $1 RETURNING *';
-    const result = await pool.query(query, [id]);
+    const result = await getDB().query(query, [id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Schedule not found' });

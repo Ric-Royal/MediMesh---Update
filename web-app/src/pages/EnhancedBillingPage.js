@@ -58,7 +58,7 @@ const EnhancedBillingPage = () => {
   };
 
   useEffect(() => {
-    const statusMap = ['pending', 'finalized', 'paid'];
+    const statusMap = ['pending', 'issued', 'paid'];
     fetchInvoices(statusMap[activeTab]);
   }, [activeTab]);
 
@@ -94,7 +94,7 @@ const EnhancedBillingPage = () => {
         setSelectedInvoice(data.data);
         setPaymentData({
           payment_method: 'cash',
-          amount: data.data.total || 0,
+          amount: parseFloat(data.data.balance_due || data.data.total_amount || data.data.total || 0),
           reference_number: '',
           notes: '',
         });
@@ -134,13 +134,17 @@ const EnhancedBillingPage = () => {
   const getStatusChip = (status) => {
     const statusConfig = {
       draft: { color: 'default', icon: <PendingIcon fontSize="small" /> },
-      finalized: { color: 'warning', icon: <ReceiptIcon fontSize="small" /> },
+      issued: { color: 'warning', icon: <ReceiptIcon fontSize="small" /> },
+      'partially-paid': { color: 'info', icon: <PaymentIcon fontSize="small" /> },
       paid: { color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
+      overdue: { color: 'error', icon: <PendingIcon fontSize="small" /> },
+      cancelled: { color: 'default', icon: <PendingIcon fontSize="small" /> },
+      refunded: { color: 'secondary', icon: <PaymentIcon fontSize="small" /> },
     };
     const config = statusConfig[status] || statusConfig.draft;
     return (
       <Chip
-        label={status.toUpperCase()}
+        label={(status || 'draft').toUpperCase()}
         color={config.color}
         size="small"
         icon={config.icon}
@@ -175,7 +179,7 @@ const EnhancedBillingPage = () => {
                     Pending Payment
                   </Typography>
                   <Typography variant="h4">
-                    {invoices.filter(i => i.status === 'draft' || i.status === 'finalized').length}
+                    {invoices.filter(i => i.status === 'draft' || i.status === 'issued').length}
                   </Typography>
                 </Box>
                 <PendingIcon sx={{ fontSize: 48, color: 'warning.main', opacity: 0.3 }} />
@@ -194,8 +198,8 @@ const EnhancedBillingPage = () => {
                   <Typography variant="h5">
                     {formatCurrency(
                       invoices
-                        .filter(i => i.status !== 'paid')
-                        .reduce((sum, i) => sum + parseFloat(i.total || 0), 0)
+                        .filter(i => i.status !== 'paid' && i.status !== 'cancelled' && i.status !== 'refunded')
+                        .reduce((sum, i) => sum + parseFloat(i.balance_due || i.total_amount || i.total || 0), 0)
                     )}
                   </Typography>
                 </Box>
@@ -295,7 +299,7 @@ const EnhancedBillingPage = () => {
                     </TableCell>
                     <TableCell align="right">
                       <Typography variant="body1" fontWeight="bold" color="primary">
-                        {formatCurrency(invoice.total || 0)}
+                        {formatCurrency(invoice.total_amount || invoice.total || 0)}
                       </Typography>
                     </TableCell>
                     <TableCell>{getStatusChip(invoice.status)}</TableCell>
@@ -308,7 +312,7 @@ const EnhancedBillingPage = () => {
                         >
                           <VisibilityIcon />
                         </IconButton>
-                        {(invoice.status === 'draft' || invoice.status === 'finalized') && (
+                        {(invoice.status === 'draft' || invoice.status === 'issued' || invoice.status === 'partially-paid') && (
                           <Button
                             size="small"
                             variant="contained"
@@ -386,10 +390,10 @@ const EnhancedBillingPage = () => {
                         <TableRow key={item.id}>
                           <TableCell>
                             <Typography variant="body2" fontWeight="bold">
-                              {item.service_name}
+                              {item.service_name || item.item_description}
                             </Typography>
                             <Typography variant="caption" color="textSecondary">
-                              {item.service_code}
+                              {item.service_code || item.item_code || ''}
                             </Typography>
                           </TableCell>
                           <TableCell>
@@ -400,7 +404,7 @@ const EnhancedBillingPage = () => {
                           <TableCell>{item.provider_name || '-'}</TableCell>
                           <TableCell align="right">
                             <Typography variant="body2" fontWeight="bold">
-                              {formatCurrency(item.total)}
+                              {formatCurrency(item.total || item.total_amount || 0)}
                             </Typography>
                           </TableCell>
                         </TableRow>
@@ -463,9 +467,29 @@ const EnhancedBillingPage = () => {
                   </Grid>
                   <Grid item xs={4}>
                     <Typography variant="h6" align="right" color="primary">
-                      {formatCurrency(selectedInvoice.total || 0)}
+                      {formatCurrency(selectedInvoice.total_amount || selectedInvoice.total || 0)}
                     </Typography>
                   </Grid>
+                  {parseFloat(selectedInvoice.amount_paid || 0) > 0 && (
+                    <>
+                      <Grid item xs={8}>
+                        <Typography variant="body1" align="right" color="success.main">Amount Paid:</Typography>
+                      </Grid>
+                      <Grid item xs={4}>
+                        <Typography variant="body1" align="right" color="success.main">
+                          {formatCurrency(selectedInvoice.amount_paid || 0)}
+                        </Typography>
+                      </Grid>
+                      <Grid item xs={8}>
+                        <Typography variant="h6" align="right" color="error.main">Balance Due:</Typography>
+                      </Grid>
+                      <Grid item xs={4}>
+                        <Typography variant="h6" align="right" color="error.main">
+                          {formatCurrency(selectedInvoice.balance_due || 0)}
+                        </Typography>
+                      </Grid>
+                    </>
+                  )}
                 </Grid>
               </Box>
             </Box>
@@ -489,7 +513,10 @@ const EnhancedBillingPage = () => {
         </DialogTitle>
         <DialogContent dividers>
           <Alert severity="info" sx={{ mb: 3 }}>
-            Total Amount Due: <strong>{formatCurrency(selectedInvoice?.total || 0)}</strong>
+            Total Amount Due: <strong>{formatCurrency(selectedInvoice?.balance_due || selectedInvoice?.total_amount || selectedInvoice?.total || 0)}</strong>
+            {parseFloat(selectedInvoice?.amount_paid || 0) > 0 && (
+              <> (Paid: {formatCurrency(selectedInvoice?.amount_paid || 0)})</>
+            )}
           </Alert>
           
           <Grid container spacing={2}>

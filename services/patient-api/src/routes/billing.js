@@ -2,22 +2,25 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
 
 // ============================================
 // INVOICES
 // ============================================
 
 // Get all invoices (with filters)
-router.get('/invoices', async (req, res) => {
+router.get('/invoices', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
   try {
     const { patient_id, status, payment_status, date_from, date_to, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
     
     let query = `
       SELECT i.*,
+             i.total_amount as total,
              p.first_name || ' ' || p.last_name as patient_name,
              p.uhid,
-             (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
+             (SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = i.id) as line_item_count,
+             (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as manual_item_count
       FROM invoices i
       LEFT JOIN patients p ON i.patient_id = p.id
       WHERE 1=1
@@ -59,7 +62,12 @@ router.get('/invoices', async (req, res) => {
     params.push(limit, offset);
     
     const result = await getDB().query(query, params);
-    res.json({ success: true, data: result.rows, count: result.rows.length });
+    // Add computed item_count (sum of both tables)
+    const rows = result.rows.map(r => ({
+      ...r,
+      item_count: (parseInt(r.line_item_count) || 0) + (parseInt(r.manual_item_count) || 0)
+    }));
+    res.json({ success: true, data: rows, count: rows.length });
   } catch (error) {
     logger.error('Error fetching invoices:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -68,13 +76,14 @@ router.get('/invoices', async (req, res) => {
 
 // Get invoice by encounter ID (real-time invoice for patient journey)
 // NOTE: This must come BEFORE /invoices/:id to avoid route collision
-router.get('/invoices/encounter/:encounterId', async (req, res) => {
+router.get('/invoices/encounter/:encounterId', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
   try {
     const { encounterId } = req.params;
     
     // Get invoice with all details
     const invoiceQuery = `
       SELECT i.*,
+             i.total_amount as total,
              p.first_name || ' ' || p.last_name as patient_name,
              p.uhid, p.phone as phone_number,
              e.encounter_type, e.status as encounter_status
@@ -89,7 +98,7 @@ router.get('/invoices/encounter/:encounterId', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Invoice not found for this encounter' });
     }
     
-    // Get line items with detailed breakdown
+    // Get auto-generated line items (from triggers)
     const lineItemsQuery = `
       SELECT ili.*,
              s.first_name || ' ' || s.last_name as provider_name
@@ -100,8 +109,22 @@ router.get('/invoices/encounter/:encounterId', async (req, res) => {
     `;
     const lineItemsResult = await getDB().query(lineItemsQuery, [invoiceResult.rows[0].id]);
     
+    // Get manual invoice items
+    const manualItemsQuery = `
+      SELECT ii.*,
+             s.first_name || ' ' || s.last_name as provider_name,
+             d.department_name
+      FROM invoice_items ii
+      LEFT JOIN staff s ON ii.provider_id = s.id
+      LEFT JOIN departments d ON ii.department_id = d.id
+      WHERE ii.invoice_id = $1
+      ORDER BY ii.created_at
+    `;
+    const manualItemsResult = await getDB().query(manualItemsQuery, [invoiceResult.rows[0].id]);
+    
     const invoice = invoiceResult.rows[0];
     invoice.line_items = lineItemsResult.rows;
+    invoice.items = manualItemsResult.rows;
     
     res.json({ success: true, data: invoice });
   } catch (error) {
@@ -112,7 +135,7 @@ router.get('/invoices/encounter/:encounterId', async (req, res) => {
 
 // Get pending invoices for billing queue
 // NOTE: This must come BEFORE /invoices/:id to avoid route collision
-router.get('/invoices/pending-payment', async (req, res) => {
+router.get('/invoices/pending-payment', authorize(['admin', 'receptionist']), async (req, res) => {
   try {
     const query = `
       SELECT i.*,
@@ -136,15 +159,16 @@ router.get('/invoices/pending-payment', async (req, res) => {
   }
 });
 
-// Get invoice by ID (with items)
+// Get invoice by ID (with items from both tables)
 // NOTE: This must come AFTER specific routes like /invoices/pending-payment
-router.get('/invoices/:id', async (req, res) => {
+router.get('/invoices/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
   try {
     const { id } = req.params;
     
-    // Get invoice
+    // Get invoice with total alias for frontend compatibility
     const invoiceQuery = `
       SELECT i.*,
+             i.total_amount as total,
              p.first_name || ' ' || p.last_name as patient_name,
              p.uhid, p.phone as phone_number,
              s.first_name || ' ' || s.last_name as billed_by_name
@@ -159,9 +183,21 @@ router.get('/invoices/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Invoice not found' });
     }
     
-    // Get items
-    const itemsQuery = `
+    // Get auto-generated line items (from triggers - primary for encounter invoices)
+    const lineItemsQuery = `
+      SELECT ili.*,
+             s.first_name || ' ' || s.last_name as provider_name
+      FROM invoice_line_items ili
+      LEFT JOIN staff s ON ili.provider_id = s.id
+      WHERE ili.invoice_id = $1
+      ORDER BY ili.billed_at
+    `;
+    const lineItemsResult = await getDB().query(lineItemsQuery, [id]);
+    
+    // Get manual invoice items
+    const manualItemsQuery = `
       SELECT ii.*,
+             ii.total_amount as total,
              s.first_name || ' ' || s.last_name as provider_name,
              d.department_name
       FROM invoice_items ii
@@ -170,10 +206,12 @@ router.get('/invoices/:id', async (req, res) => {
       WHERE ii.invoice_id = $1
       ORDER BY ii.created_at
     `;
-    const itemsResult = await getDB().query(itemsQuery, [id]);
+    const manualItemsResult = await getDB().query(manualItemsQuery, [id]);
     
     const invoice = invoiceResult.rows[0];
-    invoice.items = itemsResult.rows;
+    // Provide line_items from both tables for the frontend
+    invoice.line_items = lineItemsResult.rows;
+    invoice.items = manualItemsResult.rows;
     
     res.json({ success: true, data: invoice });
   } catch (error) {
@@ -183,7 +221,7 @@ router.get('/invoices/:id', async (req, res) => {
 });
 
 // Create invoice
-router.post('/invoices', async (req, res) => {
+router.post('/invoices', authorize(['admin']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -238,7 +276,7 @@ router.post('/invoices', async (req, res) => {
 });
 
 // Update invoice status
-router.put('/invoices/:id/status', async (req, res) => {
+router.put('/invoices/:id/status', authorize(['admin']), async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -268,7 +306,7 @@ router.put('/invoices/:id/status', async (req, res) => {
 // ============================================
 
 // Get all payments
-router.get('/payments', async (req, res) => {
+router.get('/payments', authorize(['admin', 'receptionist']), async (req, res) => {
   try {
     const { patient_id, payment_method, date_from, date_to, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
@@ -322,7 +360,7 @@ router.get('/payments', async (req, res) => {
 });
 
 // Record payment
-router.post('/payments', async (req, res) => {
+router.post('/payments', authorize(['admin', 'receptionist']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -385,16 +423,21 @@ router.post('/payments', async (req, res) => {
 // BILLING STATISTICS
 // ============================================
 
-router.get('/statistics', async (req, res) => {
+router.get('/statistics', authorize(['admin', 'receptionist', 'doctor']), async (req, res) => {
   try {
     const query = `
       SELECT
         (SELECT COUNT(*) FROM invoices WHERE status = 'issued') as invoices_issued,
         (SELECT COUNT(*) FROM invoices WHERE status = 'overdue') as invoices_overdue,
+        (SELECT COUNT(*) FROM invoices WHERE status IN ('draft', 'issued')) as invoices_pending,
+        (SELECT COUNT(*) FROM invoices WHERE status = 'paid') as invoices_paid,
         (SELECT COALESCE(SUM(balance_due), 0) FROM invoices WHERE status IN ('issued', 'partially-paid', 'overdue')) as total_outstanding,
-        (SELECT COALESCE(SUM(amount), 0) FROM billing_payments WHERE DATE(payment_date) = CURRENT_DATE) as payments_today,
+        (SELECT COALESCE(SUM(amount_paid), 0) FROM invoices) as total_collected,
+        (SELECT COALESCE(SUM(total_amount), 0) FROM invoices) as total_billed,
+        (SELECT COALESCE(SUM(amount), 0) FROM billing_payments WHERE DATE(payment_date) = CURRENT_DATE AND status = 'completed') as payments_today,
         (SELECT COALESCE(SUM(total_amount), 0) FROM invoices WHERE DATE(invoice_date) = CURRENT_DATE) as invoiced_today,
-        (SELECT COUNT(*) FROM insurance_claims WHERE status = 'pending') as pending_claims
+        (SELECT COUNT(*) FROM insurance_claims WHERE status = 'pending') as pending_claims,
+        (SELECT COUNT(*) FROM billing_payments WHERE DATE(payment_date) = CURRENT_DATE AND status = 'completed') as transactions_today
     `;
     const result = await getDB().query(query);
     res.json({ success: true, data: result.rows[0] });
@@ -405,7 +448,7 @@ router.get('/statistics', async (req, res) => {
 });
 
 // Get patient billing summary
-router.get('/patients/:patientId/summary', async (req, res) => {
+router.get('/patients/:patientId/summary', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
   try {
     const { patientId } = req.params;
     
@@ -438,7 +481,7 @@ router.get('/patients/:patientId/summary', async (req, res) => {
 // ============================================
 
 // Finalize invoice (mark ready for payment)
-router.put('/invoices/:id/finalize', async (req, res) => {
+router.put('/invoices/:id/finalize', authorize(['admin', 'receptionist']), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -463,7 +506,7 @@ router.put('/invoices/:id/finalize', async (req, res) => {
 });
 
 // Process payment for invoice
-router.post('/invoices/:id/payment', async (req, res) => {
+router.post('/invoices/:id/payment', authorize(['admin', 'receptionist']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -471,13 +514,40 @@ router.post('/invoices/:id/payment', async (req, res) => {
     const { id } = req.params;
     const { payment_method, amount, reference_number, notes } = req.body;
     
-    // Get invoice
+    // Validate amount
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ success: false, error: 'Payment amount must be greater than zero' });
+    }
+    
+    // Get invoice with current balance
     const invoiceResult = await client.query('SELECT * FROM invoices WHERE id = $1', [id]);
     if (invoiceResult.rows.length === 0) {
-      throw new Error('Invoice not found');
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Invoice not found' });
     }
     
     const invoice = invoiceResult.rows[0];
+    const balanceDue = parseFloat(invoice.balance_due || invoice.total_amount || 0);
+    const paymentAmount = parseFloat(amount);
+    
+    // Validate payment doesn't exceed balance
+    if (paymentAmount > balanceDue && balanceDue > 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ 
+        success: false, 
+        error: `Payment amount (${paymentAmount}) exceeds balance due (${balanceDue})` 
+      });
+    }
+    
+    // Resolve staff ID for received_by
+    let receivedBy = null;
+    if (req.user?.id) {
+      const staffResult = await client.query(
+        'SELECT id FROM staff WHERE keycloak_user_id = $1 OR id::text = $1 LIMIT 1',
+        [req.user.id]
+      );
+      receivedBy = staffResult.rows.length > 0 ? staffResult.rows[0].id : null;
+    }
     
     // Create payment record
     const paymentQuery = `
@@ -488,31 +558,52 @@ router.post('/invoices/:id/payment', async (req, res) => {
       RETURNING *
     `;
     const paymentResult = await client.query(paymentQuery, [
-      invoice.patient_id, id, payment_method, amount,
-      reference_number, notes, req.user?.userId
+      invoice.patient_id, id, payment_method, paymentAmount,
+      reference_number, notes, receivedBy
     ]);
     
-    // Update invoice status to paid
-    await client.query(`
-      UPDATE invoices
-      SET status = 'paid', last_updated = NOW()
-      WHERE id = $1
-    `, [id]);
+    const payment = paymentResult.rows[0];
     
-    // Update encounter status to completed if all services done
-    await client.query(`
-      UPDATE encounters
-      SET status = 'completed', updated_at = NOW()
-      WHERE id = $1
-        AND pending_lab_orders = 0
-        AND pending_prescriptions = 0
-        AND pending_radiology_orders = 0
-    `, [invoice.encounter_id]);
+    // Create payment allocation (triggers update_invoice_payment_status)
+    await client.query(
+      'INSERT INTO payment_allocations (payment_id, invoice_id, allocated_amount) VALUES ($1, $2, $3)',
+      [payment.id, id, paymentAmount]
+    );
+    
+    // Update last_updated timestamp
+    await client.query(
+      'UPDATE invoices SET last_updated = NOW() WHERE id = $1',
+      [id]
+    );
+    
+    // If fully paid, update encounter status to completed if all services done
+    if (paymentAmount >= balanceDue) {
+      await client.query(`
+        UPDATE encounters
+        SET status = 'completed', updated_at = NOW()
+        WHERE id = $1
+          AND pending_lab_orders = 0
+          AND pending_prescriptions = 0
+          AND pending_radiology_orders = 0
+      `, [invoice.encounter_id]);
+    }
     
     await client.query('COMMIT');
     
-    logger.info(`Payment processed for invoice ${id}: ${amount} via ${payment_method}`);
-    res.json({ success: true, data: paymentResult.rows[0], message: 'Payment processed successfully' });
+    // Fetch updated invoice for response
+    const updatedInvoice = await getDB().query(
+      'SELECT *, total_amount as total FROM invoices WHERE id = $1', [id]
+    );
+    
+    logger.info(`Payment processed for invoice ${id}: ${paymentAmount} via ${payment_method}. Balance remaining: ${balanceDue - paymentAmount}`);
+    res.json({ 
+      success: true, 
+      data: {
+        payment: paymentResult.rows[0],
+        invoice: updatedInvoice.rows[0]
+      },
+      message: paymentAmount >= balanceDue ? 'Payment processed - Invoice fully paid' : 'Partial payment processed successfully'
+    });
   } catch (error) {
     await client.query('ROLLBACK');
     logger.error('Error processing payment:', error);

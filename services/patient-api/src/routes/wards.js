@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
 
 // Get all wards
-router.get('/', async (req, res) => {
+router.get('/', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const query = `
       SELECT w.*,
@@ -24,7 +25,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get ward occupancy details
-router.get('/:wardId/occupancy', async (req, res) => {
+router.get('/:wardId/occupancy', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const { wardId } = req.params;
     
@@ -56,7 +57,7 @@ router.get('/:wardId/occupancy', async (req, res) => {
 });
 
 // Get occupancy statistics
-router.get('/:wardId/statistics', async (req, res) => {
+router.get('/:wardId/statistics', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const { wardId } = req.params;
     

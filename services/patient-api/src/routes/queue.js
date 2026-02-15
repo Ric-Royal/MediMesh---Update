@@ -5,9 +5,10 @@ const QueueEntry = require('../models/QueueEntry');
 const Patient = require('../models/Patient');
 const { logger } = require('../utils/logger');
 const { emitQueueUpdate } = require('../utils/websocket');
+const { authorize } = require('../middleware/auth');
 
 // Get all queue entries (for "all clinics" view)
-router.get('/', async (req, res) => {
+router.get('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
   try {
     const { queueType = 'consultation', status } = req.query;
     
@@ -25,7 +26,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get queue for a specific clinic
-router.get('/clinic/:clinicId', async (req, res) => {
+router.get('/clinic/:clinicId', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
   try {
     const { clinicId } = req.params;
     const { queueType = 'consultation' } = req.query;
@@ -44,7 +45,7 @@ router.get('/clinic/:clinicId', async (req, res) => {
 });
 
 // Get queue statistics
-router.get('/clinic/:clinicId/statistics', async (req, res) => {
+router.get('/clinic/:clinicId/statistics', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const { clinicId } = req.params;
     const stats = await QueueEntry.getQueueStatistics(clinicId);
@@ -60,7 +61,7 @@ router.get('/clinic/:clinicId/statistics', async (req, res) => {
 });
 
 // Get doctor's queue
-router.get('/doctor/:doctorId', async (req, res) => {
+router.get('/doctor/:doctorId', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const { doctorId } = req.params;
     const queue = await QueueEntry.getDoctorQueue(doctorId);
@@ -77,7 +78,7 @@ router.get('/doctor/:doctorId', async (req, res) => {
 });
 
 // Add patient to queue
-router.post('/', async (req, res) => {
+router.post('/', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const { encounterId, patientId, clinicId, doctorId, queueType, isEmergency, waitingLocation } = req.body;
     
@@ -104,7 +105,7 @@ router.post('/', async (req, res) => {
 });
 
 // Update queue entry status with workflow logic
-router.put('/:id/status', async (req, res) => {
+router.put('/:id/status', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const { id } = req.params;
     const { status, nextQueue } = req.body; // nextQueue: 'pharmacy', 'lab', 'billing', 'discharge'
@@ -253,7 +254,7 @@ router.put('/:id/status', async (req, res) => {
 });
 
 // Move patient in queue (reorder)
-router.put('/:id/move', async (req, res) => {
+router.put('/:id/move', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const { id } = req.params;
     const { newPosition, priorityLevel } = req.body;

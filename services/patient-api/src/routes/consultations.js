@@ -2,11 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
 
 // =====================================================
 // CREATE CONSULTATION WITH MULTIPLE ORDERS
 // =====================================================
-router.post('/', async (req, res) => {
+router.post('/', authorize(['doctor', 'admin']), async (req, res) => {
   const db = getDB();
   
   try {
@@ -307,7 +308,7 @@ router.post('/', async (req, res) => {
 // =====================================================
 // GET CONSULTATION BY ID
 // =====================================================
-router.get('/:id', async (req, res) => {
+router.get('/:id', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const { id } = req.params;
     const db = getDB();
@@ -349,7 +350,7 @@ router.get('/:id', async (req, res) => {
 // =====================================================
 // GET CONSULTATIONS BY ENCOUNTER
 // =====================================================
-router.get('/encounter/:encounterId', async (req, res) => {
+router.get('/encounter/:encounterId', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const { encounterId } = req.params;
     const db = getDB();
@@ -382,7 +383,7 @@ router.get('/encounter/:encounterId', async (req, res) => {
 // =====================================================
 // GET PENDING ORDERS FOR ENCOUNTER
 // =====================================================
-router.get('/encounter/:encounterId/pending-orders', async (req, res) => {
+router.get('/encounter/:encounterId/pending-orders', authorize(['doctor', 'nurse', 'admin', 'lab-tech', 'pharmacist', 'radiologist']), async (req, res) => {
   try {
     const { encounterId } = req.params;
     const db = getDB();
