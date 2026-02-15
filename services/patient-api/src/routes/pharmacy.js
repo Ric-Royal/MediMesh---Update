@@ -246,7 +246,7 @@ router.get('/prescriptions/:id', async (req, res) => {
     const prescriptionQuery = `
       SELECT p.*, 
              pat.first_name || ' ' || pat.last_name as patient_name,
-             pat.uhid, pat.date_of_birth, pat.gender, pat.phone_number,
+             pat.uhid, pat.date_of_birth, pat.gender, pat.phone as phone_number,
              s.first_name || ' ' || s.last_name as doctor_name,
              c.clinic_name
       FROM prescriptions p
@@ -287,7 +287,7 @@ router.get('/prescriptions/:id', async (req, res) => {
 
 // Create prescription
 router.post('/prescriptions', async (req, res) => {
-  const client = await pool.connect();
+  const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     

@@ -198,9 +198,9 @@ router.put('/:id/status', async (req, res) => {
                 const radiologyOrderResult = await db.query(`
                   INSERT INTO radiology_orders (
                     patient_id, encounter_id, ordering_doctor_id,
-                    order_date, status, priority, reason_for_study
-                  ) VALUES ($1, $2, $3, NOW(), 'ordered', $4, $5)
-                  RETURNING id, radiology_order_number
+                    order_date, status, priority, clinical_indication
+                  ) VALUES ($1, $2, $3, NOW(), 'pending', $4, $5)
+                  RETURNING id, order_number
                 `, [
                   queueEntry.patient_id,
                   queueEntry.encounter_id,

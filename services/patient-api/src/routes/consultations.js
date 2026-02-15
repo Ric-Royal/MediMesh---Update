@@ -106,7 +106,7 @@ router.post('/', async (req, res) => {
             patient_id, encounter_id, ordering_doctor_id, consultation_record_id,
             order_date, status, priority, clinical_notes
           ) VALUES ($1, $2, $3, $4, NOW(), 'pending', $5, $6)
-          RETURNING id, lab_order_number
+          RETURNING id, order_number
         `, [
           patientId, encounterId, doctorId, consultationId,
           labOrders[0]?.priority || 'routine',
@@ -114,16 +114,16 @@ router.post('/', async (req, res) => {
         ]);
 
         const labOrderId = labOrderResult.rows[0].id;
-        const labOrderNumber = labOrderResult.rows[0].lab_order_number;
+        const labOrderNumber = labOrderResult.rows[0].order_number;
 
         // Create lab order items
         for (const test of labOrders) {
           await db.query(`
             INSERT INTO lab_order_items (
-              lab_order_id, test_id, test_name, test_code, status, price
-            ) VALUES ($1, $2, $3, $4, 'pending', $5)
+              lab_order_id, test_id, status, price
+            ) VALUES ($1, $2, 'pending', $3)
           `, [
-            labOrderId, test.testId, test.testName, test.testCode, test.price || 0
+            labOrderId, test.testId, test.price || 0
           ]);
         }
 
@@ -131,12 +131,11 @@ router.post('/', async (req, res) => {
         await db.query(`
           INSERT INTO queue_entries (
             encounter_id, patient_id, clinic_id, doctor_id,
-            queue_type, service_type, related_order_id, order_type,
+            queue_type, service_type, order_type,
             is_emergency, waiting_location, priority_level
-          ) VALUES ($1, $2, $3, $4, 'lab', 'lab-collection', $5, 'lab', $6, 'lab-waiting', $7)
+          ) VALUES ($1, $2, $3, $4, 'lab', 'lab-collection', 'lab', $5, 'lab-waiting', $6)
         `, [
           encounterId, patientId, null, doctorId,
-          labOrderId,
           labOrders[0]?.priority === 'urgent', 
           labOrders[0]?.priority === 'urgent' ? 1 : 3
         ]);
@@ -155,28 +154,27 @@ router.post('/', async (req, res) => {
         const radiologyOrderResult = await db.query(`
           INSERT INTO radiology_orders (
             patient_id, encounter_id, ordering_doctor_id, consultation_record_id,
-            order_date, status, priority, reason_for_study, clinical_history
-          ) VALUES ($1, $2, $3, $4, NOW(), 'ordered', $5, $6, $7)
-          RETURNING id, radiology_order_number
+            order_date, status, priority, clinical_indication
+          ) VALUES ($1, $2, $3, $4, NOW(), 'pending', $5, $6)
+          RETURNING id, order_number
         `, [
           patientId, encounterId, doctorId, consultationId,
           radiologyOrders[0]?.priority || 'routine',
-          radiologyOrders[0]?.reason || 'Diagnostic imaging',
-          provisionalDiagnosis
+          radiologyOrders[0]?.reason || provisionalDiagnosis || 'Diagnostic imaging'
         ]);
 
         const radiologyOrderId = radiologyOrderResult.rows[0].id;
-        const radiologyOrderNumber = radiologyOrderResult.rows[0].radiology_order_number;
+        const radiologyOrderNumber = radiologyOrderResult.rows[0].order_number;
 
         // Create radiology order items
         for (const study of radiologyOrders) {
           await db.query(`
             INSERT INTO radiology_order_items (
-              radiology_order_id, study_id, study_name, study_code, modality, status, price
-            ) VALUES ($1, $2, $3, $4, $5, 'ordered', $6)
+              radiology_order_id, test_id, body_part, status, price
+            ) VALUES ($1, $2, $3, 'pending', $4)
           `, [
-            radiologyOrderId, study.studyId, study.studyName, study.studyCode, 
-            study.modality, study.price || 0
+            radiologyOrderId, study.studyId || study.testId, 
+            study.bodyPart || null, study.price || 0
           ]);
         }
 
@@ -184,12 +182,11 @@ router.post('/', async (req, res) => {
         await db.query(`
           INSERT INTO queue_entries (
             encounter_id, patient_id, clinic_id, doctor_id,
-            queue_type, service_type, related_order_id, order_type,
+            queue_type, service_type, order_type,
             is_emergency, waiting_location, priority_level
-          ) VALUES ($1, $2, $3, $4, 'radiology', 'radiology-imaging', $5, 'radiology', $6, 'radiology-waiting', $7)
+          ) VALUES ($1, $2, $3, $4, 'radiology', 'radiology-imaging', 'radiology', $5, 'radiology-waiting', $6)
         `, [
           encounterId, patientId, null, doctorId,
-          radiologyOrderId,
           radiologyOrders[0]?.priority === 'urgent',
           radiologyOrders[0]?.priority === 'urgent' ? 1 : 3
         ]);
@@ -223,13 +220,14 @@ router.post('/', async (req, res) => {
         for (const medication of prescriptions) {
           await db.query(`
             INSERT INTO prescription_items (
-              prescription_id, drug_id, drug_name, dosage, frequency,
-              duration, quantity, instructions, unit_price, total_price
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+              prescription_id, drug_id, dosage, frequency,
+              duration_days, quantity, notes, unit_price, total_price
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
           `, [
-            prescriptionId, medication.drugId, medication.drugName, 
-            medication.dosage, medication.frequency, medication.duration,
-            medication.quantity, medication.instructions,
+            prescriptionId, medication.drugId, 
+            medication.dosage, medication.frequency, 
+            parseInt(medication.duration) || 0,
+            medication.quantity, medication.instructions || null,
             medication.unitPrice || 0, medication.totalPrice || 0
           ]);
         }
@@ -238,10 +236,10 @@ router.post('/', async (req, res) => {
         await db.query(`
           INSERT INTO queue_entries (
             encounter_id, patient_id, clinic_id, doctor_id,
-            queue_type, service_type, related_order_id, order_type,
+            queue_type, service_type, order_type,
             is_emergency, waiting_location, priority_level
-          ) VALUES ($1, $2, $3, $4, 'pharmacy', 'pharmacy-dispensing', $5, 'pharmacy', FALSE, 'pharmacy-waiting', 3)
-        `, [encounterId, patientId, null, doctorId, prescriptionId]);
+          ) VALUES ($1, $2, $3, $4, 'pharmacy', 'pharmacy-dispensing', 'pharmacy', FALSE, 'pharmacy-waiting', 3)
+        `, [encounterId, patientId, null, doctorId]);
 
         createdOrders.prescriptions.push({
           id: prescriptionId,
@@ -424,7 +422,7 @@ router.get('/encounter/:encounterId/pending-orders', async (req, res) => {
         ) as studies
       FROM radiology_orders ro
       LEFT JOIN radiology_order_items roi ON ro.id = roi.radiology_order_id
-      WHERE ro.encounter_id = $1 AND ro.status IN ('ordered', 'scheduled', 'in-progress')
+      WHERE ro.encounter_id = $1 AND ro.status IN ('pending', 'scheduled', 'in-progress')
       GROUP BY ro.id
     `, [encounterId]);
 

@@ -165,7 +165,7 @@ router.get('/orders/:id', async (req, res) => {
     const orderQuery = `
       SELECT lo.*,
              p.first_name || ' ' || p.last_name as patient_name,
-             p.uhid, p.date_of_birth, p.gender, p.phone_number,
+             p.uhid, p.date_of_birth, p.gender, p.phone as phone_number,
              s.first_name || ' ' || s.last_name as doctor_name,
              c.clinic_name
       FROM lab_orders lo
@@ -204,7 +204,7 @@ router.get('/orders/:id', async (req, res) => {
 
 // Create lab order
 router.post('/orders', async (req, res) => {
-  const client = await pool.connect();
+  const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     
@@ -295,7 +295,7 @@ router.put('/orders/:id/status', async (req, res) => {
 
 // Collect sample (generate barcode)
 router.post('/orders/:id/collect', async (req, res) => {
-  const client = await pool.connect();
+  const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     

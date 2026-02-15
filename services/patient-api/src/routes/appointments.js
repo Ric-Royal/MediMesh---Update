@@ -4,6 +4,20 @@ const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
 
+// Helper: resolve req.user.id to a valid staff UUID (or null if not found)
+async function resolveStaffId(userId) {
+  if (!userId) return null;
+  try {
+    const result = await getDB().query(
+      'SELECT id FROM staff WHERE keycloak_user_id = $1 OR id::text = $1 LIMIT 1',
+      [userId]
+    );
+    return result.rows.length > 0 ? result.rows[0].id : null;
+  } catch {
+    return null;
+  }
+}
+
 // ============================================
 // GET /api/appointments - List all appointments with filters
 // ============================================
@@ -171,7 +185,7 @@ router.get('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), asyn
       WHERE a.id = $1
     `;
 
-    const result = await pool.query(query, [id]);
+    const result = await getDB().query(query, [id]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Appointment not found' });
@@ -218,7 +232,7 @@ router.post('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async 
       const conflictQuery = `
         SELECT is_time_slot_available($1, $2, $3, $4) as is_available
       `;
-      const conflictResult = await pool.query(conflictQuery, [
+      const conflictResult = await getDB().query(conflictQuery, [
         doctor_id,
         scheduled_date,
         scheduled_time,
@@ -230,6 +244,18 @@ router.post('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async 
           success: false,
           error: 'Time slot is not available. Please choose a different time.'
         });
+      }
+    }
+
+    // Get staff_id for the current user if they exist in staff table
+    let createdBy = null;
+    if (req.user?.id) {
+      const staffCheck = await getDB().query(
+        'SELECT id FROM staff WHERE keycloak_user_id = $1 OR id::text = $1 LIMIT 1',
+        [req.user.id]
+      );
+      if (staffCheck.rows.length > 0) {
+        createdBy = staffCheck.rows[0].id;
       }
     }
 
@@ -256,7 +282,7 @@ router.post('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async 
       notes || null,
       payment_type,
       corporate_scheme || null,
-      req.user?.id
+      createdBy
     ];
 
     const result = await getDB().query(query, values);
@@ -264,7 +290,7 @@ router.post('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async 
     logger.info(`Appointment created: ${result.rows[0].appointment_number}`, {
       appointmentId: result.rows[0].id,
       patientId: patient_id,
-      createdBy: req.user?.id
+      createdBy: createdBy
     });
 
     res.status(201).json({ success: true, data: result.rows[0] });
@@ -294,7 +320,7 @@ router.put('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), asyn
 
     // Check if appointment exists
     const checkQuery = 'SELECT * FROM appointments WHERE id = $1';
-    const checkResult = await pool.query(checkQuery, [id]);
+    const checkResult = await getDB().query(checkQuery, [id]);
 
     if (checkResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Appointment not found' });
@@ -342,8 +368,9 @@ router.put('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), asyn
       values.push(cancellation_reason);
     }
 
+    const staffId = await resolveStaffId(req.user?.id);
     updates.push(`updated_by = $${paramCount++}`);
-    values.push(req.user?.id);
+    values.push(staffId);
 
     if (updates.length === 0) {
       return res.status(400).json({ success: false, error: 'No fields to update' });
@@ -376,6 +403,7 @@ router.put('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), asyn
 router.post('/:id/check-in', authorize(['nurse', 'admin', 'receptionist']), async (req, res) => {
   try {
     const { id } = req.params;
+    const staffId = await resolveStaffId(req.user?.id);
 
     const query = `
       UPDATE appointments
@@ -387,7 +415,7 @@ router.post('/:id/check-in', authorize(['nurse', 'admin', 'receptionist']), asyn
       RETURNING *
     `;
 
-    const result = await pool.query(query, [id, req.user?.id]);
+    const result = await getDB().query(query, [id, staffId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Appointment not found' });
@@ -408,6 +436,7 @@ router.post('/:id/check-in', authorize(['nurse', 'admin', 'receptionist']), asyn
 router.post('/:id/confirm', authorize(['nurse', 'admin', 'receptionist']), async (req, res) => {
   try {
     const { id } = req.params;
+    const staffId = await resolveStaffId(req.user?.id);
 
     const query = `
       UPDATE appointments
@@ -419,7 +448,7 @@ router.post('/:id/confirm', authorize(['nurse', 'admin', 'receptionist']), async
       RETURNING *
     `;
 
-    const result = await pool.query(query, [id, req.user?.id]);
+    const result = await getDB().query(query, [id, staffId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Appointment not found' });
@@ -452,7 +481,8 @@ router.post('/:id/cancel', authorize(['doctor', 'nurse', 'admin', 'receptionist'
       RETURNING *
     `;
 
-    const result = await pool.query(query, [id, cancellation_reason, req.user?.id]);
+    const staffId = await resolveStaffId(req.user?.id);
+    const result = await getDB().query(query, [id, cancellation_reason, staffId]);
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Appointment not found' });
@@ -480,7 +510,7 @@ router.get('/doctor/:doctor_id/available-slots', authorize(['doctor', 'nurse', '
     }
 
     const query = `SELECT * FROM get_available_time_slots($1, $2)`;
-    const result = await pool.query(query, [doctor_id, date]);
+    const result = await getDB().query(query, [doctor_id, date]);
 
     res.json({ success: true, data: result.rows });
   } catch (error) {
@@ -495,7 +525,7 @@ router.get('/doctor/:doctor_id/available-slots', authorize(['doctor', 'nurse', '
 router.get('/conflicts/list', authorize(['admin']), async (req, res) => {
   try {
     const query = `SELECT * FROM appointment_conflicts`;
-    const result = await pool.query(query);
+    const result = await getDB().query(query);
 
     res.json({ success: true, data: result.rows });
   } catch (error) {

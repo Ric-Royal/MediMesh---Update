@@ -124,7 +124,7 @@ router.get('/invoices/pending-payment', async (req, res) => {
       FROM invoices i
       LEFT JOIN patients p ON i.patient_id = p.id
       LEFT JOIN encounters e ON i.encounter_id = e.id
-      WHERE i.status IN ('draft', 'finalized')
+      WHERE i.status IN ('draft', 'issued')
         AND i.total_amount > 0
       ORDER BY i.invoice_date DESC
     `;
@@ -444,7 +444,7 @@ router.put('/invoices/:id/finalize', async (req, res) => {
     
     const query = `
       UPDATE invoices
-      SET status = 'finalized', last_updated = NOW()
+      SET status = 'issued', last_updated = NOW()
       WHERE id = $1
       RETURNING *
     `;
@@ -502,10 +502,10 @@ router.post('/invoices/:id/payment', async (req, res) => {
     // Update encounter status to completed if all services done
     await client.query(`
       UPDATE encounters
-      SET status = 'completed', discharge_date = NOW()
+      SET status = 'completed', updated_at = NOW()
       WHERE id = $1
         AND pending_lab_orders = 0
-        AND pending_pharmacy_orders = 0
+        AND pending_prescriptions = 0
         AND pending_radiology_orders = 0
     `, [invoice.encounter_id]);
     
