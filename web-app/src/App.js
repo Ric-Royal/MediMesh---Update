@@ -19,6 +19,13 @@ import CreateRecordPage from './pages/CreateRecordPage';
 import EditPatientPage from './pages/EditPatientPage';
 import EditRecordPage from './pages/EditRecordPage';
 import SettingsPage from './pages/SettingsPage';
+import QueueManagementPage from './pages/QueueManagementPage';
+import WardOccupancyPage from './pages/WardOccupancyPage';
+import PharmacyPage from './pages/PharmacyPage';
+import LaboratoryPage from './pages/LaboratoryPage';
+import EnhancedBillingPage from './pages/EnhancedBillingPage';
+import RadiologyPage from './pages/RadiologyPage';
+import AppointmentsPage from './pages/AppointmentsPage';
 import NotFoundPage from './pages/NotFoundPage';
 
 // Protected Route component
@@ -86,6 +93,27 @@ function App() {
                   <Route path="/records/new" element={<CreateRecordPage />} />
                   <Route path="/records/:id" element={<RecordDetailPage />} />
                   <Route path="/records/:id/edit" element={<EditRecordPage />} />
+                  
+                  {/* Appointments & Scheduling */}
+                  <Route path="/appointments" element={<AppointmentsPage />} />
+                  
+                  {/* Queue Management - NEW! */}
+                  <Route path="/queue" element={<QueueManagementPage />} />
+                  
+                  {/* Ward Occupancy - NEW! */}
+                  <Route path="/wards" element={<WardOccupancyPage />} />
+                  
+                  {/* Pharmacy Management - PHASE 2! */}
+                  <Route path="/pharmacy" element={<PharmacyPage />} />
+                  
+                  {/* Lab Workflow - PHASE 2! */}
+                  <Route path="/lab" element={<LaboratoryPage />} />
+                  
+                  {/* Billing - PHASE 3! */}
+                  <Route path="/billing" element={<EnhancedBillingPage />} />
+                  
+                  {/* Radiology - PHASE 3! */}
+                  <Route path="/radiology" element={<RadiologyPage />} />
                   
                   {/* Settings */}
                   <Route path="/settings" element={<SettingsPage />} />

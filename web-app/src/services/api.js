@@ -549,6 +549,19 @@ const apiService = {
       } catch (error) {
         throw handleError(error);
       }
+    },
+
+    // Password Change
+    changePassword: async (currentPassword, newPassword) => {
+      try {
+        const response = await api.post('/api/settings/change-password', {
+          currentPassword,
+          newPassword
+        });
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
     }
   }
 };

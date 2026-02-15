@@ -8,6 +8,7 @@ require('dotenv').config();
 const { logger } = require('./utils/logger');
 const { connectDB } = require('./utils/database');
 const { connectRedis } = require('./utils/redis');
+const { initializeWebSocket } = require('./utils/websocket');
 const { authenticateToken } = require('./middleware/auth');
 const { auditLogger } = require('./middleware/audit');
 const FileAttachment = require('./models/FileAttachment');
@@ -24,6 +25,18 @@ const seedRoutes = require('./routes/seed');
 const fileRoutes = require('./routes/files');
 const settingsRoutes = require('./routes/settings');
 const paymentRoutes = require('./routes/payments');
+const encounterRoutes = require('./routes/encounters');
+const queueRoutes = require('./routes/queue');
+const wardRoutes = require('./routes/wards');
+const pharmacyRoutes = require('./routes/pharmacy');
+const labRoutes = require('./routes/lab');
+const billingRoutes = require('./routes/billing');
+const radiologyRoutes = require('./routes/radiology');
+const appointmentRoutes = require('./routes/appointments');
+const scheduleRoutes = require('./routes/schedules');
+const clinicRoutes = require('./routes/clinics');
+const staffRoutes = require('./routes/staff');
+const consultationRoutes = require('./routes/consultations');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -96,6 +109,18 @@ app.use('/api/records', authenticateToken, recordRoutes);
 app.use('/api/files', authenticateToken, fileRoutes);
 app.use('/api/settings', authenticateToken, settingsRoutes);
 app.use('/api/payments', conditionalAuth, paymentRoutes);
+app.use('/api/encounters', authenticateToken, encounterRoutes);
+app.use('/api/queue', authenticateToken, queueRoutes);
+app.use('/api/wards', authenticateToken, wardRoutes);
+app.use('/api/pharmacy', authenticateToken, pharmacyRoutes);
+app.use('/api/lab', authenticateToken, labRoutes);
+app.use('/api/billing', authenticateToken, billingRoutes);
+app.use('/api/radiology', authenticateToken, radiologyRoutes);
+app.use('/api/appointments', authenticateToken, appointmentRoutes);
+app.use('/api/schedules', authenticateToken, scheduleRoutes);
+app.use('/api/clinics', authenticateToken, clinicRoutes);
+app.use('/api/staff', authenticateToken, staffRoutes);
+app.use('/api/consultations', authenticateToken, consultationRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -140,7 +165,7 @@ async function initialize() {
     await SystemSettings.createTable();
     await Payment.createTable();
     
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       logger.info(`MediMesh Patient API server running on port ${PORT}`);
       logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
       if (process.env.NODE_ENV === 'development') {
@@ -148,6 +173,11 @@ async function initialize() {
         logger.info('Rate limiting: Relaxed for development (1000 req/15min)');
       }
     });
+
+    // Initialize WebSocket
+    initializeWebSocket(server);
+    logger.info('✅ WebSocket server initialized');
+    
   } catch (error) {
     logger.error('Failed to initialize server:', error);
     process.exit(1);

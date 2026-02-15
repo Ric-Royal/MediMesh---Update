@@ -45,6 +45,7 @@ vault.log
 
 # Database dumps and backups
 *.sql
+!init-scripts/*.sql
 *.dump
 *.backup
 backups/
