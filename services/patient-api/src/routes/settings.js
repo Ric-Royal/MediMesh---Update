@@ -732,4 +732,151 @@ router.post('/logs/export',
   }
 );
 
+// ==========================================
+// Password Change Endpoint
+// ==========================================
+router.post('/change-password',
+  authorize(['doctor', 'nurse', 'admin', 'receptionist', 'lab-tech', 'pharmacist', 'radiologist', 'manager', 'user']),
+  async (req, res) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({
+          success: false,
+          error: 'Current password and new password are required'
+        });
+      }
+
+      if (newPassword.length < 8) {
+        return res.status(400).json({
+          success: false,
+          error: 'New password must be at least 8 characters'
+        });
+      }
+
+      // In production, this would call Keycloak Admin API:
+      // PUT /auth/admin/realms/{realm}/users/{userId}
+      // with the new credentials
+      const keycloakUrl = process.env.KEYCLOAK_URL || 'http://keycloak:8080';
+      const realm = process.env.KEYCLOAK_REALM || 'medimesh';
+      const userId = req.user?.id;
+
+      if (process.env.NODE_ENV === 'development') {
+        // In dev mode, simulate success
+        logger.info(`Password change requested for user ${userId} (dev mode - simulated)`);
+
+        // Log the password change attempt in audit
+        auditLogger.info('Password change', {
+          userId,
+          action: 'password_change',
+          timestamp: new Date().toISOString(),
+          ip: req.ip,
+          result: 'success_simulated'
+        });
+
+        return res.json({
+          success: true,
+          message: 'Password changed successfully (dev mode)'
+        });
+      }
+
+      // Production: Call Keycloak Admin API
+      try {
+        const adminToken = await getKeycloakAdminToken(keycloakUrl, realm);
+
+        // Verify current password by attempting login
+        const verifyResponse = await fetch(
+          `${keycloakUrl}/realms/${realm}/protocol/openid-connect/token`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              grant_type: 'password',
+              client_id: process.env.KEYCLOAK_CLIENT_ID || 'medimesh-app',
+              username: req.user?.username,
+              password: currentPassword
+            })
+          }
+        );
+
+        if (!verifyResponse.ok) {
+          return res.status(401).json({
+            success: false,
+            error: 'Current password is incorrect'
+          });
+        }
+
+        // Set new password
+        const resetResponse = await fetch(
+          `${keycloakUrl}/admin/realms/${realm}/users/${userId}/reset-password`,
+          {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${adminToken}`
+            },
+            body: JSON.stringify({
+              type: 'password',
+              value: newPassword,
+              temporary: false
+            })
+          }
+        );
+
+        if (!resetResponse.ok) {
+          throw new Error('Failed to reset password in Keycloak');
+        }
+
+        auditLogger.info('Password change', {
+          userId,
+          action: 'password_change',
+          timestamp: new Date().toISOString(),
+          ip: req.ip,
+          result: 'success'
+        });
+
+        res.json({
+          success: true,
+          message: 'Password changed successfully'
+        });
+      } catch (kcError) {
+        logger.error('Keycloak password change error:', kcError);
+        res.status(500).json({
+          success: false,
+          error: 'Failed to change password. Please try again later.'
+        });
+      }
+    } catch (error) {
+      logger.error('Error changing password:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to change password',
+        message: error.message
+      });
+    }
+  }
+);
+
+/**
+ * Get Keycloak admin token for service account operations
+ */
+async function getKeycloakAdminToken(keycloakUrl, realm) {
+  const response = await fetch(
+    `${keycloakUrl}/realms/master/protocol/openid-connect/token`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: process.env.KEYCLOAK_ADMIN_CLIENT_ID || 'admin-cli',
+        client_secret: process.env.KEYCLOAK_ADMIN_CLIENT_SECRET || ''
+      })
+    }
+  );
+  if (!response.ok) throw new Error('Failed to get admin token');
+  const data = await response.json();
+  return data.access_token;
+}
+
 module.exports = router; 

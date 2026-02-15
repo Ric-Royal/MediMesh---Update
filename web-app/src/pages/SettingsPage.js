@@ -292,14 +292,22 @@ const SettingsPage = () => {
       return;
     }
     
+    if (passwordData.newPassword.length < 8) {
+      setLocalError('Password must be at least 8 characters');
+      return;
+    }
+    
     try {
-      // API call to change password
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const { default: apiService } = await import('../services/api');
+      await apiService.settings.changePassword(
+        passwordData.currentPassword,
+        passwordData.newPassword
+      );
       setChangePasswordDialog(false);
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setSaveSuccess(true);
     } catch (err) {
-      setLocalError('Failed to change password');
+      setLocalError(err?.message || 'Failed to change password');
     }
   };
 

@@ -38,10 +38,11 @@ import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog
 
 const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-const createTrendData = (baseValue = 40) =>
-  weekLabels.map((label, index) => ({
+/** Flat-line sparkline at the current value (no fake random/sinusoidal data). */
+const createFlatTrend = (baseValue = 0) =>
+  weekLabels.map((label) => ({
     label,
-    value: Math.max(5, Math.round(baseValue + baseValue * 0.15 * Math.sin((index + 1) * 1.2))),
+    value: Math.round(Number(baseValue) || 0),
   }));
 
 const DashboardPage = () => {
@@ -134,22 +135,16 @@ const DashboardPage = () => {
     });
   };
 
-  const createTrendData = (baseValue) =>
-    Array.from({ length: 8 }, (_, i) => ({
-      label: `D${i + 1}`,
-      value: Math.round(baseValue * (0.7 + Math.random() * 0.6)),
-    }));
-
   const patientTrend = useMemo(
-    () => createTrendData(patientStats?.new_patients_30d || 40),
+    () => createFlatTrend(patientStats?.new_patients_30d || 0),
     [patientStats]
   );
   const recordTrend = useMemo(
-    () => createTrendData(recordStats?.new_records_30d || 30),
+    () => createFlatTrend(recordStats?.new_records_30d || 0),
     [recordStats]
   );
   const billingTrend = useMemo(
-    () => createTrendData(paymentStats?.total_transactions || 25),
+    () => createFlatTrend(paymentStats?.total_transactions || 0),
     [paymentStats]
   );
 
@@ -160,18 +155,22 @@ const DashboardPage = () => {
     billing: billingTrend[index]?.value || 0,
   }));
 
-  const bedOccupancyRate = recordStats?.active_records && recordStats?.total_records
-    ? Math.min(100, (recordStats.active_records / recordStats.total_records) * 100)
-    : 72;
-  const queuePressure = patientStats?.new_patients_30d
-    ? Math.min(100, (patientStats.new_patients_30d / (patientStats.total_patients || 1)) * 100)
-    : 58;
-  const billingRecovery = paymentStats?.total_revenue && paymentStats?.pending_amount
-    ? Math.max(
-        0,
-        Math.min(100, ((paymentStats.total_revenue - paymentStats.pending_amount) / paymentStats.total_revenue) * 100)
-      )
-    : 82;
+  // Records Activity: recent (7-day) records as % of total records
+  const recordsActivityRate = recordStats?.recent_records && recordStats?.total_records
+    ? Math.min(100, (Number(recordStats.recent_records) / Number(recordStats.total_records)) * 100)
+    : 0;
+
+  // New Patient Ratio: new patients (30d) as % of total patients
+  const newPatientRatio = patientStats?.new_patients_30d && patientStats?.total_patients
+    ? Math.min(100, (Number(patientStats.new_patients_30d) / Number(patientStats.total_patients)) * 100)
+    : 0;
+
+  // Billing Recovery: collected revenue as % of total invoiced
+  const totalRevenue = parseFloat(paymentStats?.total_revenue || 0);
+  const pendingAmount = parseFloat(paymentStats?.pending_amount || 0);
+  const billingRecovery = totalRevenue > 0
+    ? Math.max(0, Math.min(100, ((totalRevenue - pendingAmount) / totalRevenue) * 100))
+    : 0;
 
   if (loading) {
     return (
@@ -303,17 +302,17 @@ const DashboardPage = () => {
             </Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <ProgressStat
-                label="Bed Occupancy"
-                value={bedOccupancyRate}
+                label="Records Activity"
+                value={recordsActivityRate}
                 color="error"
-                helperText="Target &lt; 85%"
+                helperText="Recent records (7d) vs total"
                 icon={<LocalHospitalIcon fontSize="small" color="error" />}
               />
               <ProgressStat
-                label="Queue Pressure"
-                value={queuePressure}
+                label="New Patient Ratio"
+                value={newPatientRatio}
                 color="warning"
-                helperText="Avg wait time 18 mins"
+                helperText="New patients (30d) vs total"
                 icon={<AccessTimeIcon fontSize="small" color="warning" />}
               />
               <ProgressStat

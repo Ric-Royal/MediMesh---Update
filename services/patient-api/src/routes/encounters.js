@@ -4,9 +4,10 @@ const Encounter = require('../models/Encounter');
 const QueueEntry = require('../models/QueueEntry');
 const Patient = require('../models/Patient');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
 
 // Get all encounters for today
-router.get('/today', async (req, res) => {
+router.get('/today', authorize(['doctor', 'nurse', 'receptionist', 'admin']), async (req, res) => {
   try {
     const encounters = await Encounter.getEncountersByDate(new Date());
     res.json({ success: true, data: encounters, count: encounters.length });
@@ -17,7 +18,7 @@ router.get('/today', async (req, res) => {
 });
 
 // Get encounters by clinic
-router.get('/clinic/:clinicId', async (req, res) => {
+router.get('/clinic/:clinicId', authorize(['doctor', 'nurse', 'receptionist', 'admin']), async (req, res) => {
   try {
     const { clinicId } = req.params;
     const encounters = await Encounter.getActiveEncounters(clinicId);
@@ -29,7 +30,7 @@ router.get('/clinic/:clinicId', async (req, res) => {
 });
 
 // Create new encounter
-router.post('/', async (req, res) => {
+router.post('/', authorize(['nurse', 'receptionist', 'admin']), async (req, res) => {
   try {
     const encounterData = req.body;
     encounterData.createdBy = req.user?.id;
@@ -58,7 +59,7 @@ router.post('/', async (req, res) => {
 });
 
 // Get encounter by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', authorize(['doctor', 'nurse', 'receptionist', 'admin']), async (req, res) => {
   try {
     const encounter = await Encounter.findByPk(req.params.id, {
       include: ['patient', 'doctor', 'clinic', 'department']
@@ -76,7 +77,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // Update encounter
-router.put('/:id', async (req, res) => {
+router.put('/:id', authorize(['doctor', 'nurse', 'admin']), async (req, res) => {
   try {
     const encounter = await Encounter.findByPk(req.params.id);
     if (!encounter) {
