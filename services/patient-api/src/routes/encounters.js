@@ -4,9 +4,14 @@ const Encounter = require('../models/Encounter');
 const QueueEntry = require('../models/QueueEntry');
 const Patient = require('../models/Patient');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
+
+const ENCOUNTER_READ_ROLES = ['admin', 'doctor', 'nurse', 'receptionist', 'lab-tech', 'pharmacist', 'billing', 'radiologist', 'radiographer'];
+const ENCOUNTER_CREATE_ROLES = ['admin', 'doctor', 'nurse', 'receptionist'];
+const ENCOUNTER_UPDATE_ROLES = ['admin', 'doctor', 'nurse', 'receptionist'];
 
 // Get all encounters for today
-router.get('/today', async (req, res) => {
+router.get('/today', authorize(ENCOUNTER_READ_ROLES), async (req, res) => {
   try {
     const encounters = await Encounter.getEncountersByDate(new Date());
     res.json({ success: true, data: encounters, count: encounters.length });
@@ -17,7 +22,7 @@ router.get('/today', async (req, res) => {
 });
 
 // Get encounters by clinic
-router.get('/clinic/:clinicId', async (req, res) => {
+router.get('/clinic/:clinicId', authorize(ENCOUNTER_READ_ROLES), async (req, res) => {
   try {
     const { clinicId } = req.params;
     const encounters = await Encounter.getActiveEncounters(clinicId);
@@ -29,7 +34,7 @@ router.get('/clinic/:clinicId', async (req, res) => {
 });
 
 // Create new encounter
-router.post('/', async (req, res) => {
+router.post('/', authorize(ENCOUNTER_CREATE_ROLES), async (req, res) => {
   try {
     const encounterData = req.body;
     encounterData.createdBy = req.user?.id;
@@ -44,7 +49,7 @@ router.post('/', async (req, res) => {
         clinicId: encounter.clinic_id || null,
         doctorId: encounter.doctor_id || null,
         queueType: 'consultation',
-        isEmergency: encounter.triage_level === 'emergency',
+        isEmergency: ['emergency', 'critical'].includes(encounter.triage_level),
         waitingLocation: encounter.waiting_location || 'reception'
       });
     }
@@ -58,11 +63,9 @@ router.post('/', async (req, res) => {
 });
 
 // Get encounter by ID
-router.get('/:id', async (req, res) => {
+router.get('/:id', authorize(ENCOUNTER_READ_ROLES), async (req, res) => {
   try {
-    const encounter = await Encounter.findByPk(req.params.id, {
-      include: ['patient', 'doctor', 'clinic', 'department']
-    });
+    const encounter = await Encounter.findByPk(req.params.id);
     
     if (!encounter) {
       return res.status(404).json({ success: false, error: 'Encounter not found' });
@@ -76,20 +79,20 @@ router.get('/:id', async (req, res) => {
 });
 
 // Update encounter
-router.put('/:id', async (req, res) => {
+router.put('/:id', authorize(ENCOUNTER_UPDATE_ROLES), async (req, res) => {
   try {
-    const encounter = await Encounter.findByPk(req.params.id);
-    if (!encounter) {
+    const existing = await Encounter.findByPk(req.params.id);
+    if (!existing) {
       return res.status(404).json({ success: false, error: 'Encounter not found' });
     }
     
-    await encounter.update(req.body);
-    logger.info(`Encounter updated: ${encounter.encounterNumber}`);
+    const updated = await Encounter.update(req.params.id, req.body);
+    logger.info(`Encounter updated: ${updated.encounter_number}`);
     
-    res.json({ success: true, data: encounter });
+    res.json({ success: true, data: updated });
   } catch (error) {
     logger.error('Error updating encounter:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({ success: false, error: error.message });
   }
 });
 

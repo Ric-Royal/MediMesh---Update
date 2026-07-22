@@ -5,9 +5,23 @@ const QueueEntry = require('../models/QueueEntry');
 const Patient = require('../models/Patient');
 const { logger } = require('../utils/logger');
 const { emitQueueUpdate } = require('../utils/websocket');
+const { authorize } = require('../middleware/auth');
+
+const QUEUE_READ_ROLES = ['admin', 'doctor', 'nurse', 'receptionist', 'lab-tech', 'pharmacist', 'billing', 'radiologist', 'radiographer'];
+const QUEUE_REGISTER_ROLES = ['admin', 'doctor', 'nurse', 'receptionist'];
+const QUEUE_PROCESS_ROLES = ['admin', 'doctor', 'nurse', 'receptionist', 'lab-tech', 'pharmacist', 'billing', 'radiologist', 'radiographer'];
+
+const serializeQueueStatistics = (stats = {}) => ({
+  totalWaiting: Number(stats.total_waiting) || 0,
+  inService: Number(stats.in_service) || 0,
+  completedToday: Number(stats.completed_today) || 0,
+  emergencies: Number(stats.emergencies) || 0,
+  averageWaitTime: Number(stats.average_wait_minutes) || 0,
+  longestWaitTime: Number(stats.longest_wait_minutes) || 0,
+});
 
 // Get all queue entries (for "all clinics" view)
-router.get('/', async (req, res) => {
+router.get('/', authorize(QUEUE_READ_ROLES), async (req, res) => {
   try {
     const { queueType = 'consultation', status } = req.query;
     
@@ -24,8 +38,24 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get aggregate queue statistics for the all-clinics view.
+router.get('/statistics', authorize(QUEUE_READ_ROLES), async (req, res) => {
+  try {
+    const { queueType = 'consultation' } = req.query;
+    const stats = await QueueEntry.getQueueStatistics(null, queueType);
+
+    res.json({
+      success: true,
+      data: serializeQueueStatistics(stats)
+    });
+  } catch (error) {
+    logger.error('Error fetching aggregate queue statistics:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Get queue for a specific clinic
-router.get('/clinic/:clinicId', async (req, res) => {
+router.get('/clinic/:clinicId', authorize(QUEUE_READ_ROLES), async (req, res) => {
   try {
     const { clinicId } = req.params;
     const { queueType = 'consultation' } = req.query;
@@ -44,14 +74,15 @@ router.get('/clinic/:clinicId', async (req, res) => {
 });
 
 // Get queue statistics
-router.get('/clinic/:clinicId/statistics', async (req, res) => {
+router.get('/clinic/:clinicId/statistics', authorize(QUEUE_READ_ROLES), async (req, res) => {
   try {
     const { clinicId } = req.params;
-    const stats = await QueueEntry.getQueueStatistics(clinicId);
+    const { queueType = 'consultation' } = req.query;
+    const stats = await QueueEntry.getQueueStatistics(clinicId, queueType);
     
     res.json({
       success: true,
-      data: stats
+      data: serializeQueueStatistics(stats)
     });
   } catch (error) {
     logger.error('Error fetching queue statistics:', error);
@@ -60,7 +91,7 @@ router.get('/clinic/:clinicId/statistics', async (req, res) => {
 });
 
 // Get doctor's queue
-router.get('/doctor/:doctorId', async (req, res) => {
+router.get('/doctor/:doctorId', authorize(QUEUE_READ_ROLES), async (req, res) => {
   try {
     const { doctorId } = req.params;
     const queue = await QueueEntry.getDoctorQueue(doctorId);
@@ -77,7 +108,7 @@ router.get('/doctor/:doctorId', async (req, res) => {
 });
 
 // Add patient to queue
-router.post('/', async (req, res) => {
+router.post('/', authorize(QUEUE_REGISTER_ROLES), async (req, res) => {
   try {
     const { encounterId, patientId, clinicId, doctorId, queueType, isEmergency, waitingLocation } = req.body;
     
@@ -104,7 +135,7 @@ router.post('/', async (req, res) => {
 });
 
 // Update queue entry status with workflow logic
-router.put('/:id/status', async (req, res) => {
+router.put('/:id/status', authorize(QUEUE_PROCESS_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     const { status, nextQueue } = req.body; // nextQueue: 'pharmacy', 'lab', 'billing', 'discharge'
@@ -133,13 +164,19 @@ router.put('/:id/status', async (req, res) => {
       // If user explicitly selected a queue, use that
       if (nextQueue && nextQueue !== 'discharge') {
         targetQueue = nextQueue;
-        shouldCreateOrder = (currentQueueType === 'consultation'); // Only create orders from consultation
-      } 
-      // Auto-routing: If completing non-consultation queues, automatically route to billing
-      else if (currentQueueType !== 'consultation' && (!nextQueue || nextQueue === 'discharge')) {
-        targetQueue = 'billing';
+        // Moving a patient does not constitute a clinical order. Real orders
+        // are created from the consultation form with selected tests/drugs.
         shouldCreateOrder = false;
-        logger.info(`Auto-routing patient from ${currentQueueType} to billing`);
+      } 
+      // Triage has a deterministic handoff. Diagnostic and pharmacy routes are
+      // deliberately handled by their order-completion services so a patient
+      // can return to the doctor for results instead of skipping to billing.
+      else if (currentQueueType === 'triage' && !nextQueue) {
+        targetQueue = 'consultation';
+        shouldCreateOrder = false;
+        logger.info('Auto-routing patient from triage to consultation');
+      } else {
+        targetQueue = null;
       }
       
       // Create queue entry for next stage if not discharging
@@ -154,7 +191,8 @@ router.put('/:id/status', async (req, res) => {
             isEmergency: queueEntry.is_emergency,
             waitingLocation: targetQueue === 'pharmacy' ? 'pharmacy-waiting' : 
                             targetQueue === 'lab' ? 'lab-waiting' :
-                            targetQueue === 'radiology' ? 'radiology-waiting' : 'billing-counter',
+                            targetQueue === 'radiology' ? 'radiology-waiting' :
+                            targetQueue === 'consultation' ? 'consultation-waiting' : 'billing-counter',
             priorityLevel: queueEntry.priority_level
           });
           
@@ -253,7 +291,7 @@ router.put('/:id/status', async (req, res) => {
 });
 
 // Move patient in queue (reorder)
-router.put('/:id/move', async (req, res) => {
+router.put('/:id/move', authorize(QUEUE_PROCESS_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     const { newPosition, priorityLevel } = req.body;

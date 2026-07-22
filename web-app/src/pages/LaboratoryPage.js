@@ -1,13 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Container, Paper, Typography, Box, Tab, Tabs, Grid, Card, CardContent,
+  Paper, Typography, Box, Tab, Tabs, Grid, Card, CardContent,
   Button, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  Dialog, DialogTitle, DialogContent, DialogActions, TextField, Select, MenuItem,
-  FormControl, InputLabel, IconButton, Alert, CircularProgress, Divider
+  Dialog, DialogTitle, DialogContent, DialogActions, TextField,
+  IconButton, Alert, CircularProgress, Divider
 } from '@mui/material';
 import {
   Science as ScienceIcon,
-  Assignment as AssignmentIcon,
   CheckCircle as CheckCircleIcon,
   Pending as PendingIcon,
   LocalHospital as LocalHospitalIcon,
@@ -26,9 +25,10 @@ const LaboratoryPage = () => {
   const [resultsDialogOpen, setResultsDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [results, setResults] = useState({});
+  const [statistics, setStatistics] = useState({});
 
   // Fetch lab orders
-  const fetchOrders = async (status = 'pending') => {
+  const fetchOrders = useCallback(async (status = 'pending') => {
     setLoading(true);
     try {
       const response = await fetch(`${API_CONFIG.endpoints.lab.orders}?status=${status}`, {
@@ -46,12 +46,16 @@ const LaboratoryPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [notifyError]);
 
   useEffect(() => {
     const statusMap = ['pending', 'in-progress', 'completed'];
     fetchOrders(statusMap[activeTab]);
-  }, [activeTab]);
+    fetch(`${API_CONFIG.baseURL}/api/lab/statistics`, { headers: API_CONFIG.getAuthHeaders() })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => data && setStatistics(data.data || {}))
+      .catch(() => {});
+  }, [activeTab, fetchOrders]);
 
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
@@ -59,14 +63,14 @@ const LaboratoryPage = () => {
 
   const handleStartOrder = async (order) => {
     try {
-      const response = await fetch(`${API_CONFIG.endpoints.lab.orders}/${order.id}`, {
+      const response = await fetch(`${API_CONFIG.endpoints.lab.orders}/${order.id}/status`, {
         method: 'PUT',
         headers: API_CONFIG.getAuthHeaders(),
         body: JSON.stringify({ status: 'in-progress' }),
       });
       if (response.ok) {
         notifySuccess('Lab order started');
-        fetchOrders('pending');
+        setActiveTab(1);
       } else {
         notifyError('Failed to start lab order');
       }
@@ -93,10 +97,10 @@ const LaboratoryPage = () => {
         if (orderDetails.items) {
           orderDetails.items.forEach(item => {
             initialResults[item.id] = {
-              result: item.result || '',
-              reference_range: item.reference_range || '',
-              unit: item.unit || '',
-              notes: item.notes || '',
+              result: item.result_value || '',
+              reference_range: [item.reference_min, item.reference_max].filter(Boolean).join(' – '),
+              unit: item.result_unit || '',
+              notes: item.result_notes || '',
             };
           });
         }
@@ -126,34 +130,27 @@ const LaboratoryPage = () => {
     try {
       // Update each test result
       for (const [itemId, resultData] of Object.entries(results)) {
-        await fetch(`${API_CONFIG.endpoints.lab.orders}/${selectedOrder.id}/items/${itemId}`, {
-          method: 'PUT',
+        const resultResponse = await fetch(`${API_CONFIG.endpoints.lab.orders}/${selectedOrder.id}/items/${itemId}/result`, {
+          method: 'POST',
           headers: API_CONFIG.getAuthHeaders(),
           body: JSON.stringify({
-            result: resultData.result,
-            reference_range: resultData.reference_range,
-            unit: resultData.unit,
-            notes: resultData.notes,
-            status: 'completed',
+            result_value: resultData.result,
+            reference_min: resultData.reference_range,
+            reference_max: null,
+            result_unit: resultData.unit,
+            result_notes: resultData.notes,
           }),
         });
+        if (!resultResponse.ok) {
+          const error = await resultResponse.json();
+          throw new Error(error.error || 'Failed to save a test result');
+        }
       }
 
-      // Mark order as completed
-      const response = await fetch(`${API_CONFIG.endpoints.lab.orders}/${selectedOrder.id}`, {
-        method: 'PUT',
-        headers: API_CONFIG.getAuthHeaders(),
-        body: JSON.stringify({ status: 'completed' }),
-      });
-
-      if (response.ok) {
-        notifySuccess('Lab results submitted successfully! Invoice updated automatically.');
-        setResultsDialogOpen(false);
-        setSelectedOrder(null);
-        fetchOrders('in-progress');
-      } else {
-        notifyError('Failed to submit results');
-      }
+      notifySuccess('Lab results released. The visit, queue and invoice were updated.');
+      setResultsDialogOpen(false);
+      setSelectedOrder(null);
+      setActiveTab(2);
     } catch (error) {
       console.error('Error submitting results:', error);
       notifyError('An error occurred while submitting results');
@@ -209,7 +206,7 @@ const LaboratoryPage = () => {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Box component="section" sx={{ width: '100%', minWidth: 0, mb: 3 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <LocalHospitalIcon sx={{ fontSize: 40, mr: 2, color: 'primary.main' }} />
         <Typography variant="h4" component="h1">
@@ -228,7 +225,7 @@ const LaboratoryPage = () => {
                     Pending Orders
                   </Typography>
                   <Typography variant="h4">
-                    {orders.filter(o => o.status === 'pending').length}
+                    {statistics.pending_orders || 0}
                   </Typography>
                 </Box>
                 <PendingIcon sx={{ fontSize: 48, color: 'warning.main', opacity: 0.3 }} />
@@ -245,7 +242,7 @@ const LaboratoryPage = () => {
                     In Progress
                   </Typography>
                   <Typography variant="h4">
-                    {orders.filter(o => o.status === 'in-progress').length}
+                    {statistics.in_progress || 0}
                   </Typography>
                 </Box>
                 <ScienceIcon sx={{ fontSize: 48, color: 'info.main', opacity: 0.3 }} />
@@ -262,7 +259,7 @@ const LaboratoryPage = () => {
                     Completed Today
                   </Typography>
                   <Typography variant="h4">
-                    {orders.filter(o => o.status === 'completed').length}
+                    {statistics.completed_today || 0}
                   </Typography>
                 </Box>
                 <CheckCircleIcon sx={{ fontSize: 48, color: 'success.main', opacity: 0.3 }} />
@@ -316,18 +313,18 @@ const LaboratoryPage = () => {
                   <TableRow key={order.id} hover>
                     <TableCell>
                       <Typography variant="body2" fontWeight="bold">
-                        {order.lab_order_number}
+                        {order.order_number}
                       </Typography>
                     </TableCell>
                     <TableCell>{order.patient_name}</TableCell>
                     <TableCell>{order.uhid}</TableCell>
                     <TableCell>
                       <Typography variant="body2">
-                        {order.test_count || 0} test(s)
+                        {order.item_count || 0} test(s)
                       </Typography>
                     </TableCell>
                     <TableCell>{getPriorityChip(order.priority)}</TableCell>
-                    <TableCell>{order.ordering_doctor_name}</TableCell>
+                    <TableCell>{order.doctor_name || 'Unassigned'}</TableCell>
                     <TableCell>
                       {new Date(order.order_date).toLocaleString()}
                     </TableCell>
@@ -381,7 +378,7 @@ const LaboratoryPage = () => {
       {/* Enter Results Dialog */}
       <Dialog open={resultsDialogOpen} onClose={() => setResultsDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
-          Enter Lab Results - {selectedOrder?.lab_order_number}
+          Enter Lab Results - {selectedOrder?.order_number}
           <Typography variant="body2" color="textSecondary">
             Patient: {selectedOrder?.patient_name} ({selectedOrder?.uhid})
           </Typography>
@@ -448,7 +445,7 @@ const LaboratoryPage = () => {
       {/* View Order Dialog */}
       <Dialog open={viewDialogOpen} onClose={() => setViewDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
-          Lab Order Details - {selectedOrder?.lab_order_number}
+          Lab Order Details - {selectedOrder?.order_number}
         </DialogTitle>
         <DialogContent dividers>
           {selectedOrder && (
@@ -462,7 +459,7 @@ const LaboratoryPage = () => {
                 </Grid>
                 <Grid item xs={6}>
                   <Typography variant="body2" color="textSecondary">Ordered By:</Typography>
-                  <Typography variant="body1">{selectedOrder.ordering_doctor_name}</Typography>
+                  <Typography variant="body1">{selectedOrder.doctor_name || 'Unassigned'}</Typography>
                 </Grid>
                 <Grid item xs={6}>
                   <Typography variant="body2" color="textSecondary">Order Date:</Typography>
@@ -485,20 +482,20 @@ const LaboratoryPage = () => {
                   <Grid container spacing={2} sx={{ mt: 1 }}>
                     <Grid item xs={4}>
                       <Typography variant="body2" color="textSecondary">Result:</Typography>
-                      <Typography variant="body1" fontWeight="bold">{item.result || 'N/A'}</Typography>
+                      <Typography variant="body1" fontWeight="bold">{item.result_value || 'N/A'}</Typography>
                     </Grid>
                     <Grid item xs={4}>
                       <Typography variant="body2" color="textSecondary">Reference Range:</Typography>
-                      <Typography variant="body1">{item.reference_range || 'N/A'}</Typography>
+                      <Typography variant="body1">{[item.reference_min, item.reference_max].filter(Boolean).join(' – ') || 'N/A'}</Typography>
                     </Grid>
                     <Grid item xs={4}>
                       <Typography variant="body2" color="textSecondary">Unit:</Typography>
-                      <Typography variant="body1">{item.unit || 'N/A'}</Typography>
+                      <Typography variant="body1">{item.result_unit || 'N/A'}</Typography>
                     </Grid>
-                    {item.notes && (
+                    {item.result_notes && (
                       <Grid item xs={12}>
                         <Typography variant="body2" color="textSecondary">Notes:</Typography>
-                        <Typography variant="body2">{item.notes}</Typography>
+                        <Typography variant="body2">{item.result_notes}</Typography>
                       </Grid>
                     )}
                   </Grid>
@@ -514,7 +511,7 @@ const LaboratoryPage = () => {
           </Button>
         </DialogActions>
       </Dialog>
-    </Container>
+    </Box>
   );
 };
 

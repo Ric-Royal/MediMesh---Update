@@ -43,7 +43,7 @@ const LabTestsSelector = ({ selectedTests, onChange }) => {
   useEffect(() => {
     const fetchTestCatalog = async () => {
       try {
-        const response = await fetch(`${API_CONFIG.baseURL}/api/lab/test-catalog`, {
+        const response = await fetch(API_CONFIG.endpoints.lab.tests, {
           headers: API_CONFIG.getAuthHeaders(),
         });
 
@@ -95,8 +95,8 @@ const LabTestsSelector = ({ selectedTests, onChange }) => {
       testName: test.test_name,
       testCode: test.test_code,
       category: test.test_category,
-      sampleType: test.sample_type,
-      price: test.price,
+      sampleType: test.specimen_type,
+      price: parseFloat(test.price) || 0,
       priority: 'routine',
       clinicalNotes: '',
     };
@@ -165,7 +165,7 @@ const LabTestsSelector = ({ selectedTests, onChange }) => {
                         <MenuItem value="stat">STAT</MenuItem>
                       </Select>
                     </TableCell>
-                    <TableCell align="right">${test.price?.toFixed(2)}</TableCell>
+                    <TableCell align="right">KES {parseFloat(test.price || 0).toLocaleString()}</TableCell>
                     <TableCell align="center">
                       <IconButton
                         size="small"
@@ -182,7 +182,7 @@ const LabTestsSelector = ({ selectedTests, onChange }) => {
                     <strong>Total Cost:</strong>
                   </TableCell>
                   <TableCell align="right">
-                    <strong>${totalCost.toFixed(2)}</strong>
+                    <strong>KES {totalCost.toLocaleString()}</strong>
                   </TableCell>
                   <TableCell />
                 </TableRow>
@@ -267,13 +267,13 @@ const LabTestsSelector = ({ selectedTests, onChange }) => {
                       Category: {test.test_category}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      Sample: {test.sample_type}
+                      Sample: {test.specimen_type}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      Turnaround: {test.turnaround_time} min
+                      Turnaround: {test.turnaround_time_hours || 0} hr
                     </Typography>
                     <Typography variant="body2" fontWeight="bold" color="primary">
-                      ${test.price?.toFixed(2)}
+                      KES {parseFloat(test.price || 0).toLocaleString()}
                     </Typography>
                   </CardContent>
                   <CardActions>
@@ -307,4 +307,3 @@ const LabTestsSelector = ({ selectedTests, onChange }) => {
 };
 
 export default LabTestsSelector;
-

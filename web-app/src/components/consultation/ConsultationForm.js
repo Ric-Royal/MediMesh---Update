@@ -6,9 +6,6 @@ import {
   DialogActions,
   Button,
   Box,
-  Stepper,
-  Step,
-  StepLabel,
   Typography,
   Alert,
   CircularProgress,
@@ -17,6 +14,7 @@ import {
   Paper,
 } from '@mui/material';
 import { useNotification } from '../../contexts/NotificationContext';
+import { useAuth } from '../../contexts/AuthContext';
 import API_CONFIG from '../../config/api';
 
 // Import sub-components
@@ -29,6 +27,7 @@ import MedicationsSelector from './MedicationsSelector';
 
 const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
   const { notifySuccess, notifyError } = useNotification();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
   
@@ -92,10 +91,6 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
     }
   }, [formData.vitals.weight, formData.vitals.height]);
 
-  const handleVitalsChange = (vitals) => {
-    setFormData(prev => ({ ...prev, vitals }));
-  };
-
   const handleExaminationChange = (examination) => {
     setFormData(prev => ({ ...prev, examination }));
   };
@@ -146,11 +141,10 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
       const payload = {
         encounterId: encounter.id,
         patientId: patient.id,
-        doctorId: encounter.doctor_id || localStorage.getItem('userId'),
+        doctorId: encounter.doctor_id || user?.id,
         ...formData,
       };
 
-      console.log('Submitting consultation:', payload);
 
       const response = await fetch(API_CONFIG.endpoints.consultations, {
         method: 'POST',
@@ -165,7 +159,6 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
 
       const result = await response.json();
 
-      console.log('Consultation created:', result);
 
       // Build success message
       let message = 'Consultation completed successfully';
@@ -208,8 +201,6 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
     { label: 'Radiology', component: RadiologyStudiesSelector },
     { label: 'Medications', component: MedicationsSelector },
   ];
-
-  const CurrentTabComponent = tabs[activeTab].component;
 
   return (
     <Dialog 
@@ -374,13 +365,13 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
           </Typography>
           <Box display="flex" gap={3}>
             <Typography variant="body2">
-              🔬 Lab Tests: <strong>{formData.labOrders.length}</strong>
+              Lab Tests: <strong>{formData.labOrders.length}</strong>
             </Typography>
             <Typography variant="body2">
-              📷 Radiology Studies: <strong>{formData.radiologyOrders.length}</strong>
+              Radiology Studies: <strong>{formData.radiologyOrders.length}</strong>
             </Typography>
             <Typography variant="body2">
-              💊 Medications: <strong>{formData.prescriptions.length}</strong>
+              Medications: <strong>{formData.prescriptions.length}</strong>
             </Typography>
           </Box>
         </Paper>
@@ -419,4 +410,3 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
 };
 
 export default ConsultationForm;
-

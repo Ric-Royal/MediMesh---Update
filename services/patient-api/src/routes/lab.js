@@ -3,13 +3,19 @@ const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { emitQueueUpdate } = require('../utils/websocket');
+const { completeDepartmentService } = require('../utils/workflow');
+const { authorize } = require('../middleware/auth');
+
+const LAB_READ_ROLES = ['admin', 'doctor', 'nurse', 'lab-tech'];
+const LAB_ORDER_ROLES = ['admin', 'doctor'];
+const LAB_PROCESS_ROLES = ['admin', 'lab-tech'];
 
 // ============================================
 // LAB TEST CATALOG (For Ordering)
 // ============================================
 
 // Get lab test catalog
-router.get('/test-catalog', async (req, res) => {
+router.get('/test-catalog', authorize(LAB_READ_ROLES), async (req, res) => {
   try {
     const db = getDB();
     const result = await db.query(`
@@ -30,7 +36,7 @@ router.get('/test-catalog', async (req, res) => {
 // ============================================
 
 // Get all lab tests
-router.get('/tests', async (req, res) => {
+router.get('/tests', authorize(LAB_READ_ROLES), async (req, res) => {
   try {
     const db = getDB();
     const { search, category, active = 'true' } = req.query;
@@ -65,7 +71,7 @@ router.get('/tests', async (req, res) => {
 });
 
 // Get test by ID
-router.get('/tests/:id', async (req, res) => {
+router.get('/tests/:id', authorize(LAB_READ_ROLES), async (req, res) => {
   try {
     const db = getDB();
     const { id } = req.params;
@@ -87,7 +93,7 @@ router.get('/tests/:id', async (req, res) => {
 // ============================================
 
 // Get all lab orders (with filters)
-router.get('/orders', async (req, res) => {
+router.get('/orders', authorize(LAB_READ_ROLES), async (req, res) => {
   try {
     const { patient_id, doctor_id, status, priority, date_from, date_to, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
@@ -157,7 +163,7 @@ router.get('/orders', async (req, res) => {
 });
 
 // Get lab order by ID (with items)
-router.get('/orders/:id', async (req, res) => {
+router.get('/orders/:id', authorize(LAB_READ_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -203,7 +209,7 @@ router.get('/orders/:id', async (req, res) => {
 });
 
 // Create lab order
-router.post('/orders', async (req, res) => {
+router.post('/orders', authorize(LAB_ORDER_ROLES), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -264,10 +270,15 @@ router.post('/orders', async (req, res) => {
 });
 
 // Update lab order status
-router.put('/orders/:id/status', async (req, res) => {
+router.put('/orders/:id/status', authorize(LAB_PROCESS_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
+
+    const validStatuses = ['pending', 'sample-collected', 'in-progress', 'completed', 'cancelled', 'rejected'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, error: `Invalid lab status: ${status}` });
+    }
     
     const query = `
       UPDATE lab_orders
@@ -294,7 +305,7 @@ router.put('/orders/:id/status', async (req, res) => {
 // ============================================
 
 // Collect sample (generate barcode)
-router.post('/orders/:id/collect', async (req, res) => {
+router.post('/orders/:id/collect', authorize(LAB_PROCESS_ROLES), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -359,7 +370,7 @@ router.post('/orders/:id/collect', async (req, res) => {
 });
 
 // Get sample by barcode
-router.get('/samples/:barcode', async (req, res) => {
+router.get('/samples/:barcode', authorize(LAB_PROCESS_ROLES), async (req, res) => {
   try {
     const { barcode } = req.params;
     
@@ -394,7 +405,7 @@ router.get('/samples/:barcode', async (req, res) => {
 // ============================================
 
 // Enter test result
-router.post('/orders/:id/items/:itemId/result', async (req, res) => {
+router.post('/orders/:id/items/:itemId/result', authorize(LAB_PROCESS_ROLES), async (req, res) => {
   try {
     const { id, itemId } = req.params;
     const { result_value, result_unit, result_notes, reference_min, reference_max } = req.body;
@@ -423,6 +434,30 @@ router.post('/orders/:id/items/:itemId/result', async (req, res) => {
     }
     
     logger.info(`Result entered for lab order ${id}, item ${itemId}`);
+
+    // Auto-complete the order when all items have results
+    const pendingCheck = await getDB().query(
+      `SELECT COUNT(*) as pending FROM lab_order_items
+       WHERE lab_order_id = $1 AND status != 'completed'`,
+      [id]
+    );
+    if (parseInt(pendingCheck.rows[0].pending) === 0) {
+      const completedOrder = await getDB().query(
+        `UPDATE lab_orders
+         SET status = 'completed', result_date = COALESCE(result_date, CURRENT_TIMESTAMP),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1
+         RETURNING encounter_id`,
+        [id]
+      );
+      try {
+        await completeDepartmentService(completedOrder.rows[0]?.encounter_id, 'lab');
+      } catch (workflowError) {
+        logger.error('Lab result saved but journey synchronization failed:', workflowError);
+      }
+      logger.info(`Lab order ${id} auto-completed (all items have results)`);
+    }
+
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
     logger.error('Error entering result:', error);
@@ -435,7 +470,7 @@ router.post('/orders/:id/items/:itemId/result', async (req, res) => {
 // ============================================
 
 // Get lab queue (pending sample collection)
-router.get('/queue', async (req, res) => {
+router.get('/queue', authorize(LAB_READ_ROLES), async (req, res) => {
   try {
     const query = `
       SELECT lq.*,
@@ -458,7 +493,7 @@ router.get('/queue', async (req, res) => {
 });
 
 // Get lab statistics
-router.get('/statistics', async (req, res) => {
+router.get('/statistics', authorize(LAB_READ_ROLES), async (req, res) => {
   try {
     const query = `
       SELECT
@@ -480,4 +515,3 @@ router.get('/statistics', async (req, res) => {
 });
 
 module.exports = router;
-

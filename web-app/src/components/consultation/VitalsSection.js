@@ -291,7 +291,7 @@ const VitalsSection = ({
             rows={2}
             placeholder="Drug allergies, food allergies..."
             error={allergies?.toLowerCase().includes('penicillin')}
-            helperText={allergies?.toLowerCase().includes('penicillin') ? '⚠️ Penicillin allergy noted!' : ''}
+            helperText={allergies?.toLowerCase().includes('penicillin') ? 'Penicillin allergy noted!' : ''}
           />
         </Grid>
 

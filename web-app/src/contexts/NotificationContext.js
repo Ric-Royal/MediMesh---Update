@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { Snackbar, Alert, Slide } from '@mui/material';
 
 const NotificationContext = createContext(null);
@@ -17,22 +17,27 @@ export const NotificationProvider = ({ children }) => {
     });
   }, []);
 
-  const handleClose = (_, reason) => {
+  const handleClose = useCallback((_, reason) => {
     if (reason === 'clickaway') return;
     setNotification(null);
-  };
+  }, []);
 
-  const contextValue = {
+  const notifySuccess = useCallback((message, options) =>
+    showNotification(message, { severity: 'success', ...options }), [showNotification]);
+  const notifyError = useCallback((message, options) =>
+    showNotification(message, { severity: 'error', ...options }), [showNotification]);
+  const notifyWarning = useCallback((message, options) =>
+    showNotification(message, { severity: 'warning', ...options }), [showNotification]);
+  const notifyInfo = useCallback((message, options) =>
+    showNotification(message, { severity: 'info', ...options }), [showNotification]);
+
+  const contextValue = useMemo(() => ({
     notify: showNotification,
-    notifySuccess: (message, options) =>
-      showNotification(message, { severity: 'success', ...options }),
-    notifyError: (message, options) =>
-      showNotification(message, { severity: 'error', ...options }),
-    notifyWarning: (message, options) =>
-      showNotification(message, { severity: 'warning', ...options }),
-    notifyInfo: (message, options) =>
-      showNotification(message, { severity: 'info', ...options }),
-  };
+    notifySuccess,
+    notifyError,
+    notifyWarning,
+    notifyInfo,
+  }), [notifyError, notifyInfo, notifySuccess, notifyWarning, showNotification]);
 
   return (
     <NotificationContext.Provider value={contextValue}>

@@ -13,7 +13,6 @@ import {
   Alert,
   Card,
   CardContent,
-  Divider,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -47,7 +46,7 @@ const CreatePatientPage = () => {
       city: '',
       state: '',
       zip_code: '',
-      country: 'USA'
+      country: 'Kenya'
     },
     emergency_contact: {
       name: '',
@@ -112,7 +111,7 @@ const CreatePatientPage = () => {
   }, []);
 
   // Check permissions
-  if (!hasRole('doctor') && !hasRole('nurse') && !hasRole('admin')) {
+  if (!hasRole('doctor') && !hasRole('nurse') && !hasRole('admin') && !hasRole('receptionist')) {
     return (
       <Box>
         <Button
@@ -178,12 +177,12 @@ const CreatePatientPage = () => {
     }
 
     // Phone validation
-    if (formData.phone && !/^\+?[\d\s\-\(\)]+$/.test(formData.phone)) {
+    if (formData.phone && !/^\+?[\d\s\-()]+$/.test(formData.phone)) {
       newErrors['phone'] = 'Please enter a valid phone number';
     }
 
     // Emergency contact phone validation
-    if (formData.emergency_contact.phone && !/^\+?[\d\s\-\(\)]+$/.test(formData.emergency_contact.phone)) {
+    if (formData.emergency_contact.phone && !/^\+?[\d\s\-()]+$/.test(formData.emergency_contact.phone)) {
       newErrors['emergency_contact.phone'] = 'Please enter a valid phone number';
     }
 
@@ -224,7 +223,6 @@ const CreatePatientPage = () => {
       }
 
       // Log the request data before sending
-      console.log('Request data:', cleanData);
       
       const response = await apiService.patients.create(cleanData);
       
@@ -233,8 +231,6 @@ const CreatePatientPage = () => {
       setShowEncounterDialog(true);
     } catch (err) {
       console.error('Error creating patient:', err);
-      console.log('Error response:', err.response?.data);
-      console.log('Error status:', err.response?.status);
       
       if (err.response?.data?.details) {
         // Handle validation errors from server
@@ -424,7 +420,7 @@ const CreatePatientPage = () => {
                       onChange={(e) => handleInputChange('phone', e.target.value)}
                       error={!!errors.phone}
                       helperText={errors.phone}
-                      placeholder="+1 (555) 123-4567"
+                      placeholder="+254 712 345 678"
                     />
                   </Grid>
                   <Grid item xs={12} sm={6}>
@@ -535,7 +531,7 @@ const CreatePatientPage = () => {
                       onChange={(e) => handleInputChange('phone', e.target.value, 'emergency_contact')}
                       error={!!errors['emergency_contact.phone']}
                       helperText={errors['emergency_contact.phone']}
-                      placeholder="+1 (555) 123-4567"
+                      placeholder="+254 712 345 678"
                     />
                   </Grid>
                 </Grid>
@@ -560,7 +556,7 @@ const CreatePatientPage = () => {
                       onChange={(e) => handleInputChange('provider', e.target.value, 'insurance')}
                       error={!!errors['insurance.provider']}
                       helperText={errors['insurance.provider']}
-                      placeholder="e.g., Blue Cross, Aetna, United Healthcare"
+                      placeholder="e.g., SHIF, AAR, Jubilee"
                     />
                   </Grid>
                   <Grid item xs={12} sm={4}>
@@ -597,7 +593,6 @@ const CreatePatientPage = () => {
                   recordId={null}
                   patientId={null}
                   onUploadSuccess={(files) => {
-                    console.log('Patient documents uploaded:', files);
                     // Handle successful upload
                   }}
                   onUploadError={(error) => {
@@ -811,4 +806,4 @@ const CreatePatientPage = () => {
   );
 };
 
-export default CreatePatientPage; 
+export default CreatePatientPage;

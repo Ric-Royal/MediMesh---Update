@@ -11,6 +11,7 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  FormHelperText,
   Grid,
   CircularProgress,
   Alert,
@@ -21,13 +22,17 @@ import {
 import { useNotification } from '../../contexts/NotificationContext';
 import API_CONFIG from '../../config/api';
 
-const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
+const AddPatientToQueueDialog = ({ open, onClose, onSuccess, initialPatient = null }) => {
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [patients, setPatients] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [clinics, setClinics] = useState([]);
   const [doctors, setDoctors] = useState([]);
+  const [clinicDirectoryLoading, setClinicDirectoryLoading] = useState(false);
+  const [doctorDirectoryLoading, setDoctorDirectoryLoading] = useState(false);
+  const [clinicDirectoryError, setClinicDirectoryError] = useState('');
+  const [doctorDirectoryError, setDoctorDirectoryError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   
   const [encounterData, setEncounterData] = useState({
@@ -46,8 +51,12 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
     if (open) {
       fetchClinics();
       fetchDoctors();
+      if (initialPatient) {
+        setSelectedPatient(initialPatient);
+        setPatients([initialPatient]);
+      }
     }
-  }, [open]);
+  }, [open, initialPatient]);
 
   // Search patients as user types
   useEffect(() => {
@@ -57,40 +66,54 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
   }, [searchTerm]);
 
   const fetchClinics = async () => {
+    setClinicDirectoryLoading(true);
+    setClinicDirectoryError('');
     try {
       const response = await fetch(`${API_CONFIG.endpoints.clinics}`, {
         headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
-        console.log('Clinics fetched:', data);
         setClinics(data.data || []);
       } else {
         console.error('Failed to fetch clinics:', response.status, response.statusText);
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Error details:', errorData);
+        setClinics([]);
+        setEncounterData(current => ({ ...current, clinicId: '' }));
+        setClinicDirectoryError('Clinic directory is unavailable. Clinic assignment is disabled.');
       }
     } catch (error) {
       console.error('Error fetching clinics:', error);
+      setClinics([]);
+      setEncounterData(current => ({ ...current, clinicId: '' }));
+      setClinicDirectoryError('Clinic directory is unavailable. Clinic assignment is disabled.');
+    } finally {
+      setClinicDirectoryLoading(false);
     }
   };
 
   const fetchDoctors = async () => {
+    setDoctorDirectoryLoading(true);
+    setDoctorDirectoryError('');
     try {
       const response = await fetch(`${API_CONFIG.endpoints.staff}?role=doctor`, {
         headers: API_CONFIG.getAuthHeaders()
       });
       if (response.ok) {
         const data = await response.json();
-        console.log('Doctors fetched:', data);
         setDoctors(data.data || []);
       } else {
         console.error('Failed to fetch doctors:', response.status, response.statusText);
-        const errorData = await response.json().catch(() => ({}));
-        console.error('Error details:', errorData);
+        setDoctors([]);
+        setEncounterData(current => ({ ...current, doctorId: '' }));
+        setDoctorDirectoryError('Clinician directory is unavailable. Clinician assignment is disabled.');
       }
     } catch (error) {
       console.error('Error fetching doctors:', error);
+      setDoctors([]);
+      setEncounterData(current => ({ ...current, doctorId: '' }));
+      setDoctorDirectoryError('Clinician directory is unavailable. Clinician assignment is disabled.');
+    } finally {
+      setDoctorDirectoryLoading(false);
     }
   };
 
@@ -147,7 +170,7 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
       });
 
       if (encounterResponse.ok) {
-        const result = await encounterResponse.json();
+        await encounterResponse.json();
         notifySuccess(`${selectedPatient.first_name} ${selectedPatient.last_name} added to queue successfully!`);
         handleClose();
         if (onSuccess) onSuccess();
@@ -167,6 +190,8 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
     setSelectedPatient(null);
     setSearchTerm('');
     setPatients([]);
+    setClinicDirectoryError('');
+    setDoctorDirectoryError('');
     setEncounterData({
       encounterType: 'outpatient',
       chiefComplaint: '',
@@ -180,15 +205,21 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
 
   return (
     <Dialog open={open} onClose={handleClose} maxWidth="md" fullWidth>
-      <DialogTitle>Add Existing Patient to Queue</DialogTitle>
+      <DialogTitle>Register Visit</DialogTitle>
       <DialogContent>
         <Box sx={{ pt: 2 }}>
           <Alert severity="info" sx={{ mb: 3 }}>
             Search for an existing patient and register a new visit to add them to the consultation queue.
           </Alert>
 
+          {(clinicDirectoryError || doctorDirectoryError) && (
+            <Alert severity="warning" sx={{ mb: 3 }}>
+              {[clinicDirectoryError, doctorDirectoryError].filter(Boolean).join(' ')} The visit can still be registered without the affected optional assignment.
+            </Alert>
+          )}
+
           {/* Patient Search */}
-          <Autocomplete
+          {!initialPatient && <Autocomplete
             options={patients}
             getOptionLabel={(option) => 
               `${option.first_name} ${option.last_name} - ${option.uhid || option.patient_id}`
@@ -227,7 +258,7 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
               </li>
             )}
             sx={{ mb: 3 }}
-          />
+          />}
 
           {/* Selected Patient Info */}
           {selectedPatient && (
@@ -250,8 +281,10 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
           <Grid container spacing={2}>
             <Grid item xs={12} md={6}>
               <FormControl fullWidth>
-                <InputLabel>Encounter Type</InputLabel>
+                <InputLabel id="encounter-type-label">Encounter Type</InputLabel>
                 <Select
+                  id="encounter-type-select"
+                  labelId="encounter-type-label"
                   value={encounterData.encounterType}
                   label="Encounter Type"
                   onChange={(e) => setEncounterData({ ...encounterData, encounterType: e.target.value })}
@@ -266,8 +299,10 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
 
             <Grid item xs={12} md={6}>
               <FormControl fullWidth>
-                <InputLabel>Triage Level</InputLabel>
+                <InputLabel id="triage-level-label">Triage Level</InputLabel>
                 <Select
+                  id="triage-level-select"
+                  labelId="triage-level-label"
                   value={encounterData.triageLevel}
                   label="Triage Level"
                   onChange={(e) => setEncounterData({ ...encounterData, triageLevel: e.target.value })}
@@ -294,32 +329,41 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
             </Grid>
 
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Clinic</InputLabel>
+              <FormControl fullWidth error={Boolean(clinicDirectoryError)}>
+                <InputLabel id="visit-clinic-label">Clinic</InputLabel>
                 <Select
+                  id="visit-clinic-select"
+                  labelId="visit-clinic-label"
                   value={encounterData.clinicId}
                   label="Clinic"
+                  disabled={clinicDirectoryLoading || Boolean(clinicDirectoryError)}
                   onChange={(e) => setEncounterData({ ...encounterData, clinicId: e.target.value })}
                 >
-                  <MenuItem value="">None</MenuItem>
+                  <MenuItem value="">Unassigned</MenuItem>
                   {clinics.map((clinic) => (
                     <MenuItem key={clinic.id} value={clinic.id}>
                       {clinic.clinic_name}
                     </MenuItem>
                   ))}
                 </Select>
+                <FormHelperText>
+                  {clinicDirectoryError || (clinicDirectoryLoading ? 'Loading clinic directory…' : 'Optional; assign now or route later')}
+                </FormHelperText>
               </FormControl>
             </Grid>
 
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth>
-                <InputLabel>Doctor</InputLabel>
+              <FormControl fullWidth error={Boolean(doctorDirectoryError)}>
+                <InputLabel id="visit-doctor-label">Clinician</InputLabel>
                 <Select
+                  id="visit-doctor-select"
+                  labelId="visit-doctor-label"
                   value={encounterData.doctorId}
-                  label="Doctor"
+                  label="Clinician"
+                  disabled={doctorDirectoryLoading || Boolean(doctorDirectoryError)}
                   onChange={(e) => setEncounterData({ ...encounterData, doctorId: e.target.value })}
                 >
-                  <MenuItem value="">None</MenuItem>
+                  <MenuItem value="">Unassigned</MenuItem>
                   {doctors.map((doctor) => (
                     <MenuItem key={doctor.id} value={doctor.id}>
                       Dr. {doctor.first_name} {doctor.last_name}
@@ -327,13 +371,18 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess }) => {
                     </MenuItem>
                   ))}
                 </Select>
+                <FormHelperText>
+                  {doctorDirectoryError || (doctorDirectoryLoading ? 'Loading clinician directory…' : 'Optional; assign now or route later')}
+                </FormHelperText>
               </FormControl>
             </Grid>
 
             <Grid item xs={12}>
               <FormControl fullWidth>
-                <InputLabel>Payment Type</InputLabel>
+                <InputLabel id="payment-type-label">Payment Type</InputLabel>
                 <Select
+                  id="payment-type-select"
+                  labelId="payment-type-label"
                   value={encounterData.paymentType}
                   label="Payment Type"
                   onChange={(e) => setEncounterData({ ...encounterData, paymentType: e.target.value })}

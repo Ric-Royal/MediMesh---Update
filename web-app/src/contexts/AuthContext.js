@@ -1,10 +1,9 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import Keycloak from 'keycloak-js';
 import apiService from '../services/api';
 
 const AuthContext = createContext();
-
-// Keycloak configuration
+const authMode = process.env.REACT_APP_IDENTITY_MODE || 'local';
 const keycloakConfig = {
   url: process.env.REACT_APP_KEYCLOAK_URL || 'http://localhost:8080',
   realm: process.env.REACT_APP_KEYCLOAK_REALM || 'medimesh',
@@ -17,206 +16,184 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [keycloak, setKeycloak] = useState(null);
   const [token, setToken] = useState(null);
+  // Kept for component compatibility; true means the built-in account system,
+  // which is also the supported production mode.
   const [developmentMode, setDevelopmentMode] = useState(false);
 
-  useEffect(() => {
-    const initAuth = async () => {
-      // Check if we're explicitly in development mode
-      const isDevMode = process.env.REACT_APP_DEV_MODE === 'true' || 
-                       process.env.NODE_ENV === 'development';
-      
-      if (isDevMode) {
-        console.log('Initializing development authentication mode');
-        initDevelopmentAuth();
-      } else {
-        // Production mode - try Keycloak
-        try {
-          await initKeycloak();
-        } catch (error) {
-          console.error('Keycloak initialization failed:', error);
-          console.log('Falling back to development authentication');
-          initDevelopmentAuth();
-        }
-      }
-    };
-
-    initAuth();
+  const applyLocalSession = useCallback((session) => {
+    localStorage.setItem('medimesh_token', session.access_token);
+    localStorage.removeItem('dev_token');
+    setToken(session.access_token);
+    setUser({
+      ...session.user,
+      fullName: session.user.fullName || session.user.name || session.user.username,
+    });
+    setIsAuthenticated(true);
   }, []);
 
-  const initKeycloak = async () => {
-    try {
-      const kc = new Keycloak(keycloakConfig);
-      
-      const authenticated = await kc.init({
-        onLoad: 'check-sso',
-        silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
-        checkLoginIframe: false
+  const initKeycloak = useCallback(async () => {
+    const kc = new Keycloak(keycloakConfig);
+    const authenticated = await kc.init({
+      onLoad: 'check-sso',
+      silentCheckSsoRedirectUri: window.location.origin + '/silent-check-sso.html',
+      checkLoginIframe: false
+    });
+    setKeycloak(kc);
+    if (authenticated) {
+      setIsAuthenticated(true);
+      setToken(kc.token);
+      const profile = await kc.loadUserProfile();
+      setUser({
+        id: kc.subject,
+        username: kc.tokenParsed.preferred_username,
+        email: profile.email,
+        firstName: profile.firstName,
+        lastName: profile.lastName,
+        roles: kc.tokenParsed.realm_access?.roles || [],
+        fullName: `${profile.firstName || ''} ${profile.lastName || ''}`.trim()
       });
-
-      setKeycloak(kc);
-
-      if (authenticated) {
-        setIsAuthenticated(true);
-        setToken(kc.token);
-        
-        // Get user profile
-        const profile = await kc.loadUserProfile();
-        setUser({
-          id: kc.subject,
-          username: kc.tokenParsed.preferred_username,
-          email: profile.email,
-          firstName: profile.firstName,
-          lastName: profile.lastName,
-          roles: kc.tokenParsed.realm_access?.roles || [],
-          fullName: `${profile.firstName} ${profile.lastName}`.trim()
-        });
-
-        // Set up token refresh
-        kc.onTokenExpired = () => {
-          kc.updateToken(30).then((refreshed) => {
-            if (refreshed) {
-              setToken(kc.token);
-              console.log('Token refreshed');
-            } else {
-              console.log('Token still valid');
-            }
-          }).catch(() => {
-            console.error('Failed to refresh token');
-            logout();
-          });
-        };
-      }
-      setLoading(false);
-    } catch (error) {
-      throw error;
-    }
-  };
-
-  const initDevelopmentAuth = async () => {
-    console.log('Setting up development authentication mode');
-    setDevelopmentMode(true);
-    
-    // Check if we have a stored development token
-    const devToken = localStorage.getItem('dev_token');
-    if (devToken) {
-      try {
-        console.log('Found existing dev token, verifying...');
-        // Verify token with development backend
-        const response = await apiService.auth.me();
-        console.log('Token verified, user authenticated');
-        setUser(response);
-        setIsAuthenticated(true);
-        setToken(devToken);
-      } catch (error) {
-        console.log('Stored token invalid, removing it');
-        // Token invalid, remove it
-        localStorage.removeItem('dev_token');
-      }
-    } else {
-      console.log('No existing token found, user needs to login');
+      kc.onTokenExpired = () => kc.updateToken(30)
+        .then(refreshed => { if (refreshed) setToken(kc.token); })
+        .catch(() => kc.logout({ redirectUri: window.location.origin }));
     }
     setLoading(false);
-  };
+  }, []);
 
-  const login = async (username, password) => {
-    if (developmentMode) {
-      // Development login
+  const initLocalAuth = useCallback(async () => {
+    setDevelopmentMode(true);
+    const storedToken = localStorage.getItem('medimesh_token') || localStorage.getItem('dev_token');
+    if (storedToken) {
       try {
-        setLoading(true);
-        const response = await apiService.auth.login(username, password);
-        
-        // Store token
-        localStorage.setItem('dev_token', response.access_token);
-        setToken(response.access_token);
-        
-        // Set user data
-        setUser(response.user);
+        const response = await apiService.auth.me();
+        setUser({ ...response, fullName: response.fullName || response.name || response.username });
         setIsAuthenticated(true);
-        
-        return { success: true };
+        setToken(storedToken);
       } catch (error) {
-        console.error('Development login error:', error);
-        return { 
-          success: false, 
-          error: error?.response?.data?.error || error?.message || 'Login failed' 
-        };
-      } finally {
+        localStorage.removeItem('medimesh_token');
+        localStorage.removeItem('dev_token');
+      }
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    const initialize = async () => {
+      if (authMode === 'local') {
+        await initLocalAuth();
+        return;
+      }
+      try {
+        await initKeycloak();
+      } catch (error) {
+        console.error('Configured Keycloak authentication could not initialize:', error);
         setLoading(false);
       }
-    } else if (keycloak) {
-      // Production Keycloak login
-      keycloak.login();
-      return { success: true };
-    } else {
+    };
+    initialize();
+  }, [initKeycloak, initLocalAuth]);
+
+  const login = async (username, password) => {
+    if (!developmentMode) {
+      if (keycloak) {
+        keycloak.login();
+        return { success: true };
+      }
       return { success: false, error: 'Authentication system not initialized' };
     }
+    try {
+      const response = await apiService.auth.login(username, password);
+      if (response.mfaRequired) {
+        return { success: true, mfaRequired: true, mfaToken: response.mfa_token };
+      }
+      applyLocalSession(response);
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error?.response?.data?.error || error?.message || 'Login failed' };
+    }
+  };
+
+  const verifyMfa = async (mfaToken, code) => {
+    try {
+      applyLocalSession(await apiService.auth.verifyMfa(mfaToken, code));
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error?.response?.data?.error || error.message || 'MFA verification failed' };
+    }
+  };
+
+  const changePassword = async (currentPassword, newPassword) => {
+    if (!developmentMode) return { success: false, error: 'Password changes are managed by your identity provider.' };
+    try {
+      const session = await apiService.auth.changePassword(currentPassword, newPassword);
+      applyLocalSession(session);
+      return { success: true, message: session.message };
+    } catch (error) {
+      return { success: false, error: error?.response?.data?.error || error?.message || 'Password change failed' };
+    }
+  };
+
+  const setupMfa = async () => {
+    try {
+      return { success: true, data: await apiService.auth.setupMfa() };
+    } catch (error) {
+      return { success: false, error: error?.response?.data?.error || error.message || 'MFA setup failed' };
+    }
+  };
+
+  const enableMfa = async code => {
+    try {
+      const session = await apiService.auth.enableMfa(code);
+      applyLocalSession(session);
+      return { success: true, message: session.message };
+    } catch (error) {
+      return { success: false, error: error?.response?.data?.error || error.message || 'MFA enable failed' };
+    }
+  };
+
+  const disableMfa = async (password, code) => {
+    try {
+      const session = await apiService.auth.disableMfa(password, code);
+      applyLocalSession(session);
+      return { success: true, message: session.message };
+    } catch (error) {
+      return { success: false, error: error?.response?.data?.error || error.message || 'MFA disable failed' };
+    }
+  };
+
+  const openAccountManagement = () => {
+    if (keycloak?.accountManagement) keycloak.accountManagement();
   };
 
   const logout = async () => {
     if (developmentMode) {
-      // Development logout
-      try {
-        await apiService.auth.logout();
-      } catch (error) {
-        console.error('Development logout error:', error);
-      }
+      try { await apiService.auth.logout(); } catch (error) { console.error('Logout error:', error); }
+      localStorage.removeItem('medimesh_token');
       localStorage.removeItem('dev_token');
       setUser(null);
       setIsAuthenticated(false);
       setToken(null);
     } else if (keycloak) {
-      // Production Keycloak logout
-      keycloak.logout({
-        redirectUri: window.location.origin
-      });
+      keycloak.logout({ redirectUri: window.location.origin });
     }
   };
 
-  const hasRole = (role) => {
-    return user?.roles?.includes(role) || false;
-  };
-
-  const hasAnyRole = (roles) => {
-    return roles.some(role => hasRole(role));
-  };
-
-  const getAuthHeaders = () => {
-    if (token) {
-      return {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      };
-    }
-    return {
-      'Content-Type': 'application/json'
-    };
-  };
+  const hasRole = role => user?.roles?.includes(role) || false;
+  const hasAnyRole = roles => roles.some(role => hasRole(role));
+  const getAuthHeaders = () => token
+    ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+    : { 'Content-Type': 'application/json' };
 
   const value = {
-    isAuthenticated,
-    user,
-    loading,
-    token,
-    keycloak,
-    developmentMode,
-    login,
-    logout,
-    hasRole,
-    hasAnyRole,
-    getAuthHeaders
+    isAuthenticated, user, loading, token, keycloak, developmentMode,
+    login, verifyMfa, changePassword, setupMfa, enableMfa, disableMfa,
+    openAccountManagement, logout, hasRole, hasAnyRole, getAuthHeaders
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
-}; 
+};

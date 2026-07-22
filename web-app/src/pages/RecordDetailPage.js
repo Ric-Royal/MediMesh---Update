@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
   Button,
-  Paper,
   Grid,
   Card,
   CardContent,
@@ -27,7 +26,6 @@ import {
   Delete as DeleteIcon,
   Person as PersonIcon,
   CalendarToday as CalendarIcon,
-  Description as DescriptionIcon,
   LocalHospital as LocalHospitalIcon,
   Assignment as AssignmentIcon
 } from '@mui/icons-material';
@@ -50,23 +48,7 @@ const RecordDetailPage = () => {
   const [deleting, setDeleting] = useState(false);
   const [successMessage, setSuccessMessage] = useState(location.state?.message || null);
 
-  useEffect(() => {
-    fetchRecordData();
-  }, [id]);
-
-  // Clear success message after showing it
-  useEffect(() => {
-    if (successMessage) {
-      const timer = setTimeout(() => {
-        setSuccessMessage(null);
-        // Clear the location state to prevent showing the message on refresh
-        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [successMessage]);
-
-  const fetchRecordData = async () => {
+  const fetchRecordData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -90,7 +72,23 @@ const RecordDetailPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    fetchRecordData();
+  }, [fetchRecordData]);
+
+  // Clear success message after showing it
+  useEffect(() => {
+    if (successMessage) {
+      const timer = setTimeout(() => {
+        setSuccessMessage(null);
+        // Clear the location state to prevent showing the message on refresh
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage]);
 
   const handleDeleteRecord = async () => {
     if (!record) return;
@@ -553,4 +551,4 @@ const RecordDetailPage = () => {
   );
 };
 
-export default RecordDetailPage; 
+export default RecordDetailPage;

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -8,7 +8,6 @@ import {
   CardContent,
   CardHeader,
   Switch,
-  FormControlLabel,
   TextField,
   Button,
   Alert,
@@ -44,32 +43,26 @@ import {
   VpnKey as KeyIcon,
   Shield as ShieldIcon,
   History as HistoryIcon,
-  Assessment as ReportIcon
+  Assessment as ReportIcon,
+  Tune as OperationsIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { useTheme } from '../contexts/ThemeContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-
-// Custom hook for debouncing values
-const useDebounce = (value, delay) => {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-
-  React.useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [value, delay]);
-
-  return debouncedValue;
-};
+import AdminOperationsSettings from '../components/settings/AdminOperationsSettings';
 
 const SettingsPage = () => {
-  const { user, hasRole } = useAuth();
+  const {
+    user,
+    hasRole,
+    changePassword,
+    setupMfa,
+    enableMfa,
+    disableMfa,
+    developmentMode,
+    openAccountManagement,
+  } = useAuth();
   const { 
     systemSettings, 
     loading, 
@@ -80,7 +73,7 @@ const SettingsPage = () => {
   } = useSettings();
   const { updateTheme } = useTheme();
   
-  const changeTheme = async (newTheme) => {
+  const changeTheme = useCallback(async (newTheme) => {
     updateTheme(newTheme);
     try {
       await updateUserSettings({
@@ -89,7 +82,7 @@ const SettingsPage = () => {
     } catch (error) {
       console.error('Failed to save theme preference:', error);
     }
-  };
+  }, [updateTheme, updateUserSettings]);
   
   const [activeTab, setActiveTab] = useState(0);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -97,37 +90,29 @@ const SettingsPage = () => {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [pendingChanges, setPendingChanges] = useState({});
   const [localValues, setLocalValues] = useState({}); // For immediate UI updates
-  const [fieldLoading, setFieldLoading] = useState({}); // Track loading state per field
   const [saveLoading, setSaveLoading] = useState(false); // Track loading state for save operation
   
-  // Debounce pending changes to reduce rapid updates
-  const debouncedPendingChanges = useDebounce(pendingChanges, 500);
-  
   const [changePasswordDialog, setChangePasswordDialog] = useState(false);
+  const [passwordChanging, setPasswordChanging] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
   const [passwordData, setPasswordData] = useState({
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
   });
+  const [mfaSetupData, setMfaSetupData] = useState(null);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaPassword, setMfaPassword] = useState('');
+  const [mfaLoading, setMfaLoading] = useState(false);
+  const [mfaMessage, setMfaMessage] = useState(null);
+
+  React.useEffect(() => {
+    if (user?.mustChangePassword) setChangePasswordDialog(true);
+  }, [user?.mustChangePassword]);
 
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
   };
-
-  // Helper function to set field loading state
-  const setFieldLoadingState = useCallback((fieldKey, isLoading) => {
-    setFieldLoading(prev => ({
-      ...prev,
-      [fieldKey]: isLoading
-    }));
-  }, []);
-
-  // Helper function to check if field is loading
-  const isFieldLoading = useCallback((section, field) => {
-    const fieldKey = section === 'system' ? `system.${field}` : 
-                     section === 'medical' ? `medical.${field}` : `${section}.${field}`;
-    return fieldLoading[fieldKey] || false;
-  }, [fieldLoading]);
 
   // Stage changes locally instead of auto-saving
   const handlePersonalSettingChange = useCallback((section, field, value) => {
@@ -287,20 +272,66 @@ const SettingsPage = () => {
   }, [getSetting, changeTheme]);
 
   const handleChangePassword = async () => {
+    setPasswordError('');
     if (passwordData.newPassword !== passwordData.confirmPassword) {
-      setLocalError('New passwords do not match');
+      setPasswordError('New passwords do not match');
       return;
     }
-    
+    if (passwordData.newPassword.length < 12 ||
+        !/[a-z]/.test(passwordData.newPassword) ||
+        !/[A-Z]/.test(passwordData.newPassword) ||
+        !/[0-9]/.test(passwordData.newPassword) ||
+        !/[^A-Za-z0-9\s]/.test(passwordData.newPassword)) {
+      setPasswordError('Use at least 12 characters with uppercase, lowercase, a number and a symbol.');
+      return;
+    }
+
     try {
-      // API call to change password
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      setPasswordChanging(true);
+      const result = await changePassword(passwordData.currentPassword, passwordData.newPassword);
+      if (!result.success) {
+        setPasswordError(result.error || 'Failed to change password');
+        return;
+      }
       setChangePasswordDialog(false);
       setPasswordData({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setSaveSuccess(true);
     } catch (err) {
-      setLocalError('Failed to change password');
+      setPasswordError('Failed to change password');
+    } finally {
+      setPasswordChanging(false);
     }
+  };
+
+  const handleStartMfa = async () => {
+    setMfaLoading(true);
+    setMfaMessage(null);
+    const result = await setupMfa();
+    if (result.success) setMfaSetupData(result.data);
+    else setMfaMessage({ severity: 'error', text: result.error });
+    setMfaLoading(false);
+  };
+
+  const handleEnableMfa = async () => {
+    setMfaLoading(true);
+    const result = await enableMfa(mfaCode);
+    setMfaMessage({ severity: result.success ? 'success' : 'error', text: result.message || result.error });
+    if (result.success) {
+      setMfaSetupData(null);
+      setMfaCode('');
+    }
+    setMfaLoading(false);
+  };
+
+  const handleDisableMfa = async () => {
+    setMfaLoading(true);
+    const result = await disableMfa(mfaPassword, mfaCode);
+    setMfaMessage({ severity: result.success ? 'warning' : 'error', text: result.message || result.error });
+    if (result.success) {
+      setMfaPassword('');
+      setMfaCode('');
+    }
+    setMfaLoading(false);
   };
 
   const TabPanel = ({ children, value, index }) => (
@@ -376,9 +407,9 @@ const SettingsPage = () => {
               <Button
                 variant="outlined"
                 startIcon={<KeyIcon />}
-                onClick={() => setChangePasswordDialog(true)}
+                onClick={() => developmentMode ? setChangePasswordDialog(true) : openAccountManagement()}
               >
-                Change Password
+                {developmentMode ? 'Change Password' : 'Manage Password'}
               </Button>
             </Box>
           </CardContent>
@@ -397,23 +428,11 @@ const SettingsPage = () => {
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
-                  <InputLabel>Language</InputLabel>
+                  <InputLabel id="timezone-preference-label">Timezone</InputLabel>
                   <Select
-                    value={getCurrentValue('preferences', 'language', 'en')}
-                    onChange={(e) => handlePersonalSettingChange('preferences', 'language', e.target.value)}
-                  >
-                    <MenuItem value="en">English</MenuItem>
-                    <MenuItem value="es">Spanish</MenuItem>
-                    <MenuItem value="fr">French</MenuItem>
-                    <MenuItem value="de">German</MenuItem>
-                  </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Timezone</InputLabel>
-                  <Select
-                    value={getCurrentValue('preferences', 'timezone', 'Africa/Johannesburg')}
+                    labelId="timezone-preference-label"
+                    label="Timezone"
+                    value={getCurrentValue('preferences', 'timezone', 'Africa/Nairobi')}
                     onChange={(e) => handlePersonalSettingChange('preferences', 'timezone', e.target.value)}
                   >
                     <MenuItem value="Africa/Cairo">Cairo (GMT+2)</MenuItem>
@@ -434,8 +453,10 @@ const SettingsPage = () => {
               </Grid>
               <Grid item xs={12}>
                 <FormControl fullWidth>
-                  <InputLabel>Theme</InputLabel>
+                  <InputLabel id="theme-preference-label">Theme</InputLabel>
                   <Select
+                    labelId="theme-preference-label"
+                    label="Theme"
                     value={getCurrentValue('preferences', 'theme', 'light')}
                     onChange={(e) => handlePersonalSettingChange('preferences', 'theme', e.target.value)}
                   >
@@ -450,59 +471,120 @@ const SettingsPage = () => {
         </Card>
       </Grid>
 
+      <Grid item xs={12}>
+        <Card>
+          <CardHeader
+            avatar={<Avatar sx={{ bgcolor: 'success.main' }}><ShieldIcon /></Avatar>}
+            title="Multi-factor authentication"
+            subheader="Protect this account with a time-based authenticator code"
+            action={<Chip
+              label={user?.mfaEnabled ? 'Enabled' : user?.mfaEnrollmentRequired ? 'Required' : 'Not enabled'}
+              color={user?.mfaEnabled ? 'success' : 'warning'}
+              size="small"
+            />}
+          />
+          <CardContent>
+            {mfaMessage && <Alert severity={mfaMessage.severity} sx={{ mb: 2 }}>{mfaMessage.text}</Alert>}
+            {!user?.mfaEnabled && !mfaSetupData && <>
+              {user?.mfaEnrollmentRequired && <Alert severity="warning" sx={{ mb: 2 }}>
+                MFA enrollment is required before clinical workspaces can be opened.
+              </Alert>}
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Use Microsoft Authenticator, Google Authenticator, 1Password, or another standards-compatible TOTP app.
+              </Typography>
+              <Button variant="contained" startIcon={<ShieldIcon />} onClick={handleStartMfa} disabled={mfaLoading}>
+                Set up authenticator
+              </Button>
+            </>}
+
+            {!user?.mfaEnabled && mfaSetupData && <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <Alert severity="info">
+                  In your authenticator app choose “enter setup key”. Use account <strong>{user?.username}</strong>, type “time based”, and enter the key below.
+                </Alert>
+              </Grid>
+              <Grid item xs={12}>
+                <TextField
+                  fullWidth
+                  label="Manual setup key"
+                  value={mfaSetupData.secret || ''}
+                  InputProps={{ readOnly: true }}
+                  inputProps={{ style: { fontFamily: 'monospace', letterSpacing: '0.12em' } }}
+                  helperText="Keep this key private. It is shown only during enrollment."
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Six-digit authenticator code"
+                  value={mfaCode}
+                  onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                  inputProps={{ inputMode: 'numeric', maxLength: 6 }}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6} sx={{ display: 'flex', alignItems: 'center' }}>
+                <Button variant="contained" onClick={handleEnableMfa} disabled={mfaLoading || mfaCode.length !== 6}>
+                  Verify and enable
+                </Button>
+              </Grid>
+            </Grid>}
+
+            {user?.mfaEnabled && <Grid container spacing={2}>
+              <Grid item xs={12}>
+                <Alert severity="success">Authenticator verification is active for this account.</Alert>
+              </Grid>
+              <Grid item xs={12}>
+                <Typography variant="body2" color="text.secondary">
+                  To replace or remove the authenticator, confirm both your password and a current code. If facility policy requires MFA, access will remain restricted until you enroll again.
+                </Typography>
+              </Grid>
+              <Grid item xs={12} sm={5}>
+                <TextField fullWidth label="Current password" type="password" value={mfaPassword}
+                  onChange={(event) => setMfaPassword(event.target.value)} />
+              </Grid>
+              <Grid item xs={12} sm={4}>
+                <TextField fullWidth label="Authenticator code" value={mfaCode}
+                  onChange={(event) => setMfaCode(event.target.value.replace(/\D/g, '').slice(0, 6))}
+                  inputProps={{ inputMode: 'numeric', maxLength: 6 }} />
+              </Grid>
+              <Grid item xs={12} sm={3} sx={{ display: 'flex', alignItems: 'center' }}>
+                <Button color="warning" variant="outlined" onClick={handleDisableMfa}
+                  disabled={mfaLoading || !mfaPassword || mfaCode.length !== 6}>
+                  Remove MFA
+                </Button>
+              </Grid>
+            </Grid>}
+          </CardContent>
+        </Card>
+      </Grid>
+
       {/* Notification Settings */}
       <Grid item xs={12}>
         <Card>
           <CardHeader
             avatar={<Avatar sx={{ bgcolor: 'warning.main' }}><NotificationsIcon /></Avatar>}
-            title="Notification Preferences"
-            subheader="Control when and how you receive notifications"
+            title="Notification delivery"
+            subheader="Delivery channels available to this deployment"
           />
           <CardContent>
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={4}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={getSetting('notifications.emailNotifications', true)}
-                      onChange={(e) => handlePersonalSettingChange('notifications', 'emailNotifications', e.target.checked)}
-                    />
-                  }
-                  label="Email Notifications"
-                />
-                <Typography variant="body2" color="text.secondary">
-                  Patient updates, system alerts, and reminders
-                </Typography>
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={getSetting('notifications.smsNotifications', false)}
-                      onChange={(e) => handlePersonalSettingChange('notifications', 'smsNotifications', e.target.checked)}
-                    />
-                  }
-                  label="SMS Notifications"
-                />
-                <Typography variant="body2" color="text.secondary">
-                  Emergency alerts and critical updates
-                </Typography>
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={getSetting('notifications.pushNotifications', true)}
-                      onChange={(e) => handlePersonalSettingChange('notifications', 'pushNotifications', e.target.checked)}
-                    />
-                  }
-                  label="Push Notifications"
-                />
-                <Typography variant="body2" color="text.secondary">
-                  Real-time browser notifications
-                </Typography>
-              </Grid>
-            </Grid>
+            <Alert severity="info" sx={{ mb: 1.5 }}>
+              Email, SMS, and browser notification providers are not configured. These channels are shown read-only so a saved preference cannot imply that messages will be delivered.
+            </Alert>
+            <List disablePadding aria-label="Notification delivery status">
+              {[
+                ['Email', 'Requires a configured transactional email provider'],
+                ['SMS', 'Requires an SMS gateway and approved sender identity'],
+                ['Browser push', 'Requires a push service and browser permission workflow'],
+              ].map(([channel, requirement], index) => (
+                <ListItem key={channel} divider={index < 2}>
+                  <ListItemIcon><NotificationsIcon /></ListItemIcon>
+                  <ListItemText primary={channel} secondary={requirement} />
+                  <ListItemSecondaryAction>
+                    <Chip size="small" label="Not connected" color="warning" variant="outlined" />
+                  </ListItemSecondaryAction>
+                </ListItem>
+              ))}
+            </List>
           </CardContent>
         </Card>
       </Grid>
@@ -587,6 +669,7 @@ const SettingsPage = () => {
                   <Switch
                     checked={getCurrentValue('medical_defaults', 'autoSaveDrafts', true)}
                     onChange={(e) => handleMedicalSettingChange('autoSaveDrafts', e.target.checked)}
+                    inputProps={{ 'aria-label': 'Auto-save drafts' }}
                   />
                 </ListItemSecondaryAction>
               </ListItem>
@@ -597,12 +680,7 @@ const SettingsPage = () => {
                   primary="Require Diagnosis"
                   secondary="Mandate diagnosis entry for all consultations"
                 />
-                <ListItemSecondaryAction>
-                  <Switch
-                    checked={getCurrentValue('medical_defaults', 'requireDiagnosis', false)}
-                    onChange={(e) => handleMedicalSettingChange('requireDiagnosis', e.target.checked)}
-                  />
-                </ListItemSecondaryAction>
+                <ListItemSecondaryAction><Chip size="small" label="Not connected" variant="outlined" /></ListItemSecondaryAction>
               </ListItem>
               
               <ListItem>
@@ -611,12 +689,7 @@ const SettingsPage = () => {
                   primary="Enable Templates"
                   secondary="Use pre-defined templates for common procedures"
                 />
-                <ListItemSecondaryAction>
-                  <Switch
-                    checked={getCurrentValue('medical_defaults', 'enableTemplates', true)}
-                    onChange={(e) => handleMedicalSettingChange('enableTemplates', e.target.checked)}
-                  />
-                </ListItemSecondaryAction>
+                <ListItemSecondaryAction><Chip size="small" label="Not connected" variant="outlined" /></ListItemSecondaryAction>
               </ListItem>
               
               <ListItem>
@@ -625,12 +698,7 @@ const SettingsPage = () => {
                   primary="Show ICD-10 Codes"
                   secondary="Display ICD-10 diagnostic codes in records"
                 />
-                <ListItemSecondaryAction>
-                  <Switch
-                    checked={getCurrentValue('medical_defaults', 'showICD10Codes', false)}
-                    onChange={(e) => handleMedicalSettingChange('showICD10Codes', e.target.checked)}
-                  />
-                </ListItemSecondaryAction>
+                <ListItemSecondaryAction><Chip size="small" label="Not connected" variant="outlined" /></ListItemSecondaryAction>
               </ListItem>
               
               <ListItem>
@@ -639,12 +707,7 @@ const SettingsPage = () => {
                   primary="Drug Interaction Alerts"
                   secondary="Show warnings for potential drug interactions"
                 />
-                <ListItemSecondaryAction>
-                  <Switch
-                    checked={getCurrentValue('medical_defaults', 'drugInteractionAlerts', true)}
-                    onChange={(e) => handleMedicalSettingChange('drugInteractionAlerts', e.target.checked)}
-                  />
-                </ListItemSecondaryAction>
+                <ListItemSecondaryAction><Chip size="small" label="Not connected" variant="outlined" /></ListItemSecondaryAction>
               </ListItem>
               
               <ListItem>
@@ -653,12 +716,7 @@ const SettingsPage = () => {
                   primary="Allergy Warnings"
                   secondary="Display patient allergy alerts prominently"
                 />
-                <ListItemSecondaryAction>
-                  <Switch
-                    checked={getCurrentValue('medical_defaults', 'allergyWarnings', true)}
-                    onChange={(e) => handleMedicalSettingChange('allergyWarnings', e.target.checked)}
-                  />
-                </ListItemSecondaryAction>
+                <ListItemSecondaryAction><Chip size="small" label="Not connected" variant="outlined" /></ListItemSecondaryAction>
               </ListItem>
             </List>
           </CardContent>
@@ -684,10 +742,13 @@ const SettingsPage = () => {
           <Card>
             <CardHeader
               avatar={<Avatar sx={{ bgcolor: 'error.main' }}><AdminIcon /></Avatar>}
-              title="System Configuration"
-              subheader="Core system settings (Admin only)"
+              title="Policy registry"
+              subheader="Recorded policy and deployment-controlled limits"
             />
             <CardContent>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Runtime authentication, identifiers, and upload limits are deployment controls. They are shown read-only here so a saved preference cannot imply enforcement that is not active.
+              </Alert>
               <Grid container spacing={2}>
                 <Grid item xs={12}>
                   <FormControl fullWidth>
@@ -696,7 +757,7 @@ const SettingsPage = () => {
                       labelId="patient-id-format-label"
                       label="Patient ID Format"
                       value={systemSettings.patientIdFormat}
-                      onChange={(e) => handleSystemSettingChange('patientIdFormat', e.target.value)}
+                      disabled
                     >
                       <MenuItem value="auto">Auto-generated UUID</MenuItem>
                       <MenuItem value="sequential">Sequential Numbers</MenuItem>
@@ -711,17 +772,19 @@ const SettingsPage = () => {
                     label="Session Timeout (minutes)"
                     type="number"
                     value={systemSettings.sessionTimeout}
-                    onChange={(e) => handleSystemSettingChange('sessionTimeout', e.target.value)}
+                    disabled
+                    helperText="Controlled by SESSION_TTL_SECONDS at deployment"
                   />
                 </Grid>
                 
                 <Grid item xs={12} sm={6}>
                   <TextField
                     fullWidth
-                    label="Data Retention (years)"
+                    label="Retention policy (years)"
                     type="number"
                     value={systemSettings.dataRetentionPeriod}
                     onChange={(e) => handleSystemSettingChange('dataRetentionPeriod', e.target.value)}
+                    helperText="Policy record; deletion requires an approved retention job"
                   />
                 </Grid>
                 
@@ -732,7 +795,7 @@ const SettingsPage = () => {
                       labelId="password-policy-label"
                       label="Password Policy"
                       value={systemSettings.passwordPolicy}
-                      onChange={(e) => handleSystemSettingChange('passwordPolicy', e.target.value)}
+                      disabled
                     >
                       <MenuItem value="basic">Basic (8+ characters)</MenuItem>
                       <MenuItem value="strong">Strong (12+ chars, mixed case, numbers, symbols)</MenuItem>
@@ -746,8 +809,9 @@ const SettingsPage = () => {
                     fullWidth
                     label="Max File Size (MB)"
                     type="number"
-                    value={systemSettings.maxFileSize}
-                    onChange={(e) => handleSystemSettingChange('maxFileSize', e.target.value)}
+                    value={Math.round(Number(systemSettings.maxFileSize || 52428800) / (1024 * 1024))}
+                    disabled
+                    helperText="Fixed at 50 MB in this deployment"
                   />
                 </Grid>
               </Grid>
@@ -760,22 +824,22 @@ const SettingsPage = () => {
           <Card>
             <CardHeader
               avatar={<Avatar sx={{ bgcolor: 'warning.main' }}><SecurityIcon /></Avatar>}
-              title="Security & Compliance"
-              subheader="HIPAA and security settings"
+              title="Security controls"
+              subheader="What is active in this deployment"
             />
             <CardContent>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Audit trails, authenticated file access, and account MFA are application controls. Off-site backup status must be verified by the deployment operator because it cannot be inferred from this browser.
+              </Alert>
               <List>
                 <ListItem>
                   <ListItemIcon><StorageIcon /></ListItemIcon>
                   <ListItemText 
-                    primary="Automated Backups"
-                    secondary="Daily encrypted backups to secure storage"
+                    primary="Automated backups"
+                    secondary="Connect an encrypted off-site backup job and test restoration before production use"
                   />
                   <ListItemSecondaryAction>
-                    <Switch
-                      checked={systemSettings.autoBackup}
-                      onChange={(e) => handleSystemSettingChange('autoBackup', e.target.checked)}
-                    />
+                    <Chip size="small" label="Not connected" color="warning" variant="outlined" />
                   </ListItemSecondaryAction>
                 </ListItem>
                 
@@ -783,60 +847,35 @@ const SettingsPage = () => {
                   <ListItemIcon><HistoryIcon /></ListItemIcon>
                   <ListItemText 
                     primary="Audit Logging"
-                    secondary="Log all user actions for compliance"
+                    secondary="Clinical and administrative actions are recorded"
                   />
                   <ListItemSecondaryAction>
-                    <Switch
-                      checked={systemSettings.auditLogging}
-                      onChange={(e) => handleSystemSettingChange('auditLogging', e.target.checked)}
-                    />
+                    <Chip size="small" label="Active" color="success" variant="outlined" />
                   </ListItemSecondaryAction>
                 </ListItem>
                 
                 <ListItem>
                   <ListItemIcon><LockIcon /></ListItemIcon>
                   <ListItemText 
-                    primary="Two-Factor Authentication"
-                    secondary="Require 2FA for all users"
+                    primary="Multi-factor authentication"
+                    secondary={user?.mfaEnabled ? 'Authenticator verification is enabled for this account' : 'Enroll an authenticator from the Personal tab'}
                   />
                   <ListItemSecondaryAction>
-                    <Switch
-                      checked={systemSettings.twoFactorAuth}
-                      onChange={(e) => handleSystemSettingChange('twoFactorAuth', e.target.checked)}
-                    />
+                    <Chip size="small" label={user?.mfaEnabled ? 'Active' : 'Required'} color={user?.mfaEnabled ? 'success' : 'warning'} variant="outlined" />
                   </ListItemSecondaryAction>
                 </ListItem>
                 
                 <ListItem>
                   <ListItemIcon><StorageIcon /></ListItemIcon>
                   <ListItemText 
-                    primary="File Upload Enabled"
-                    secondary="Allow users to upload medical documents"
+                    primary="Authenticated file access"
+                    secondary="Medical documents require an authenticated application session"
                   />
                   <ListItemSecondaryAction>
-                    <Switch
-                      checked={systemSettings.allowFileUpload}
-                      onChange={(e) => handleSystemSettingChange('allowFileUpload', e.target.checked)}
-                    />
+                    <Chip size="small" label="Active" color="success" variant="outlined" />
                   </ListItemSecondaryAction>
                 </ListItem>
               </List>
-              
-              {systemSettings.autoBackup && (
-                <Box sx={{ mt: 2 }}>
-                  <FormControl fullWidth>
-                    <InputLabel>Backup Frequency</InputLabel>
-                    <Select
-                      value={systemSettings.backupFrequency}
-                      onChange={(e) => handleSystemSettingChange('backupFrequency', e.target.value)}
-                    >
-                      <MenuItem value="hourly">Hourly</MenuItem>
-                      <MenuItem value="daily">Daily</MenuItem>
-                      <MenuItem value="weekly">Weekly</MenuItem>
-                    </Select>
-                  </FormControl>
-                </Box>
-              )}
             </CardContent>
           </Card>
         </Grid>
@@ -884,7 +923,7 @@ const SettingsPage = () => {
   }
 
   return (
-    <Box>
+    <Box sx={{ width: '100%', minWidth: 0 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box>
@@ -955,7 +994,14 @@ const SettingsPage = () => {
 
       {/* Settings Tabs */}
       <Paper sx={{ mb: 2 }}>
-        <Tabs value={activeTab} onChange={handleTabChange}>
+        <Tabs
+          value={activeTab}
+          onChange={handleTabChange}
+          variant="scrollable"
+          scrollButtons="auto"
+          allowScrollButtonsMobile
+          aria-label="Settings sections"
+        >
           <Tab 
             label="Personal" 
             icon={<PersonIcon />}
@@ -967,11 +1013,10 @@ const SettingsPage = () => {
             iconPosition="start"
           />
           {hasRole('admin') && (
-            <Tab 
-              label="System" 
-              icon={<AdminIcon />}
-              iconPosition="start"
-            />
+            <Tab label="System" icon={<AdminIcon />} iconPosition="start" />
+          )}
+          {hasRole('admin') && (
+            <Tab label="Operations" icon={<OperationsIcon />} iconPosition="start" />
           )}
         </Tabs>
       </Paper>
@@ -991,10 +1036,27 @@ const SettingsPage = () => {
         </TabPanel>
       )}
 
+      {hasRole('admin') && (
+        <TabPanel value={activeTab} index={3}>
+          <AdminOperationsSettings />
+        </TabPanel>
+      )}
+
       {/* Change Password Dialog */}
-      <Dialog open={changePasswordDialog} onClose={() => setChangePasswordDialog(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={changePasswordDialog}
+        onClose={user?.mustChangePassword ? undefined : () => setChangePasswordDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
         <DialogTitle>Change Password</DialogTitle>
         <DialogContent>
+          {user?.mustChangePassword && (
+            <Alert severity="warning" sx={{ mt: 1, mb: 2 }}>
+              Your temporary password must be replaced before you can continue.
+            </Alert>
+          )}
+          {passwordError && <Alert severity="error" sx={{ mt: 1, mb: 2 }}>{passwordError}</Alert>}
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid item xs={12}>
               <TextField
@@ -1012,6 +1074,7 @@ const SettingsPage = () => {
                 type="password"
                 value={passwordData.newPassword}
                 onChange={(e) => setPasswordData({...passwordData, newPassword: e.target.value})}
+                helperText="At least 12 characters with uppercase, lowercase, a number and a symbol"
               />
             </Grid>
             <Grid item xs={12}>
@@ -1026,13 +1089,13 @@ const SettingsPage = () => {
           </Grid>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setChangePasswordDialog(false)}>Cancel</Button>
+          {!user?.mustChangePassword && <Button onClick={() => setChangePasswordDialog(false)}>Cancel</Button>}
           <Button 
             onClick={handleChangePassword} 
             variant="contained"
-            disabled={loading || !passwordData.currentPassword || !passwordData.newPassword || passwordData.newPassword !== passwordData.confirmPassword}
+            disabled={passwordChanging || !passwordData.currentPassword || !passwordData.newPassword || passwordData.newPassword !== passwordData.confirmPassword}
           >
-            Change Password
+            {passwordChanging ? 'Changing...' : 'Change Password'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1040,4 +1103,4 @@ const SettingsPage = () => {
   );
 };
 
-export default SettingsPage; 
+export default SettingsPage;

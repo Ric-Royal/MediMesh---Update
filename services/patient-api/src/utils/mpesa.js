@@ -15,6 +15,7 @@ class MpesaService {
     this.passkey = process.env.MPESA_PASSKEY;
     this.shortCode = process.env.MPESA_SHORTCODE;
     this.callbackUrl = process.env.MPESA_CALLBACK_URL;
+    this.callbackToken = process.env.MPESA_CALLBACK_TOKEN;
     
     // API URLs
     this.baseUrl = this.environment === 'production'
@@ -106,6 +107,10 @@ class MpesaService {
    */
   async stkPush({ phoneNumber, amount, accountReference, transactionDesc }) {
     try {
+      if (!Number.isSafeInteger(Number(amount)) || Number(amount) <= 0) {
+        throw new Error('M-Pesa amount must be a positive whole number of shillings');
+      }
+
       const accessToken = await this.getAccessToken();
       const timestamp = new Date().toISOString().replace(/[-:T.]/g, '').slice(0, 14);
       const password = this.generatePassword(timestamp);
@@ -116,17 +121,17 @@ class MpesaService {
         Password: password,
         Timestamp: timestamp,
         TransactionType: 'CustomerPayBillOnline', // For paybill, use 'CustomerBuyGoodsOnline' for till
-        Amount: Math.round(amount), // M-Pesa accepts integers only
+        Amount: Number(amount),
         PartyA: formattedPhone, // Customer phone number
         PartyB: this.shortCode, // Organization shortcode
         PhoneNumber: formattedPhone,
-        CallBackURL: this.callbackUrl,
+        CallBackURL: this.getCallbackUrl(),
         AccountReference: accountReference,
         TransactionDesc: transactionDesc
       };
 
       logger.info('Initiating STK Push', {
-        phone: formattedPhone,
+        phoneLast4: formattedPhone.slice(-4),
         amount: payload.Amount,
         reference: accountReference
       });
@@ -223,7 +228,7 @@ class MpesaService {
         checkoutRequestId: body.CheckoutRequestID,
         resultCode: body.ResultCode,
         resultDesc: body.ResultDesc,
-        success: body.ResultCode === 0
+        success: Number(body.ResultCode) === 0
       };
 
       // If successful, extract callback metadata
@@ -291,13 +296,53 @@ class MpesaService {
       'callbackUrl'
     ];
 
+    if (process.env.NODE_ENV !== 'development') {
+      required.push('callbackToken');
+    }
+
     const missing = required.filter(field => !this[field]);
 
     if (missing.length > 0) {
       throw new Error(`Missing M-Pesa configuration: ${missing.join(', ')}`);
     }
 
+    const callback = new URL(this.callbackUrl);
+    if (process.env.NODE_ENV !== 'development' && callback.protocol !== 'https:') {
+      throw new Error('MPESA_CALLBACK_URL must use HTTPS outside development');
+    }
+
     return true;
+  }
+
+  getCallbackUrl() {
+    const callback = new URL(this.callbackUrl);
+    if (this.callbackToken) {
+      callback.searchParams.set('token', this.callbackToken);
+    }
+    return callback.toString();
+  }
+
+  getConfigurationStatus() {
+    const labels = {
+      consumerKey: 'MPESA_CONSUMER_KEY',
+      consumerSecret: 'MPESA_CONSUMER_SECRET',
+      passkey: 'MPESA_PASSKEY',
+      shortCode: 'MPESA_SHORTCODE',
+      callbackUrl: 'MPESA_CALLBACK_URL'
+    };
+    if (process.env.NODE_ENV !== 'development') {
+      labels.callbackToken = 'MPESA_CALLBACK_TOKEN';
+    }
+    const missing = Object.entries(labels)
+      .filter(([field]) => !this[field])
+      .map(([, environmentVariable]) => environmentVariable);
+    return { ready: missing.length === 0, missing };
+  }
+
+  maskedShortCode() {
+    if (!this.shortCode) return null;
+    const value = String(this.shortCode);
+    return value.length <= 2 ? '**' : `${'*'.repeat(value.length - 2)}${value.slice(-2)}`;
   }
 }
 

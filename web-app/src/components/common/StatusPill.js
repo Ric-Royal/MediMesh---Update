@@ -1,74 +1,90 @@
 import React from 'react';
-import { Chip } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import { keyframes } from '@mui/system';
 
-const pulse = keyframes`
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.7;
-  }
+const breathe = keyframes`
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
 `;
 
-const StatusPill = ({ status, variant = 'filled', animate = false, size = 'small', ...props }) => {
-  const getStatusConfig = (status) => {
-    const configs = {
-      // Patient Status
-      'admitted': { color: 'primary', label: 'Admitted' },
-      'discharged': { color: 'success', label: 'Discharged' },
-      'critical': { color: 'error', label: 'Critical', animate: true },
-      'stable': { color: 'success', label: 'Stable' },
-      'observation': { color: 'info', label: 'Observation' },
-      
-      // Queue Status
-      'waiting': { color: 'warning', label: 'Waiting' },
-      'in-consultation': { color: 'primary', label: 'In Consultation' },
-      'completed': { color: 'success', label: 'Completed' },
-      'called': { color: 'info', label: 'Called' },
-      'no-show': { color: 'default', label: 'No Show' },
-      
-      // Lab/Radiology Status
-      'pending': { color: 'warning', label: 'Pending' },
-      'in-progress': { color: 'primary', label: 'In Progress' },
-      'reported': { color: 'success', label: 'Reported' },
-      'verified': { color: 'success', label: 'Verified' },
-      'cancelled': { color: 'default', label: 'Cancelled' },
-      
-      // Billing Status
-      'draft': { color: 'default', label: 'Draft' },
-      'issued': { color: 'info', label: 'Issued' },
-      'paid': { color: 'success', label: 'Paid' },
-      'partially-paid': { color: 'warning', label: 'Partially Paid' },
-      'overdue': { color: 'error', label: 'Overdue', animate: true },
-      
-      // General
-      'active': { color: 'success', label: 'Active' },
-      'inactive': { color: 'default', label: 'Inactive' },
-      'scheduled': { color: 'info', label: 'Scheduled' },
-    };
-    
-    return configs[status?.toLowerCase()] || { color: 'default', label: status };
-  };
+/**
+ * Modern status indicator — small coloured dot + text label.
+ * Replaces the old heavy filled Chip.
+ */
 
-  const config = getStatusConfig(status);
-  const shouldAnimate = animate || config.animate;
+const palette = {
+  // Patient
+  admitted:          { dot: '#2563EB', bg: '#EFF6FF' },
+  discharged:        { dot: '#059669', bg: '#ECFDF5' },
+  critical:          { dot: '#DC2626', bg: '#FEF2F2', animate: true },
+  stable:            { dot: '#059669', bg: '#ECFDF5' },
+  observation:       { dot: '#2563EB', bg: '#EFF6FF' },
+  // Queue
+  waiting:           { dot: '#D97706', bg: '#FFFBEB' },
+  called:            { dot: '#2563EB', bg: '#EFF6FF' },
+  'in-consultation': { dot: '#1B6B93', bg: '#F0F9FF' },
+  'in-service':      { dot: '#1B6B93', bg: '#F0F9FF' },
+  completed:         { dot: '#059669', bg: '#ECFDF5' },
+  'no-show':         { dot: '#94A3B8', bg: '#F1F5F9' },
+  // Lab / Radiology
+  pending:           { dot: '#D97706', bg: '#FFFBEB' },
+  'in-progress':     { dot: '#1B6B93', bg: '#F0F9FF' },
+  reported:          { dot: '#059669', bg: '#ECFDF5' },
+  verified:          { dot: '#059669', bg: '#ECFDF5' },
+  cancelled:         { dot: '#94A3B8', bg: '#F1F5F9' },
+  // Billing
+  draft:             { dot: '#94A3B8', bg: '#F1F5F9' },
+  issued:            { dot: '#2563EB', bg: '#EFF6FF' },
+  paid:              { dot: '#059669', bg: '#ECFDF5' },
+  'partially-paid':  { dot: '#D97706', bg: '#FFFBEB' },
+  overdue:           { dot: '#DC2626', bg: '#FEF2F2', animate: true },
+  // General
+  active:            { dot: '#059669', bg: '#ECFDF5' },
+  inactive:          { dot: '#94A3B8', bg: '#F1F5F9' },
+  scheduled:         { dot: '#2563EB', bg: '#EFF6FF' },
+};
+
+const fallback = { dot: '#94A3B8', bg: '#F1F5F9' };
+
+const StatusPill = ({ status, size = 'small', animate = false, ...props }) => {
+  const key = status?.toLowerCase();
+  const cfg = palette[key] || fallback;
+  const label = key ? key.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : status;
+  const shouldAnimate = animate || cfg.animate;
+
+  const dotSize = size === 'small' ? 7 : 9;
 
   return (
-    <Chip
-      label={config.label}
-      color={config.color}
-      variant={variant}
-      size={size}
+    <Box
       sx={{
-        fontWeight: 600,
-        animation: shouldAnimate ? `${pulse} 2s ease-in-out infinite` : 'none',
-        boxShadow: variant === 'filled' ? '0px 2px 4px rgba(0, 0, 0, 0.1)' : 'none',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 0.75,
+        px: 1.25,
+        py: 0.4,
+        borderRadius: '6px',
+        backgroundColor: cfg.bg,
       }}
       {...props}
-    />
+    >
+      <Box
+        sx={{
+          width: dotSize,
+          height: dotSize,
+          borderRadius: '50%',
+          backgroundColor: cfg.dot,
+          flexShrink: 0,
+          animation: shouldAnimate ? `${breathe} 2s ease-in-out infinite` : 'none',
+        }}
+      />
+      <Typography
+        variant="caption"
+        sx={{ fontWeight: 600, fontSize: size === 'small' ? '0.7rem' : '0.75rem', color: cfg.dot, lineHeight: 1, whiteSpace: 'nowrap' }}
+      >
+        {label}
+      </Typography>
+    </Box>
   );
 };
 
 export default StatusPill;
-

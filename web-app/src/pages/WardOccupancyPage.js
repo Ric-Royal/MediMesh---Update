@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import API_CONFIG from '../config/api';
 import {
-  Container,
   Paper,
   Typography,
   Box,
@@ -43,18 +42,7 @@ const WardOccupancyPage = () => {
   const [loading, setLoading] = useState(false);
   const { notifySuccess, notifyError } = useNotification();
 
-  useEffect(() => {
-    fetchWards();
-  }, []);
-
-  useEffect(() => {
-    if (selectedWard) {
-      fetchOccupancy();
-      fetchStatistics();
-    }
-  }, [selectedWard]);
-
-  const fetchWards = async () => {
+  const fetchWards = useCallback(async () => {
     try {
       const response = await fetch(`${API_CONFIG.endpoints.wards}`, {
         headers: API_CONFIG.getAuthHeaders()
@@ -70,9 +58,9 @@ const WardOccupancyPage = () => {
       console.error('Error fetching wards:', error);
       notifyError('Unable to load wards');
     }
-  };
+  }, [notifyError]);
 
-  const fetchOccupancy = async () => {
+  const fetchOccupancy = useCallback(async () => {
     if (!selectedWard) return;
     setLoading(true);
     try {
@@ -89,9 +77,9 @@ const WardOccupancyPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [notifyError, selectedWard]);
 
-  const fetchStatistics = async () => {
+  const fetchStatistics = useCallback(async () => {
     if (!selectedWard) return;
     try {
       const response = await fetch(`${API_CONFIG.endpoints.wards}/${selectedWard}/statistics`, {
@@ -105,7 +93,18 @@ const WardOccupancyPage = () => {
       console.error('Error fetching statistics:', error);
       notifyError('Unable to load ward statistics');
     }
-  };
+  }, [notifyError, selectedWard]);
+
+  useEffect(() => {
+    fetchWards();
+  }, [fetchWards]);
+
+  useEffect(() => {
+    if (selectedWard) {
+      fetchOccupancy();
+      fetchStatistics();
+    }
+  }, [selectedWard, fetchOccupancy, fetchStatistics]);
 
   const handleRefresh = () => {
     fetchOccupancy();
@@ -123,23 +122,12 @@ const WardOccupancyPage = () => {
     return Math.round(((statistics.available || 0) / (statistics.total_beds || 1)) * 100);
   }, [statistics]);
 
-  const getBedStatusColor = (status) => {
-    const colors = {
-      'available': 'success',
-      'occupied': 'primary',
-      'reserved': 'warning',
-      'maintenance': 'default',
-      'cleaning': 'info'
-    };
-    return colors[status] || 'default';
-  };
-
   return (
-    <Container sx={{ mt: 4, mb: 4 }}>
+    <Box component="section" sx={{ width: '100%', minWidth: 0, mb: 3 }}>
         {/* Header */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
           <Typography variant="h4" component="h1" fontWeight="bold">
-            🛏️ Ward Occupancy Board
+            Ward Occupancy Board
           </Typography>
           <Box sx={{ display: 'flex', gap: 2 }}>
             <ToggleButtonGroup
@@ -292,14 +280,14 @@ const WardOccupancyPage = () => {
           <TableContainer component={Paper}>
             <Table>
               <TableHead>
-                <TableRow sx={{ backgroundColor: 'primary.main' }}>
-                  <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Bed</TableCell>
-                  <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Patient</TableCell>
-                  <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>UHID</TableCell>
-                  <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Doctor</TableCell>
-                  <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Payment Type</TableCell>
-                  <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Admission Date</TableCell>
-                  <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Status</TableCell>
+                <TableRow>
+                  <TableCell>Bed</TableCell>
+                  <TableCell>Patient</TableCell>
+                  <TableCell>UHID</TableCell>
+                  <TableCell>Doctor</TableCell>
+                  <TableCell>Payment Type</TableCell>
+                  <TableCell>Admission Date</TableCell>
+                  <TableCell>Status</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -446,7 +434,7 @@ const WardOccupancyPage = () => {
             <Chip label="Cleaning" color="info" size="small" />
           </Box>
         </Paper>
-      </Container>
+      </Box>
   );
 };
 

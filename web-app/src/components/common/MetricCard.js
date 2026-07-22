@@ -1,85 +1,62 @@
 import React from 'react';
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  Box,
-  Typography,
-  Divider,
-  IconButton,
-  Tooltip,
-  Chip,
-} from '@mui/material';
-import InfoIcon from '@mui/icons-material/InfoOutlined';
-import TrendSparkline from './TrendSparkline';
-import StatusPill from './StatusPill';
+import { Card, CardActionArea, CardContent, Box, Typography } from '@mui/material';
 
-const MetricCard = ({
-  title,
-  value,
-  subtitle,
-  icon,
-  meta,
-  chip,
-  status,
-  trendData,
-  trendColor,
-  trendLabel = 'Last 7 days',
-  action,
-}) => (
-  <Card elevation={2} sx={{ height: '100%', position: 'relative', overflow: 'hidden' }}>
-    <CardHeader
-      avatar={icon}
-      action={
-        action || (
-          <Tooltip title={trendLabel}>
-            <IconButton size="small">
-              <InfoIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-        )
-      }
-      title={
-        <Typography variant="overline" color="text.secondary">
-          {title}
-        </Typography>
-      }
-      sx={{ pb: 0 }}
-    />
-    <CardContent sx={{ pt: 2 }}>
-      <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
-        <Typography variant="h4" fontWeight={700}>
-          {value}
-        </Typography>
-        {chip && (
-          <Chip
-            size="small"
-            color={chip.color || 'default'}
-            label={chip.label}
-            variant={chip.variant || 'outlined'}
-          />
-        )}
-      </Box>
+/**
+ * Compact operational metric. The restrained accent rail makes exceptions
+ * scannable without turning a clinical dashboard into a wall of colour.
+ */
+const MetricContent = ({ title, value, subtitle }) => (
+  <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+    <Box sx={{ minWidth: 0 }}>
+      <Typography variant="overline" sx={{ mb: 0.25, display: 'block' }}>
+        {title}
+      </Typography>
+      <Typography
+        variant="h4"
+        fontWeight={700}
+        sx={{ lineHeight: 1.15, fontVariantNumeric: 'tabular-nums' }}
+      >
+        {value}
+      </Typography>
       {subtitle && (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }} noWrap>
           {subtitle}
         </Typography>
       )}
-      {status && (
-        <Box sx={{ mt: 1 }}>
-          <StatusPill status={status} size="small" />
-        </Box>
-      )}
-      {meta && (
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          {meta}
-        </Typography>
-      )}
-      <Divider sx={{ my: 2 }} />
-      <TrendSparkline data={trendData} color={trendColor} />
-    </CardContent>
+    </Box>
+  </CardContent>
+);
+
+const MetricCard = ({ title, value, subtitle, accent = 'primary.main', onClick }) => (
+  <Card
+    sx={{
+      height: '100%',
+      position: 'relative',
+      borderLeft: '3px solid',
+      borderLeftColor: accent,
+      '&:hover': onClick ? { borderColor: 'primary.light', boxShadow: 2 } : undefined,
+    }}
+  >
+    {onClick ? (
+      <CardActionArea
+        onClick={onClick}
+        aria-label={title}
+        sx={{
+          height: '100%',
+          textAlign: 'left',
+          '&.Mui-focusVisible': {
+            outline: '3px solid',
+            outlineColor: 'primary.main',
+            outlineOffset: 2,
+          },
+        }}
+      >
+        <MetricContent title={title} value={value} subtitle={subtitle} />
+      </CardActionArea>
+    ) : (
+      <MetricContent title={title} value={value} subtitle={subtitle} />
+    )}
   </Card>
 );
 
 export default MetricCard;
-

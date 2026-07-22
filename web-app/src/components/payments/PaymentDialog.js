@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -6,7 +6,6 @@ import {
   DialogActions,
   Button,
   TextField,
-  MenuItem,
   Alert,
   CircularProgress,
   Box,
@@ -24,34 +23,27 @@ import apiService from '../../services/api';
  * PaymentDialog Component
  * Modal dialog for initiating M-Pesa payments
  */
-export default function PaymentDialog({ open, onClose, patient, onSuccess }) {
+export default function PaymentDialog({ open, onClose, patient, invoice, onSuccess }) {
   const [amount, setAmount] = useState('');
   const [phoneNumber, setPhoneNumber] = useState(patient?.phone || '');
-  const [transactionType, setTransactionType] = useState('consultation');
   const [description, setDescription] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
-  const transactionTypes = [
-    { value: 'consultation', label: 'Consultation', defaultAmount: 1500 },
-    { value: 'lab_test', label: 'Lab Test', defaultAmount: 2500 },
-    { value: 'prescription', label: 'Prescription', defaultAmount: 3000 },
-    { value: 'procedure', label: 'Medical Procedure', defaultAmount: 5000 },
-    { value: 'admission', label: 'Hospital Admission', defaultAmount: 50000 },
-    { value: 'other', label: 'Other', defaultAmount: 0 }
-  ];
+  const invoiceBalance = Number(
+    invoice?.balance_due ??
+    (Number(invoice?.total_amount || 0) - Number(invoice?.amount_paid || 0))
+  );
 
-  const handleTransactionTypeChange = (e) => {
-    const type = e.target.value;
-    setTransactionType(type);
-    
-    // Auto-fill amount based on transaction type
-    const selectedType = transactionTypes.find(t => t.value === type);
-    if (selectedType && selectedType.defaultAmount > 0) {
-      setAmount(selectedType.defaultAmount.toString());
-    }
-  };
+  useEffect(() => {
+    if (!open) return;
+    setPhoneNumber(patient?.phone || '');
+    setAmount(invoice?.id && invoiceBalance > 0 ? String(invoiceBalance) : '');
+    setDescription(invoice?.invoice_number ? `Payment for invoice ${invoice.invoice_number}` : '');
+    setError(null);
+    setSuccess(null);
+  }, [open, patient?.phone, invoice?.id, invoice?.invoice_number, invoiceBalance]);
 
   const formatPhoneNumber = (phone) => {
     // Remove any non-digit characters
@@ -76,9 +68,17 @@ export default function PaymentDialog({ open, onClose, patient, onSuccess }) {
     setSuccess(null);
 
     try {
+      if (!invoice?.id) {
+        throw new Error('A payable invoice is required before an M-Pesa request can be sent. Open the invoice in Billing.');
+      }
+
       // Validation
-      if (!amount || parseFloat(amount) <= 0) {
-        throw new Error('Please enter a valid amount');
+      const numericAmount = Number(amount);
+      if (!Number.isSafeInteger(numericAmount) || numericAmount <= 0) {
+        throw new Error('M-Pesa amount must be a positive whole number of shillings');
+      }
+      if (numericAmount > invoiceBalance) {
+        throw new Error('Payment amount cannot exceed the invoice balance');
       }
 
       if (!phoneNumber) {
@@ -87,10 +87,11 @@ export default function PaymentDialog({ open, onClose, patient, onSuccess }) {
 
       const response = await apiService.payments.initiateSTKPush({
         patient_id: patient.id,
-        amount: parseFloat(amount),
+        invoice_id: invoice.id,
+        amount: numericAmount,
         phone_number: formatPhoneNumber(phoneNumber),
-        transaction_type: transactionType,
-        description: description || `${transactionType.replace('_', ' ')} for ${patient.first_name} ${patient.last_name}`
+        transaction_type: 'invoice',
+        description: description || `Payment for invoice ${invoice.invoice_number}`
       });
 
       if (response.success) {
@@ -117,7 +118,6 @@ export default function PaymentDialog({ open, onClose, patient, onSuccess }) {
     if (!loading) {
       setAmount('');
       setPhoneNumber(patient?.phone || '');
-      setTransactionType('consultation');
       setDescription('');
       setError(null);
       setSuccess(null);
@@ -152,21 +152,17 @@ export default function PaymentDialog({ open, onClose, patient, onSuccess }) {
             Patient: <strong>{patient?.first_name} {patient?.last_name}</strong>
           </Typography>
 
-          <TextField
-            select
-            label="Transaction Type"
-            value={transactionType}
-            onChange={handleTransactionTypeChange}
-            fullWidth
-            required
-          >
-            {transactionTypes.map((type) => (
-              <MenuItem key={type.value} value={type.value}>
-                {type.label}
-                {type.defaultAmount > 0 && ` (KES ${type.defaultAmount.toLocaleString()})`}
-              </MenuItem>
-            ))}
-          </TextField>
+          {!invoice?.id && (
+            <Alert severity="warning">
+              M-Pesa requests must be linked to a payable invoice so the receipt can settle the correct balance. Open this patient&apos;s invoice in Billing first.
+            </Alert>
+          )}
+
+          {invoice?.id && (
+            <Alert severity="info">
+              Invoice <strong>{invoice.invoice_number}</strong> · Balance KES {invoiceBalance.toLocaleString()}
+            </Alert>
+          )}
 
           <TextField
             label="Amount (KES)"
@@ -178,7 +174,9 @@ export default function PaymentDialog({ open, onClose, patient, onSuccess }) {
             InputProps={{
               startAdornment: <InputAdornment position="start">KES</InputAdornment>
             }}
-            helperText="Enter the amount to charge"
+            inputProps={{ min: 1, step: 1, max: invoiceBalance || undefined }}
+            helperText="M-Pesa accepts whole shillings; the amount cannot exceed the invoice balance"
+            disabled={!invoice?.id}
           />
 
           <TextField
@@ -196,6 +194,7 @@ export default function PaymentDialog({ open, onClose, patient, onSuccess }) {
               )
             }}
             helperText="Customer will receive payment prompt on this number"
+            disabled={!invoice?.id}
           />
 
           <TextField
@@ -215,11 +214,11 @@ export default function PaymentDialog({ open, onClose, patient, onSuccess }) {
             helperText="Additional payment details"
           />
 
-          <Alert severity="info">
+          {invoice?.id && <Alert severity="info">
             <Typography variant="body2">
-              The customer will receive an M-Pesa prompt on their phone to enter their PIN and confirm the payment.
+              The invoice remains unpaid until Safaricom confirms the receipt and MediMesh reconciles the callback.
             </Typography>
-          </Alert>
+          </Alert>}
         </Box>
       </DialogContent>
 
@@ -230,7 +229,7 @@ export default function PaymentDialog({ open, onClose, patient, onSuccess }) {
         <Button
           onClick={handleSubmit}
           variant="contained"
-          disabled={loading || !amount || !phoneNumber}
+          disabled={loading || !invoice?.id || !amount || !phoneNumber}
           startIcon={loading ? <CircularProgress size={20} /> : <PaymentIcon />}
         >
           {loading ? 'Sending...' : 'Send Payment Request'}

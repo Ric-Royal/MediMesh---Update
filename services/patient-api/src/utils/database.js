@@ -1,13 +1,25 @@
 const { Pool } = require('pg');
+const fs = require('fs');
 const { logger } = require('./logger');
 
 let pool;
 
 const connectDB = async () => {
   try {
+    const connectionString = process.env.DATABASE_URL || (
+      process.env.NODE_ENV === 'development'
+        ? 'postgresql://medimesh_user:MediMeshDB2024!@localhost:5432/medimesh'
+        : undefined
+    );
+    if (!connectionString) throw new Error('DATABASE_URL is required');
+    const sslEnabled = process.env.DATABASE_SSL === 'true';
+    const caPath = process.env.DATABASE_SSL_CA_FILE;
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL || 'postgresql://medimesh_user:MediMeshDB2024!@localhost:5432/medimesh',
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+      connectionString,
+      ssl: sslEnabled ? {
+        rejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false',
+        ...(caPath ? { ca: fs.readFileSync(caPath, 'utf8') } : {})
+      } : false,
       max: 20, // maximum number of clients in the pool
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
@@ -44,4 +56,4 @@ module.exports = {
   connectDB,
   getDB,
   closeDB
-}; 
+};

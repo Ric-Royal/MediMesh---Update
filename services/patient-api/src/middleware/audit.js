@@ -19,13 +19,14 @@ const auditLogger = (req, res, next) => {
 
 const logAuditTrail = async (req, res, responseData) => {
   try {
+    const requestPath = (req.originalUrl || req.url || '').split('?')[0];
     const auditData = {
       timestamp: new Date().toISOString(),
       user_id: req.user?.id || 'anonymous',
       username: req.user?.username || 'anonymous',
-      action: `${req.method} ${req.originalUrl}`,
-      resource_type: extractResourceType(req.originalUrl),
-      resource_id: extractResourceId(req.originalUrl, req.params),
+      action: `${req.method} ${requestPath}`,
+      resource_type: extractResourceType(requestPath),
+      resource_id: extractResourceId(requestPath, req.params),
       status_code: res.statusCode,
       ip_address: req.ip || req.connection.remoteAddress,
       user_agent: req.get('User-Agent'),
@@ -37,7 +38,7 @@ const logAuditTrail = async (req, res, responseData) => {
     auditLoggerUtil.info('API Access', auditData);
 
     // Store in database for immutable audit trail
-    if (shouldLogToDatabase(req.originalUrl)) {
+    if (shouldLogToDatabase(requestPath)) {
       await storeAuditLog(auditData);
     }
 
@@ -59,18 +60,14 @@ const extractResourceId = (url, params) => {
 
 const sanitizeRequestBody = (body) => {
   if (!body) return null;
-  
-  // Remove sensitive fields from logging
-  const sanitized = { ...body };
-  const sensitiveFields = ['password', 'ssn', 'social_security_number'];
-  
-  sensitiveFields.forEach(field => {
-    if (sanitized[field]) {
-      sanitized[field] = '[REDACTED]';
-    }
-  });
-  
-  return sanitized;
+
+  // Audit the shape of a mutation without duplicating clinical, identity or
+  // credential values into application logs. The source record remains the
+  // authoritative data; the audit row records who touched which fields.
+  return {
+    changed_fields: Object.keys(body).filter(field => !['password', 'currentPassword', 'newPassword'].includes(field)),
+    contains_credentials: Object.keys(body).some(field => field.toLowerCase().includes('password'))
+  };
 };
 
 const shouldLogToDatabase = (url) => {
@@ -133,4 +130,4 @@ const captureDataChanges = (resourceType) => {
 module.exports = {
   auditLogger,
   captureDataChanges
-}; 
+};

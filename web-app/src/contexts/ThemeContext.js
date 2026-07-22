@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { ThemeProvider as MuiThemeProvider, responsiveFontSizes } from '@mui/material/styles';
+import { ThemeProvider as MuiThemeProvider, createTheme, responsiveFontSizes } from '@mui/material/styles';
 import { lightTheme, darkTheme } from '../theme/theme';
+import { useSettings } from './SettingsContext';
+import { DEFAULT_BRAND_COLOR, getAccessibleBrandColor } from '../utils/colorContrast';
 
 const ThemeContext = createContext();
 
@@ -12,10 +14,17 @@ export const useTheme = () => {
   return context;
 };
 
-const buildTheme = (mode) => {
+const buildTheme = (mode, brandColor = DEFAULT_BRAND_COLOR) => {
   const paletteMode = mode === 'dark' ? 'dark' : 'light';
   const baseTheme = paletteMode === 'dark' ? darkTheme : lightTheme;
-  return responsiveFontSizes(baseTheme);
+  const themed = createTheme(baseTheme, {
+    palette: {
+      primary: {
+        main: getAccessibleBrandColor(brandColor),
+      },
+    },
+  });
+  return responsiveFontSizes(themed);
 };
 
 const getSystemPreference = () => {
@@ -26,6 +35,8 @@ const getSystemPreference = () => {
 };
 
 export const ThemeProvider = ({ children }) => {
+  const { systemSettings } = useSettings();
+  const brandColor = getAccessibleBrandColor(systemSettings?.primaryColor);
   const [currentTheme, setCurrentTheme] = useState(() => {
     if (typeof window === 'undefined') return 'light';
     return localStorage.getItem('theme-preference') || 'light';
@@ -37,7 +48,7 @@ export const ThemeProvider = ({ children }) => {
     }
     return saved || 'light';
   });
-  const [muiTheme, setMuiTheme] = useState(() => buildTheme(resolvedTheme));
+  const [muiTheme, setMuiTheme] = useState(() => buildTheme(resolvedTheme, brandColor));
 
   const updateTheme = (newTheme) => {
     setCurrentTheme(newTheme);
@@ -66,12 +77,12 @@ export const ThemeProvider = ({ children }) => {
   }, [currentTheme]);
 
   useEffect(() => {
-    setMuiTheme(buildTheme(resolvedTheme));
+    setMuiTheme(buildTheme(resolvedTheme, brandColor));
     if (typeof document !== 'undefined') {
       document.documentElement.setAttribute('data-theme', resolvedTheme);
       document.documentElement.style.backgroundColor = resolvedTheme === 'dark' ? '#0A1929' : '#F5F7FA';
     }
-  }, [resolvedTheme]);
+  }, [resolvedTheme, brandColor]);
 
   const toggleThemeMode = () => {
     setCurrentTheme((prev) => {

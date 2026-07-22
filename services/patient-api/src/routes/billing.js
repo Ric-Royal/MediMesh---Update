@@ -2,6 +2,16 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { authorize } = require('../middleware/auth');
+
+router.use(authorize(['admin', 'billing', 'doctor']));
+
+class BillingRequestError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
 
 // ============================================
 // INVOICES
@@ -15,11 +25,14 @@ router.get('/invoices', async (req, res) => {
     
     let query = `
       SELECT i.*,
+             i.total_amount as total,
              p.first_name || ' ' || p.last_name as patient_name,
              p.uhid,
-             (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
+             e.encounter_type,
+             (SELECT COUNT(*) FROM invoice_line_items WHERE invoice_id = i.id) as item_count
       FROM invoices i
       LEFT JOIN patients p ON i.patient_id = p.id
+      LEFT JOIN encounters e ON i.encounter_id = e.id
       WHERE 1=1
     `;
     const params = [];
@@ -124,8 +137,8 @@ router.get('/invoices/pending-payment', async (req, res) => {
       FROM invoices i
       LEFT JOIN patients p ON i.patient_id = p.id
       LEFT JOIN encounters e ON i.encounter_id = e.id
-      WHERE i.status IN ('draft', 'issued')
-        AND i.total_amount > 0
+      WHERE i.status IN ('draft', 'issued', 'partially-paid', 'overdue')
+        AND i.balance_due > 0
       ORDER BY i.invoice_date DESC
     `;
     const result = await getDB().query(query);
@@ -145,11 +158,14 @@ router.get('/invoices/:id', async (req, res) => {
     // Get invoice
     const invoiceQuery = `
       SELECT i.*,
+             i.total_amount as total,
              p.first_name || ' ' || p.last_name as patient_name,
              p.uhid, p.phone as phone_number,
+             e.encounter_type,
              s.first_name || ' ' || s.last_name as billed_by_name
       FROM invoices i
       LEFT JOIN patients p ON i.patient_id = p.id
+      LEFT JOIN encounters e ON i.encounter_id = e.id
       LEFT JOIN staff s ON i.billed_by = s.id
       WHERE i.id = $1
     `;
@@ -159,21 +175,19 @@ router.get('/invoices/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Invoice not found' });
     }
     
-    // Get items
-    const itemsQuery = `
-      SELECT ii.*,
-             s.first_name || ' ' || s.last_name as provider_name,
-             d.department_name
-      FROM invoice_items ii
-      LEFT JOIN staff s ON ii.provider_id = s.id
-      LEFT JOIN departments d ON ii.department_id = d.id
-      WHERE ii.invoice_id = $1
-      ORDER BY ii.created_at
+    // Get line items (from automatic invoicing system)
+    const lineItemsQuery = `
+      SELECT ili.*,
+             s.first_name || ' ' || s.last_name as provider_name
+      FROM invoice_line_items ili
+      LEFT JOIN staff s ON ili.provider_id = s.id
+      WHERE ili.invoice_id = $1
+      ORDER BY ili.billed_at
     `;
-    const itemsResult = await getDB().query(itemsQuery, [id]);
+    const lineItemsResult = await getDB().query(lineItemsQuery, [id]);
     
     const invoice = invoiceResult.rows[0];
-    invoice.items = itemsResult.rows;
+    invoice.line_items = lineItemsResult.rows;
     
     res.json({ success: true, data: invoice });
   } catch (error) {
@@ -321,61 +335,159 @@ router.get('/payments', async (req, res) => {
   }
 });
 
-// Record payment
-router.post('/payments', async (req, res) => {
+// Record and allocate a manual payment. M-Pesa is intentionally excluded:
+// only a reconciled Daraja callback may write an M-Pesa ledger entry.
+router.post('/payments', authorize(['admin', 'billing']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
-    
+
     const {
       patient_id, invoice_id, payment_method, amount,
-      mpesa_transaction_id, card_last_4, cheque_number,
+      card_last_4, cheque_number,
       bank_reference, notes, allocations
     } = req.body;
-    
-    // Create payment
+
+    const allowedMethods = ['cash', 'card', 'bank-transfer', 'cheque', 'insurance', 'corporate', 'waiver'];
+    const numericAmount = Number(amount);
+    if (!patient_id) throw new BillingRequestError('Patient is required');
+    if (!allowedMethods.includes(payment_method)) {
+      throw new BillingRequestError(
+        payment_method === 'mpesa'
+          ? 'Use the M-Pesa STK request action; M-Pesa cannot be recorded manually'
+          : 'Unsupported payment method'
+      );
+    }
+    if (
+      !Number.isFinite(numericAmount) || numericAmount <= 0 ||
+      Math.abs(numericAmount * 100 - Math.round(numericAmount * 100)) > 1e-7
+    ) {
+      throw new BillingRequestError('Payment amount must be positive and use no more than two decimal places');
+    }
+
+    const requestedAllocations = Array.isArray(allocations) && allocations.length
+      ? allocations
+      : invoice_id
+        ? [{ invoice_id, allocated_amount: numericAmount }]
+        : [];
+    if (!requestedAllocations.length) {
+      throw new BillingRequestError('At least one invoice allocation is required');
+    }
+
+    const normalizedAllocations = requestedAllocations.map((allocation) => ({
+      invoice_id: allocation.invoice_id,
+      allocated_amount: Number(allocation.allocated_amount)
+    }));
+    if (normalizedAllocations.some((allocation) =>
+      !allocation.invoice_id || !Number.isFinite(allocation.allocated_amount) ||
+      allocation.allocated_amount <= 0 ||
+      Math.abs(allocation.allocated_amount * 100 - Math.round(allocation.allocated_amount * 100)) > 1e-7
+    )) {
+      throw new BillingRequestError('Every allocation needs an invoice and a positive amount');
+    }
+
+    const invoiceIds = normalizedAllocations.map((allocation) => allocation.invoice_id);
+    if (new Set(invoiceIds).size !== invoiceIds.length) {
+      throw new BillingRequestError('An invoice may only appear once in a payment allocation');
+    }
+    const allocatedTotal = normalizedAllocations.reduce(
+      (total, allocation) => total + Math.round(allocation.allocated_amount * 100),
+      0
+    );
+    if (allocatedTotal !== Math.round(numericAmount * 100)) {
+      throw new BillingRequestError('Allocated amounts must equal the payment amount');
+    }
+
+    // Lock invoices in a stable order so simultaneous cashiers cannot overpay
+    // an invoice or deadlock when applying split payments.
+    const invoiceResult = await client.query(`
+      SELECT * FROM invoices
+      WHERE id = ANY($1::uuid[])
+      ORDER BY id
+      FOR UPDATE
+    `, [invoiceIds]);
+    if (invoiceResult.rows.length !== invoiceIds.length) {
+      throw new BillingRequestError('One or more invoices were not found', 404);
+    }
+    const invoicesById = new Map(invoiceResult.rows.map((invoice) => [invoice.id, invoice]));
+    const reservationsResult = await client.query(`
+      SELECT invoice_id, COALESCE(SUM(amount), 0) AS reserved
+      FROM payments
+      WHERE invoice_id = ANY($1::uuid[])
+        AND payment_method = 'mpesa'
+        AND status = 'pending'
+        AND created_at >= NOW() - INTERVAL '30 minutes'
+      GROUP BY invoice_id
+    `, [invoiceIds]);
+    const reservationsByInvoice = new Map(
+      reservationsResult.rows.map((reservation) => [reservation.invoice_id, Number(reservation.reserved)])
+    );
+    for (const allocation of normalizedAllocations) {
+      const invoice = invoicesById.get(allocation.invoice_id);
+      if (invoice.patient_id !== patient_id) {
+        throw new BillingRequestError('Every allocated invoice must belong to the selected patient');
+      }
+      if (['paid', 'cancelled', 'refunded'].includes(invoice.status)) {
+        throw new BillingRequestError(`Invoice ${invoice.invoice_number} cannot receive payment while ${invoice.status}`, 409);
+      }
+      const balance = Number(invoice.balance_due ?? (Number(invoice.total_amount) - Number(invoice.amount_paid || 0)));
+      const available = balance - (reservationsByInvoice.get(invoice.id) || 0);
+      if (!Number.isFinite(balance) || allocation.allocated_amount > available + 0.005) {
+        throw new BillingRequestError(
+          available < balance
+            ? `Invoice ${invoice.invoice_number} has an active M-Pesa request for part of its balance`
+            : `Allocation exceeds the balance for invoice ${invoice.invoice_number}`,
+          409
+        );
+      }
+    }
+
+    const ledgerInvoiceId = normalizedAllocations.length === 1
+      ? normalizedAllocations[0].invoice_id
+      : null;
     const paymentQuery = `
       INSERT INTO billing_payments (
         patient_id, invoice_id, payment_method, amount,
-        mpesa_transaction_id, card_last_4, cheque_number,
+        card_last_4, cheque_number,
         bank_reference, notes, received_by, status
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'completed')
       RETURNING *
     `;
     const paymentResult = await client.query(paymentQuery, [
-      patient_id, invoice_id, payment_method, amount,
-      mpesa_transaction_id, card_last_4, cheque_number,
-      bank_reference, notes, req.user?.userId, 'completed'
+      patient_id, ledgerInvoiceId, payment_method, numericAmount,
+      card_last_4, cheque_number, bank_reference, notes, req.user.id
     ]);
-    
+
     const payment = paymentResult.rows[0];
-    
-    // Allocate to invoices
-    if (allocations && allocations.length > 0) {
-      for (const alloc of allocations) {
-        const allocQuery = `
-          INSERT INTO payment_allocations (payment_id, invoice_id, allocated_amount)
-          VALUES ($1, $2, $3)
-        `;
-        await client.query(allocQuery, [payment.id, alloc.invoice_id, alloc.allocated_amount]);
-      }
-    } else if (invoice_id) {
-      // Allocate full amount to single invoice
-      const allocQuery = `
+
+    for (const allocation of normalizedAllocations) {
+      await client.query(`
         INSERT INTO payment_allocations (payment_id, invoice_id, allocated_amount)
         VALUES ($1, $2, $3)
-      `;
-      await client.query(allocQuery, [payment.id, invoice_id, amount]);
+      `, [payment.id, allocation.invoice_id, allocation.allocated_amount]);
+      await client.query(`
+        UPDATE invoices SET payment_method = $2, updated_at = NOW()
+        WHERE id = $1
+      `, [allocation.invoice_id, payment_method]);
     }
-    
+
     await client.query('COMMIT');
-    
-    logger.info(`Payment recorded: ${payment.payment_number}, Amount: ${amount}`);
+
+    logger.info('Manual billing payment recorded', {
+      paymentId: payment.id,
+      paymentNumber: payment.payment_number,
+      amount: numericAmount,
+      invoiceIds,
+      userId: req.user.id
+    });
     res.status(201).json({ success: true, data: payment });
   } catch (error) {
     await client.query('ROLLBACK');
     logger.error('Error recording payment:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({
+      success: false,
+      error: error instanceof BillingRequestError ? error.message : 'Payment could not be recorded'
+    });
   } finally {
     client.release();
   }
@@ -390,9 +502,10 @@ router.get('/statistics', async (req, res) => {
     const query = `
       SELECT
         (SELECT COUNT(*) FROM invoices WHERE status = 'issued') as invoices_issued,
+        (SELECT COUNT(*) FROM invoices WHERE status IN ('issued', 'partially-paid', 'overdue')) as open_invoices,
         (SELECT COUNT(*) FROM invoices WHERE status = 'overdue') as invoices_overdue,
         (SELECT COALESCE(SUM(balance_due), 0) FROM invoices WHERE status IN ('issued', 'partially-paid', 'overdue')) as total_outstanding,
-        (SELECT COALESCE(SUM(amount), 0) FROM billing_payments WHERE DATE(payment_date) = CURRENT_DATE) as payments_today,
+        (SELECT COALESCE(SUM(amount), 0) FROM billing_payments WHERE DATE(payment_date) = CURRENT_DATE AND status = 'completed') as payments_today,
         (SELECT COALESCE(SUM(total_amount), 0) FROM invoices WHERE DATE(invoice_date) = CURRENT_DATE) as invoiced_today,
         (SELECT COUNT(*) FROM insurance_claims WHERE status = 'pending') as pending_claims
     `;
@@ -463,21 +576,61 @@ router.put('/invoices/:id/finalize', async (req, res) => {
 });
 
 // Process payment for invoice
-router.post('/invoices/:id/payment', async (req, res) => {
+router.post('/invoices/:id/payment', authorize(['admin', 'billing']), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     
     const { id } = req.params;
     const { payment_method, amount, reference_number, notes } = req.body;
+    const allowedMethods = ['cash', 'card', 'bank-transfer', 'cheque', 'insurance', 'corporate', 'waiver'];
+    const numericAmount = Number(amount);
+    if (payment_method === 'mpesa') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: 'Use the M-Pesa STK request action; M-Pesa cannot be recorded manually' });
+    }
+    if (!allowedMethods.includes(payment_method)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: 'Unsupported payment method' });
+    }
+    if (
+      !Number.isFinite(numericAmount) || numericAmount <= 0 ||
+      Math.abs(numericAmount * 100 - Math.round(numericAmount * 100)) > 1e-7
+    ) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: 'Payment amount must be positive and use no more than two decimal places' });
+    }
     
     // Get invoice
-    const invoiceResult = await client.query('SELECT * FROM invoices WHERE id = $1', [id]);
+    const invoiceResult = await client.query('SELECT * FROM invoices WHERE id = $1 FOR UPDATE', [id]);
     if (invoiceResult.rows.length === 0) {
-      throw new Error('Invoice not found');
+      throw new BillingRequestError('Invoice not found', 404);
     }
     
     const invoice = invoiceResult.rows[0];
+    if (['paid', 'cancelled', 'refunded'].includes(invoice.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: `Invoice cannot receive payment while ${invoice.status}` });
+    }
+    const balanceDue = Number(invoice.balance_due ?? (Number(invoice.total_amount) - Number(invoice.amount_paid || 0)));
+    const reservationResult = await client.query(`
+      SELECT COALESCE(SUM(amount), 0) AS reserved
+      FROM payments
+      WHERE invoice_id = $1
+        AND payment_method = 'mpesa'
+        AND status = 'pending'
+        AND created_at >= NOW() - INTERVAL '30 minutes'
+    `, [id]);
+    const availableBalance = balanceDue - Number(reservationResult.rows[0].reserved || 0);
+    if (numericAmount > availableBalance + 0.005) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        error: availableBalance < balanceDue
+          ? 'An active M-Pesa request reserves part of this invoice balance'
+          : 'Payment amount exceeds invoice balance'
+      });
+    }
     
     // Create payment record
     const paymentQuery = `
@@ -489,15 +642,20 @@ router.post('/invoices/:id/payment', async (req, res) => {
     `;
     const paymentResult = await client.query(paymentQuery, [
       invoice.patient_id, id, payment_method, amount,
-      reference_number, notes, req.user?.userId
+      reference_number, notes, req.user?.id
     ]);
-    
-    // Update invoice status to paid
+
+    // The allocation trigger is the single source of truth for amount_paid and
+    // invoice payment status across cash, card and M-Pesa payments.
     await client.query(`
-      UPDATE invoices
-      SET status = 'paid', last_updated = NOW()
+      INSERT INTO payment_allocations (payment_id, invoice_id, allocated_amount)
+      VALUES ($1, $2, $3)
+    `, [paymentResult.rows[0].id, id, numericAmount]);
+
+    await client.query(`
+      UPDATE invoices SET payment_method = $2, last_updated = NOW(), updated_at = NOW()
       WHERE id = $1
-    `, [id]);
+    `, [id, payment_method]);
     
     // Update encounter status to completed if all services done
     await client.query(`
@@ -507,7 +665,11 @@ router.post('/invoices/:id/payment', async (req, res) => {
         AND pending_lab_orders = 0
         AND pending_prescriptions = 0
         AND pending_radiology_orders = 0
-    `, [invoice.encounter_id]);
+        AND EXISTS (
+          SELECT 1 FROM invoices paid_invoice
+          WHERE paid_invoice.id = $2 AND paid_invoice.payment_status = 'paid'
+        )
+    `, [invoice.encounter_id, id]);
     
     await client.query('COMMIT');
     
@@ -516,7 +678,10 @@ router.post('/invoices/:id/payment', async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     logger.error('Error processing payment:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({
+      success: false,
+      error: error instanceof BillingRequestError ? error.message : 'Payment could not be processed'
+    });
   } finally {
     client.release();
   }

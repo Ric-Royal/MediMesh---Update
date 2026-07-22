@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -36,15 +36,10 @@ import {
   Search as SearchIcon,
   Event as EventIcon,
   Person as PersonIcon,
-  LocalHospital as HospitalIcon,
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
-  Edit as EditIcon,
   Visibility as ViewIcon,
-  CalendarToday as CalendarIcon,
-  AccessTime as TimeIcon,
-  Phone as PhoneIcon,
-  Email as EmailIcon
+  CalendarToday as CalendarIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import API_CONFIG from '../config/api';
@@ -61,7 +56,7 @@ const AppointmentsPage = () => {
   const [totalCount, setTotalCount] = useState(0);
   
   // Filters
-  const [filters, setFilters] = useState({
+  const [filters] = useState({
     status: '',
     doctor_id: '',
     clinic_id: '',
@@ -95,12 +90,7 @@ const AppointmentsPage = () => {
   const [availableSlots, setAvailableSlots] = useState([]);
   const [searchPatient, setSearchPatient] = useState('');
 
-  useEffect(() => {
-    fetchAppointments();
-    fetchReferenceData();
-  }, [page, rowsPerPage, filters, activeTab]);
-
-  const fetchAppointments = async () => {
+  const fetchAppointments = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -136,9 +126,9 @@ const AppointmentsPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeTab, filters, page, rowsPerPage]);
 
-  const fetchReferenceData = async () => {
+  const fetchReferenceData = useCallback(async () => {
     try {
       const [doctorsRes, clinicsRes] = await Promise.all([
         fetch(`${API_CONFIG.baseURL}/api/staff?role=doctor`, {
@@ -161,7 +151,12 @@ const AppointmentsPage = () => {
     } catch (err) {
       console.error('Error fetching reference data:', err);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchAppointments();
+    fetchReferenceData();
+  }, [fetchAppointments, fetchReferenceData]);
 
   const searchPatients = async (query) => {
     if (!query || query.length < 2) {
@@ -323,7 +318,7 @@ const AppointmentsPage = () => {
   }
 
   return (
-    <Box>
+    <Box component="section" sx={{ width: '100%', minWidth: 0 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box>

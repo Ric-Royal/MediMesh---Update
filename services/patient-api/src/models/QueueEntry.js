@@ -57,8 +57,9 @@ class QueueEntry {
       query += ` AND q.status = $${paramCount++}`;
       values.push(status);
     } else {
-      // Default to active statuses
-      query += ` AND q.status IN ('waiting', 'called', 'in-service')`;
+      // Live queue boards must not resurrect unfinished entries from old visits.
+      query += ` AND q.status IN ('waiting', 'called', 'in-service')
+                 AND q.joined_at >= NOW() - INTERVAL '24 hours'`;
     }
     
     query += ` ORDER BY q.priority_level ASC, q.queue_position ASC, q.joined_at ASC`;
@@ -104,6 +105,7 @@ class QueueEntry {
       WHERE q.clinic_id = $1 
         AND q.queue_type = $2
         AND q.status IN ('waiting', 'called', 'in-service')
+        AND q.joined_at >= NOW() - INTERVAL '24 hours'
       ORDER BY q.priority_level ASC, q.queue_position ASC
     `;
     const result = await getDB().query(query, [clinicId, queueType]);
@@ -126,24 +128,64 @@ class QueueEntry {
       LEFT JOIN clinics c ON q.clinic_id = c.id
       WHERE q.doctor_id = $1 
         AND q.status IN ('waiting', 'called', 'in-service')
+        AND q.joined_at >= NOW() - INTERVAL '24 hours'
       ORDER BY q.priority_level ASC, q.queue_position ASC
     `;
     const result = await getDB().query(query, [doctorId]);
     return result.rows;
   }
   
-  static async getQueueStatistics(clinicId) {
+  static async getQueueStatistics(clinicId = null, queueType = 'consultation') {
+    const values = [];
+    const filters = [];
+
+    if (clinicId) {
+      values.push(clinicId);
+      filters.push(`clinic_id = $${values.length}`);
+    }
+
+    if (queueType) {
+      values.push(queueType);
+      filters.push(`queue_type = $${values.length}`);
+    }
+
     const query = `
       SELECT 
-        COUNT(*) as total_in_queue,
-        COUNT(*) FILTER (WHERE is_emergency = true) as emergencies,
-        FLOOR(AVG(EXTRACT(EPOCH FROM (NOW() - joined_at)) / 60))::int as average_wait_minutes,
-        MAX(EXTRACT(EPOCH FROM (NOW() - joined_at)) / 60)::int as longest_wait_minutes
+        COUNT(*) FILTER (
+          WHERE status IN ('waiting', 'called')
+            AND joined_at >= NOW() - INTERVAL '24 hours'
+        ) as total_waiting,
+        COUNT(*) FILTER (
+          WHERE status = 'in-service'
+            AND joined_at >= NOW() - INTERVAL '24 hours'
+        ) as in_service,
+        COUNT(*) FILTER (
+          WHERE status = 'completed'
+            AND completed_at::date = CURRENT_DATE
+        ) as completed_today,
+        COUNT(*) FILTER (
+          WHERE is_emergency = true
+            AND status IN ('waiting', 'called', 'in-service')
+            AND joined_at >= NOW() - INTERVAL '24 hours'
+        ) as emergencies,
+        COALESCE(FLOOR(AVG(
+          CASE
+            WHEN status IN ('waiting', 'called')
+              AND joined_at >= NOW() - INTERVAL '24 hours'
+            THEN EXTRACT(EPOCH FROM (NOW() - joined_at)) / 60
+          END
+        ))::int, 0) as average_wait_minutes,
+        COALESCE(MAX(
+          CASE
+            WHEN status IN ('waiting', 'called')
+              AND joined_at >= NOW() - INTERVAL '24 hours'
+            THEN EXTRACT(EPOCH FROM (NOW() - joined_at)) / 60
+          END
+        )::int, 0) as longest_wait_minutes
       FROM queue_entries
-      WHERE clinic_id = $1 
-        AND status IN ('waiting', 'called')
+      ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
     `;
-    const result = await getDB().query(query, [clinicId]);
+    const result = await getDB().query(query, values);
     return result.rows[0];
   }
   

@@ -76,21 +76,22 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
     let filtered = drugCatalog;
 
     if (searchTerm) {
+      const term = searchTerm.toLowerCase();
       filtered = filtered.filter(drug =>
-        drug.drug_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        drug.drug_code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        drug.generic_name?.toLowerCase().includes(searchTerm.toLowerCase())
+        (drug.generic_name || '').toLowerCase().includes(term) ||
+        (drug.brand_name || '').toLowerCase().includes(term) ||
+        (drug.drug_code || '').toLowerCase().includes(term)
       );
     }
 
     if (categoryFilter !== 'all') {
-      filtered = filtered.filter(drug => drug.category === categoryFilter);
+      filtered = filtered.filter(drug => drug.category_name === categoryFilter);
     }
 
     setFilteredDrugs(filtered);
   }, [searchTerm, categoryFilter, drugCatalog]);
 
-  const categories = [...new Set(drugCatalog.map(drug => drug.category).filter(Boolean))];
+  const categories = [...new Set(drugCatalog.map(drug => drug.category_name).filter(Boolean))];
 
   const handleAddMedication = (drug) => {
     // Check if already added
@@ -100,7 +101,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
 
     const newMedication = {
       drugId: drug.id,
-      drugName: drug.drug_name,
+      drugName: drug.brand_name || drug.generic_name,
       drugCode: drug.drug_code,
       genericName: drug.generic_name,
       dosage: drug.strength || '',
@@ -108,7 +109,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
       duration: '7 days',
       quantity: 21,
       instructions: 'Take with food',
-      unitPrice: drug.unit_price || 0,
+      unitPrice: parseFloat(drug.unit_price) || 0,
       totalPrice: 0,
     };
 
@@ -198,7 +199,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
                     <TableCell>{med.frequency}</TableCell>
                     <TableCell>{med.duration}</TableCell>
                     <TableCell>{med.quantity}</TableCell>
-                    <TableCell align="right">${med.totalPrice?.toFixed(2)}</TableCell>
+                    <TableCell align="right">${parseFloat(med.totalPrice || 0).toFixed(2)}</TableCell>
                     <TableCell align="center">
                       <IconButton
                         size="small"
@@ -258,9 +259,9 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
               label="Category"
             >
               <MenuItem value="all">All Categories</MenuItem>
-              {categories.map((category) => (
-                <MenuItem key={category} value={category}>
-                  {category}
+              {categories.map((catName) => (
+                <MenuItem key={catName} value={catName}>
+                  {catName}
                 </MenuItem>
               ))}
             </Select>
@@ -294,7 +295,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
                     <Box display="flex" alignItems="center" gap={1} mb={1}>
                       <MedicationIcon color={isSelected ? 'secondary' : 'primary'} />
                       <Typography variant="subtitle1" fontWeight="bold">
-                        {drug.drug_name}
+                        {drug.brand_name || drug.generic_name}
                       </Typography>
                     </Box>
                     {drug.generic_name && (
@@ -305,13 +306,13 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
                     {drug.strength && (
                       <Chip label={drug.strength} size="small" sx={{ mb: 1 }} />
                     )}
-                    {drug.category && (
+                    {drug.category_name && (
                       <Typography variant="body2" color="text.secondary" gutterBottom>
-                        Category: {drug.category}
+                        Category: {drug.category_name}
                       </Typography>
                     )}
                     <Typography variant="body2" fontWeight="bold" color="primary">
-                      ${drug.unit_price?.toFixed(2)} per unit
+                      ${parseFloat(drug.unit_price || 0).toFixed(2)} per unit
                     </Typography>
                   </CardContent>
                   <CardActions>
@@ -429,7 +430,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
               <Grid item xs={12}>
                 <Box sx={{ p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
                   <Typography variant="body2">
-                    <strong>Unit Price:</strong> ${editingMedication.unitPrice?.toFixed(2)}
+                    <strong>Unit Price:</strong> ${parseFloat(editingMedication.unitPrice || 0).toFixed(2)}
                   </Typography>
                   <Typography variant="body2">
                     <strong>Quantity:</strong> {editingMedication.quantity}
@@ -476,7 +477,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
                     <Box display="flex" alignItems="center" gap={1} mb={1}>
                       <MedicationIcon color={isSelected ? 'secondary' : 'primary'} />
                       <Typography variant="subtitle1" fontWeight="bold">
-                        {drug.drug_name}
+                        {drug.brand_name || drug.generic_name}
                       </Typography>
                     </Box>
                     {drug.generic_name && (
@@ -487,17 +488,17 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
                     {drug.strength && (
                       <Chip label={drug.strength} size="small" sx={{ mb: 1 }} />
                     )}
-                    {drug.category && (
+                    {drug.category_name && (
                       <Typography variant="body2" color="text.secondary" gutterBottom>
-                        Category: {drug.category}
+                        Category: {drug.category_name}
                       </Typography>
                     )}
                     <Typography variant="body2" fontWeight="bold" color="primary">
-                      ${drug.unit_price?.toFixed(2)} per unit
+                      ${parseFloat(drug.unit_price || 0).toFixed(2)} per unit
                     </Typography>
-                    {drug.stock_quantity !== undefined && (
-                      <Typography variant="caption" color={drug.stock_quantity > 0 ? 'success.main' : 'error.main'}>
-                        Stock: {drug.stock_quantity}
+                    {drug.current_stock !== undefined && (
+                      <Typography variant="caption" color={drug.current_stock > 0 ? 'success.main' : 'error.main'}>
+                        Stock: {drug.current_stock}
                       </Typography>
                     )}
                   </CardContent>

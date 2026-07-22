@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Card,
@@ -14,13 +14,11 @@ import {
   Tooltip,
   CircularProgress,
   Alert,
-  Button,
   Chip
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
   Receipt as ReceiptIcon,
-  Info as InfoIcon,
   Sync as SyncIcon
 } from '@mui/icons-material';
 import apiService from '../../services/api';
@@ -37,7 +35,7 @@ export default function PaymentHistory({ patientId }) {
   const [refreshing, setRefreshing] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState({});
 
-  const fetchPayments = async (showLoader = true) => {
+  const fetchPayments = useCallback(async (showLoader = true) => {
     if (showLoader) {
       setLoading(true);
     } else {
@@ -59,13 +57,13 @@ export default function PaymentHistory({ patientId }) {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [patientId]);
 
   useEffect(() => {
     if (patientId) {
       fetchPayments();
     }
-  }, [patientId]);
+  }, [patientId, fetchPayments]);
 
   const handleRefresh = () => {
     fetchPayments(false);
@@ -98,13 +96,13 @@ export default function PaymentHistory({ patientId }) {
   const getPaymentMethodIcon = (method) => {
     switch (method) {
       case 'mpesa':
-        return '📱 M-Pesa';
+        return 'M-Pesa';
       case 'cash':
-        return '💵 Cash';
+        return 'Cash';
       case 'card':
-        return '💳 Card';
+        return 'Card';
       case 'insurance':
-        return '🏥 Insurance';
+        return 'Insurance';
       default:
         return method;
     }

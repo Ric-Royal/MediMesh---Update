@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   TextField,
   InputAdornment,
@@ -10,8 +10,7 @@ import {
   Typography,
   Chip,
   Box,
-  IconButton,
-  Tooltip
+  IconButton
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import PersonIcon from '@mui/icons-material/Person';
@@ -20,7 +19,11 @@ import FilterAltIcon from '@mui/icons-material/FilterAlt';
 import { debounce } from '@mui/material/utils';
 import API_CONFIG from '../../config/api';
 
-export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID, Name, or Phone (Ctrl+K)" }) => {
+export const GlobalSearchBar = ({
+  onPatientSelect,
+  placeholder = "Search by UHID, name or phone (Ctrl+K)",
+  compact = false,
+}) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -37,8 +40,8 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
   ];
 
   // Debounced search function
-  const performSearch = useCallback(
-    debounce(async (searchQuery) => {
+  const performSearch = useMemo(
+    () => debounce(async (searchQuery) => {
       if (!searchQuery || searchQuery.length < 2) {
         setResults([]);
         setIsSearching(false);
@@ -69,6 +72,8 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
     }, 300),
     [searchFilter, includeArchived]
   );
+
+  useEffect(() => () => performSearch.clear(), [performSearch]);
 
   const handleSearchChange = (e) => {
     const value = e.target.value;
@@ -118,6 +123,7 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
         value={query}
         onChange={handleSearchChange}
         onFocus={() => query && setShowResults(true)}
+        inputProps={{ 'aria-label': 'Search patients by identifier, name or phone' }}
         InputProps={{
           startAdornment: (
             <InputAdornment position="start">
@@ -126,7 +132,7 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
           ),
           endAdornment: query && (
             <InputAdornment position="end">
-              <IconButton size="small" onClick={handleClear}>
+              <IconButton size="small" onClick={handleClear} aria-label="Clear patient search">
                 <CloseIcon fontSize="small" />
               </IconButton>
             </InputAdornment>
@@ -135,11 +141,12 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
         sx={{
           '& .MuiOutlinedInput-root': {
             backgroundColor: 'background.paper',
+            height: compact ? 40 : undefined,
           }
         }}
       />
 
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
+      {!compact && <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
         {filterOptions.map((option) => (
           <Chip
             key={option.value}
@@ -158,7 +165,7 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
           color={includeArchived ? 'secondary' : 'default'}
           onClick={() => setIncludeArchived((prev) => !prev)}
         />
-      </Box>
+      </Box>}
 
       {/* Search Results Dropdown */}
       {showResults && (query.length >= 2) && (
@@ -223,14 +230,14 @@ export const GlobalSearchBar = ({ onPatientSelect, placeholder = "Search by UHID
                         }
                         secondary={
                           <Box>
-                            {patient.phone_number && (
+                            {(patient.phone_number || patient.phone) && (
                               <Typography variant="caption" display="block">
-                                📱 {patient.phone_number}
+                                {patient.phone_number || patient.phone}
                               </Typography>
                             )}
                             {patient.email && (
                               <Typography variant="caption" display="block">
-                                ✉️ {patient.email}
+                                {patient.email}
                               </Typography>
                             )}
                             {patient.payment_type && (

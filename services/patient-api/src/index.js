@@ -1,9 +1,17 @@
+require('dotenv').config();
+const { loadFileSecrets } = require('./utils/fileSecrets');
+const { validateRuntimeConfiguration } = require('./utils/runtimeConfig');
+
+// Fail before importing services with startup side effects, opening database
+// connections, or binding a listener when production configuration is unsafe.
+loadFileSecrets(process.env);
+validateRuntimeConfiguration(process.env);
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
-require('dotenv').config();
 
 const { logger } = require('./utils/logger');
 const { connectDB } = require('./utils/database');
@@ -11,10 +19,12 @@ const { connectRedis } = require('./utils/redis');
 const { initializeWebSocket } = require('./utils/websocket');
 const { authenticateToken } = require('./middleware/auth');
 const { auditLogger } = require('./middleware/audit');
+const { sanitizeServerErrorResponses } = require('./middleware/sanitizeErrors');
 const FileAttachment = require('./models/FileAttachment');
 const UserSettings = require('./models/UserSettings');
 const SystemSettings = require('./models/SystemSettings');
 const Payment = require('./models/Payment');
+const UserAccount = require('./models/UserAccount');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -37,9 +47,16 @@ const scheduleRoutes = require('./routes/schedules');
 const clinicRoutes = require('./routes/clinics');
 const staffRoutes = require('./routes/staff');
 const consultationRoutes = require('./routes/consultations');
+const dashboardRoutes = require('./routes/dashboard');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// The API is only exposed through the in-stack nginx/Traefik proxy. Trust one
+// hop so rate limiting and audit logs use the real client address without
+// accepting an arbitrary forwarded chain.
+app.set('trust proxy', 1);
 
 // Security middleware
 app.use(helmet());
@@ -58,28 +75,28 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-// Logging
-app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'development' ? 50 : 10,
+  message: { error: 'Too many sign-in attempts. Please wait before trying again.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+});
+
+// Do not persist query strings: webhook secrets and search terms may be present.
+morgan.token('safe-url', req => (req.originalUrl || req.url || '').split('?')[0]);
+app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length] ":referrer" ":user-agent"', {
+  stream: { write: message => logger.info(message.trim()) }
+}));
+
+// Route handlers log diagnostic details internally, but a 5xx response must
+// never expose database, storage, or upstream-provider errors to clients.
+app.use(sanitizeServerErrorResponses);
 
 // Body parsing
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-// Debug middleware to log all requests
-app.use((req, res, next) => {
-  if (req.method === 'POST' && req.path === '/api/patients') {
-    logger.info('EXPRESS DEBUG - POST /api/patients', {
-      method: req.method,
-      path: req.path,
-      hasBody: !!req.body,
-      bodyType: typeof req.body,
-      bodyContent: req.body,
-      contentType: req.headers['content-type'],
-      bodyString: JSON.stringify(req.body)
-    });
-  }
-  next();
-});
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Audit logging middleware
 app.use(auditLogger);
@@ -87,10 +104,24 @@ app.use(auditLogger);
 // Health check (no auth required)
 app.use('/health', healthRoutes);
 
-// Development-only routes (for testing)
+// Clinical and administrative responses can contain PHI or credentials. Keep
+// them out of browser and intermediary caches regardless of route behavior.
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
+
+// Authentication is required in every environment. Development may bootstrap
+// demo accounts, but the same persisted account and JWT path is exercised.
+app.use('/api/auth/login', loginLimiter);
+app.use('/api/auth/mfa/verify', loginLimiter);
+app.use('/api/auth', authRoutes);
+
+// Development-only data seeding route.
 if (process.env.NODE_ENV === 'development') {
-  app.use('/api/auth', authRoutes); // Simple auth for development testing
-  app.use('/api/seed', seedRoutes); // Data seeding for testing
+  app.use('/api/seed', authenticateToken, seedRoutes); // Data seeding for authorized testing
 }
 
 // Conditional auth middleware - skip auth for M-Pesa callback
@@ -121,6 +152,8 @@ app.use('/api/schedules', authenticateToken, scheduleRoutes);
 app.use('/api/clinics', authenticateToken, clinicRoutes);
 app.use('/api/staff', authenticateToken, staffRoutes);
 app.use('/api/consultations', authenticateToken, consultationRoutes);
+app.use('/api/dashboard', authenticateToken, dashboardRoutes);
+app.use('/api/admin', authenticateToken, adminRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -130,8 +163,7 @@ app.use((err, req, res, next) => {
     type: err.type,
     status: err.status,
     path: req.path,
-    method: req.method,
-    body: req.body
+    method: req.method
   });
   
   // Handle JSON parsing errors
@@ -164,6 +196,7 @@ async function initialize() {
     await UserSettings.createTable();
     await SystemSettings.createTable();
     await Payment.createTable();
+    await UserAccount.createTable();
     
     const server = app.listen(PORT, () => {
       logger.info(`MediMesh Patient API server running on port ${PORT}`);
@@ -195,4 +228,4 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-initialize(); 
+initialize();

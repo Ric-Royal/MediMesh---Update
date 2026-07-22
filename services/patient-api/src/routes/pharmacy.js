@@ -2,17 +2,23 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { completeDepartmentService } = require('../utils/workflow');
+const { authorize } = require('../middleware/auth');
+
+const PHARMACY_READ_ROLES = ['admin', 'doctor', 'nurse', 'pharmacist'];
+const PRESCRIBE_ROLES = ['admin', 'doctor'];
+const PHARMACY_MANAGE_ROLES = ['admin', 'pharmacist'];
 
 // ============================================
 // DRUGS MANAGEMENT
 // ============================================
 
 // Get all drugs (with filters)
-router.get('/drugs', async (req, res) => {
+router.get('/drugs', authorize(PHARMACY_READ_ROLES), async (req, res) => {
   try {
     const { search, category, inStock, page = 1, limit = 50 } = req.query;
     const offset = (page - 1) * limit;
-    
+
     let query = `
       SELECT d.*, dc.category_name,
              CASE WHEN d.current_stock <= d.reorder_level THEN true ELSE false END as needs_reorder
@@ -22,7 +28,7 @@ router.get('/drugs', async (req, res) => {
     `;
     const params = [];
     let paramIndex = 1;
-    
+
     if (search) {
       query += ` AND (d.generic_name ILIKE $${paramIndex} OR d.brand_name ILIKE $${paramIndex} OR d.drug_code ILIKE $${paramIndex})`;
       params.push(`%${search}%`);
@@ -66,7 +72,7 @@ router.get('/drugs', async (req, res) => {
 });
 
 // Get drug by ID
-router.get('/drugs/:id', async (req, res) => {
+router.get('/drugs/:id', authorize(PHARMACY_READ_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     const query = `
@@ -91,7 +97,7 @@ router.get('/drugs/:id', async (req, res) => {
 });
 
 // Create drug
-router.post('/drugs', async (req, res) => {
+router.post('/drugs', authorize(PHARMACY_MANAGE_ROLES), async (req, res) => {
   try {
     const {
       generic_name, brand_name, category_id, dosage_form, strength,
@@ -126,7 +132,7 @@ router.post('/drugs', async (req, res) => {
 });
 
 // Update drug stock
-router.post('/drugs/:id/stock', async (req, res) => {
+router.post('/drugs/:id/stock', authorize(PHARMACY_MANAGE_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     const { movement_type, quantity, unit_cost, batch_number, expiry_date, reference_number, notes } = req.body;
@@ -153,7 +159,7 @@ router.post('/drugs/:id/stock', async (req, res) => {
 });
 
 // Get drugs needing reorder
-router.get('/drugs/alerts/reorder', async (req, res) => {
+router.get('/drugs/alerts/reorder', authorize(PHARMACY_MANAGE_ROLES), async (req, res) => {
   try {
     const query = `
       SELECT d.*, dc.category_name
@@ -175,7 +181,7 @@ router.get('/drugs/alerts/reorder', async (req, res) => {
 // ============================================
 
 // Get all prescriptions (with filters)
-router.get('/prescriptions', async (req, res) => {
+router.get('/prescriptions', authorize(PHARMACY_READ_ROLES), async (req, res) => {
   try {
     const { patient_id, doctor_id, status, date_from, date_to, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
@@ -238,7 +244,7 @@ router.get('/prescriptions', async (req, res) => {
 });
 
 // Get prescription by ID (with items)
-router.get('/prescriptions/:id', async (req, res) => {
+router.get('/prescriptions/:id', authorize(PHARMACY_READ_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -286,7 +292,7 @@ router.get('/prescriptions/:id', async (req, res) => {
 });
 
 // Create prescription
-router.post('/prescriptions', async (req, res) => {
+router.post('/prescriptions', authorize(PRESCRIBE_ROLES), async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -341,40 +347,149 @@ router.post('/prescriptions', async (req, res) => {
 });
 
 // Dispense prescription item
-router.post('/prescriptions/:id/items/:itemId/dispense', async (req, res) => {
+router.post('/prescriptions/:id/items/:itemId/dispense', authorize(PHARMACY_MANAGE_ROLES), async (req, res) => {
+  const client = await getDB().connect();
+  let completedEncounterId = null;
+  let prescriptionStatus = 'partially-dispensed';
   try {
+    await client.query('BEGIN');
     const { id, itemId } = req.params;
-    const { quantity_dispensed, batch_number } = req.body;
+    const { quantity_dispensed, dispensed_quantity, batch_number, notes } = req.body;
+    const qty = Number(quantity_dispensed ?? dispensed_quantity);
+
+    if (!Number.isInteger(qty) || qty <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: 'Dispensed quantity must be a positive whole number' });
+    }
+
+    const itemLookup = await client.query(`
+      SELECT pi.*, d.current_stock, d.generic_name
+      FROM prescription_items pi
+      JOIN drugs d ON d.id = pi.drug_id
+      WHERE pi.id = $1 AND pi.prescription_id = $2
+      FOR UPDATE OF pi, d
+    `, [itemId, id]);
+
+    if (itemLookup.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Prescription item not found' });
+    }
+
+    const item = itemLookup.rows[0];
+    const alreadyDispensed = Number(item.quantity_dispensed || 0);
+    const remainingQuantity = Number(item.quantity) - alreadyDispensed;
+    if (item.status === 'dispensed' || remainingQuantity <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: 'This medication has already been dispensed' });
+    }
+    if (item.status === 'cancelled') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: 'A cancelled medication cannot be dispensed' });
+    }
+    if (qty > remainingQuantity) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: `Cannot dispense more than the remaining quantity (${remainingQuantity})` });
+    }
+    if (qty > item.current_stock) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: `Insufficient stock for ${item.generic_name}. Available: ${item.current_stock}` });
+    }
     
     const query = `
       UPDATE prescription_items
-      SET status = 'dispensed',
-          quantity_dispensed = $1,
-          dispensed_date = CURRENT_TIMESTAMP,
+      SET status = CASE
+            WHEN COALESCE(quantity_dispensed, 0) + $1 >= quantity THEN 'dispensed'
+            ELSE 'pending'
+          END,
+          quantity_dispensed = COALESCE(quantity_dispensed, 0) + $1,
+          dispensed_date = CASE
+            WHEN COALESCE(quantity_dispensed, 0) + $1 >= quantity THEN CURRENT_TIMESTAMP
+            ELSE dispensed_date
+          END,
           dispensed_by = $2,
-          batch_number = $3
-      WHERE id = $4 AND prescription_id = $5
+          batch_number = COALESCE($3, batch_number),
+          notes = COALESCE($4, notes),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $5 AND prescription_id = $6
       RETURNING *
     `;
     
-    const result = await getDB().query(query, [
-      quantity_dispensed, req.user?.userId, batch_number, itemId, id
+    const result = await client.query(query, [
+      qty, req.user?.id, batch_number || null, notes || null, itemId, id
     ]);
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Prescription item not found' });
+
+    await client.query(`
+      UPDATE drugs
+      SET current_stock = current_stock - $1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $2
+    `, [qty, item.drug_id]);
+
+    logger.info(`Prescription item ${itemId} supplied`, {
+      quantity: qty,
+      cumulativeQuantity: result.rows[0].quantity_dispensed,
+      remainingQuantity: Number(item.quantity) - Number(result.rows[0].quantity_dispensed || 0),
+    });
+
+    // Auto-complete the prescription when all items are dispensed
+    const pendingCheck = await client.query(
+      `SELECT COUNT(*) as pending FROM prescription_items
+       WHERE prescription_id = $1 AND status != 'dispensed'`,
+      [id]
+    );
+    if (parseInt(pendingCheck.rows[0].pending) === 0) {
+      const completedPrescription = await client.query(
+        `UPDATE prescriptions
+         SET status = 'fully-dispensed', dispensed_date = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1
+         RETURNING encounter_id`,
+        [id]
+      );
+      completedEncounterId = completedPrescription.rows[0]?.encounter_id;
+      prescriptionStatus = 'fully-dispensed';
+      await client.query('COMMIT');
+      logger.info(`Prescription ${id} fully dispensed (all items dispensed)`);
+    } else {
+      const partialPrescription = await client.query(
+        `UPDATE prescriptions
+         SET status = 'partially-dispensed', updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND status IN ('pending', 'partially-dispensed')
+         RETURNING status`,
+        [id]
+      );
+      prescriptionStatus = partialPrescription.rows[0]?.status || 'partially-dispensed';
+      await client.query('COMMIT');
     }
-    
-    logger.info(`Prescription item ${itemId} dispensed`);
-    res.json({ success: true, data: result.rows[0] });
+
+    if (completedEncounterId) {
+      try {
+        await completeDepartmentService(completedEncounterId, 'pharmacy');
+      } catch (workflowError) {
+        logger.error('Prescription dispensed but journey synchronization failed:', workflowError);
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...result.rows[0],
+        prescription_status: prescriptionStatus,
+        remaining_quantity: Math.max(
+          0,
+          Number(item.quantity) - Number(result.rows[0].quantity_dispensed || 0)
+        ),
+      }
+    });
   } catch (error) {
+    await client.query('ROLLBACK');
     logger.error('Error dispensing prescription item:', error);
     res.status(500).json({ success: false, error: error.message });
+  } finally {
+    client.release();
   }
 });
 
 // Get pending prescriptions (for pharmacy queue)
-router.get('/prescriptions/queue/pending', async (req, res) => {
+router.get('/prescriptions/queue/pending', authorize(PHARMACY_READ_ROLES), async (req, res) => {
   try {
     const query = `
       SELECT p.*,
@@ -396,7 +511,7 @@ router.get('/prescriptions/queue/pending', async (req, res) => {
 });
 
 // Get pharmacy statistics
-router.get('/statistics', async (req, res) => {
+router.get('/statistics', authorize(PHARMACY_READ_ROLES), async (req, res) => {
   try {
     const query = `
       SELECT
@@ -416,4 +531,3 @@ router.get('/statistics', async (req, res) => {
 });
 
 module.exports = router;
-

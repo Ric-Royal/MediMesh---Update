@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Container, Paper, Typography, Box, Tab, Tabs, Grid, Card, CardContent,
+  Paper, Typography, Box, Tab, Tabs, Grid, Card, CardContent,
   Button, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
   IconButton, Alert, CircularProgress, Divider
@@ -25,9 +25,10 @@ const RadiologyPage = () => {
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [reports, setReports] = useState({});
+  const [statistics, setStatistics] = useState({});
 
   // Fetch radiology orders
-  const fetchOrders = async (status = 'ordered') => {
+  const fetchOrders = useCallback(async (status = 'pending') => {
     setLoading(true);
     try {
       const response = await fetch(`${API_CONFIG.endpoints.radiology.orders}?status=${status}`, {
@@ -45,12 +46,16 @@ const RadiologyPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [notifyError]);
 
   useEffect(() => {
-    const statusMap = ['ordered', 'performed', 'reported'];
+    const statusMap = ['pending', 'in-progress', 'reported'];
     fetchOrders(statusMap[activeTab]);
-  }, [activeTab]);
+    fetch(`${API_CONFIG.baseURL}/api/radiology/statistics`, { headers: API_CONFIG.getAuthHeaders() })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => data && setStatistics(data.data || {}))
+      .catch(() => {});
+  }, [activeTab, fetchOrders]);
 
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
@@ -58,14 +63,14 @@ const RadiologyPage = () => {
 
   const handleStartOrder = async (order) => {
     try {
-      const response = await fetch(`${API_CONFIG.endpoints.radiology.orders}/${order.id}`, {
+      const response = await fetch(`${API_CONFIG.endpoints.radiology.orders}/${order.id}/status`, {
         method: 'PUT',
         headers: API_CONFIG.getAuthHeaders(),
-        body: JSON.stringify({ status: 'performed' }),
+        body: JSON.stringify({ status: 'in-progress' }),
       });
       if (response.ok) {
         notifySuccess('Imaging started');
-        fetchOrders('ordered');
+        setActiveTab(1);
       } else {
         notifyError('Failed to start imaging');
       }
@@ -88,10 +93,13 @@ const RadiologyPage = () => {
         const initialReports = {};
         if (orderDetails.items) {
           orderDetails.items.forEach(item => {
+            const existingReport = orderDetails.reports?.find(
+              report => report.radiology_order_item_id === item.id
+            );
             initialReports[item.id] = {
-              findings: item.findings || '',
-              impression: item.impression || '',
-              notes: item.notes || '',
+              findings: existingReport?.findings || '',
+              impression: existingReport?.impression || '',
+              notes: existingReport?.recommendations || '',
             };
           });
         }
@@ -119,32 +127,24 @@ const RadiologyPage = () => {
     if (!selectedOrder) return;
 
     try {
-      // Update each study report
-      for (const [itemId, reportData] of Object.entries(reports)) {
-        await fetch(`${API_CONFIG.endpoints.radiology.orders}/${selectedOrder.id}/items/${itemId}`, {
-          method: 'PUT',
-          headers: API_CONFIG.getAuthHeaders(),
-          body: JSON.stringify({
+      const response = await fetch(`${API_CONFIG.endpoints.radiology.orders}/${selectedOrder.id}/report`, {
+        method: 'POST',
+        headers: API_CONFIG.getAuthHeaders(),
+        body: JSON.stringify({
+          reports: Object.entries(reports).map(([itemId, reportData]) => ({
+            itemId,
             findings: reportData.findings,
             impression: reportData.impression,
             notes: reportData.notes,
-            status: 'reported',
-          }),
-        });
-      }
-
-      // Mark order as reported/completed
-      const response = await fetch(`${API_CONFIG.endpoints.radiology.orders}/${selectedOrder.id}`, {
-        method: 'PUT',
-        headers: API_CONFIG.getAuthHeaders(),
-        body: JSON.stringify({ status: 'reported' }),
+          }))
+        }),
       });
 
       if (response.ok) {
-        notifySuccess('Radiology report submitted successfully! Invoice updated automatically.');
+        notifySuccess('Radiology report released. The visit, queue and invoice were updated.');
         setReportDialogOpen(false);
         setSelectedOrder(null);
-        fetchOrders('performed');
+        setActiveTab(2);
       } else {
         notifyError('Failed to submit report');
       }
@@ -172,12 +172,12 @@ const RadiologyPage = () => {
 
   const getStatusChip = (status) => {
     const statusConfig = {
-      ordered: { color: 'warning', icon: <PendingIcon fontSize="small" /> },
+      pending: { color: 'warning', icon: <PendingIcon fontSize="small" /> },
       scheduled: { color: 'info', icon: <CameraIcon fontSize="small" /> },
-      performed: { color: 'info', icon: <RadiologyIcon fontSize="small" /> },
+      'in-progress': { color: 'info', icon: <RadiologyIcon fontSize="small" /> },
       reported: { color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
     };
-    const config = statusConfig[status] || statusConfig.ordered;
+    const config = statusConfig[status] || statusConfig.pending;
     return (
       <Chip
         label={status.toUpperCase()}
@@ -204,7 +204,7 @@ const RadiologyPage = () => {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Box component="section" sx={{ width: '100%', minWidth: 0, mb: 3 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <RadiologyIcon sx={{ fontSize: 40, mr: 2, color: 'primary.main' }} />
         <Typography variant="h4" component="h1">
@@ -223,7 +223,7 @@ const RadiologyPage = () => {
                     Pending Orders
                   </Typography>
                   <Typography variant="h4">
-                    {orders.filter(o => o.status === 'ordered').length}
+                    {statistics.pending_orders || 0}
                   </Typography>
                 </Box>
                 <PendingIcon sx={{ fontSize: 48, color: 'warning.main', opacity: 0.3 }} />
@@ -240,7 +240,7 @@ const RadiologyPage = () => {
                     Awaiting Report
                   </Typography>
                   <Typography variant="h4">
-                    {orders.filter(o => o.status === 'performed').length}
+                    {statistics.in_progress || 0}
                   </Typography>
                 </Box>
                 <RadiologyIcon sx={{ fontSize: 48, color: 'info.main', opacity: 0.3 }} />
@@ -257,7 +257,7 @@ const RadiologyPage = () => {
                     Completed Today
                   </Typography>
                   <Typography variant="h4">
-                    {orders.filter(o => o.status === 'reported').length}
+                    {statistics.completed_today || 0}
                   </Typography>
                 </Box>
                 <CheckCircleIcon sx={{ fontSize: 48, color: 'success.main', opacity: 0.3 }} />
@@ -270,7 +270,7 @@ const RadiologyPage = () => {
       {/* Tabs */}
       <Paper sx={{ mb: 3 }}>
         <Tabs value={activeTab} onChange={handleTabChange} indicatorColor="primary" textColor="primary">
-          <Tab label="Ordered" icon={<PendingIcon />} iconPosition="start" />
+          <Tab label="Pending" icon={<PendingIcon />} iconPosition="start" />
           <Tab label="Awaiting Report" icon={<RadiologyIcon />} iconPosition="start" />
           <Tab label="Reported" icon={<CheckCircleIcon />} iconPosition="start" />
         </Tabs>
@@ -311,25 +311,25 @@ const RadiologyPage = () => {
                   <TableRow key={order.id} hover>
                     <TableCell>
                       <Typography variant="body2" fontWeight="bold">
-                        {order.radiology_order_number}
+                        {order.order_number}
                       </Typography>
                     </TableCell>
                     <TableCell>{order.patient_name}</TableCell>
                     <TableCell>{order.uhid}</TableCell>
                     <TableCell>
                       <Typography variant="body2">
-                        {order.study_count || 0} study(ies)
+                        {order.item_count || 0} study(ies)
                       </Typography>
                     </TableCell>
                     <TableCell>{getPriorityChip(order.priority)}</TableCell>
-                    <TableCell>{order.ordering_doctor_name}</TableCell>
+                    <TableCell>{order.doctor_name || 'Unassigned'}</TableCell>
                     <TableCell>
                       {new Date(order.order_date).toLocaleString()}
                     </TableCell>
                     <TableCell>{getStatusChip(order.status)}</TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', gap: 1 }}>
-                        {order.status === 'ordered' && (
+                        {order.status === 'pending' && (
                           <Button
                             size="small"
                             variant="contained"
@@ -339,7 +339,7 @@ const RadiologyPage = () => {
                             Start Imaging
                           </Button>
                         )}
-                        {order.status === 'performed' && (
+                        {order.status === 'in-progress' && (
                           <Button
                             size="small"
                             variant="contained"
@@ -376,7 +376,7 @@ const RadiologyPage = () => {
       {/* Enter Report Dialog */}
       <Dialog open={reportDialogOpen} onClose={() => setReportDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
-          Enter Radiology Report - {selectedOrder?.radiology_order_number}
+          Enter Radiology Report - {selectedOrder?.order_number}
           <Typography variant="body2" color="textSecondary">
             Patient: {selectedOrder?.patient_name} ({selectedOrder?.uhid})
           </Typography>
@@ -386,7 +386,7 @@ const RadiologyPage = () => {
             selectedOrder.items.map((item, index) => (
               <Box key={item.id} sx={{ mb: 3 }}>
                 <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-                  {index + 1}. {item.study_name}
+                  {index + 1}. {item.test_name}
                 </Typography>
                 <Grid container spacing={2}>
                   <Grid item xs={12}>
@@ -443,7 +443,7 @@ const RadiologyPage = () => {
       {/* View Order Dialog */}
       <Dialog open={viewDialogOpen} onClose={() => setViewDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
-          Radiology Report - {selectedOrder?.radiology_order_number}
+          Radiology Report - {selectedOrder?.order_number}
         </DialogTitle>
         <DialogContent dividers>
           {selectedOrder && (
@@ -457,7 +457,7 @@ const RadiologyPage = () => {
                 </Grid>
                 <Grid item xs={6}>
                   <Typography variant="body2" color="textSecondary">Ordered By:</Typography>
-                  <Typography variant="body1">{selectedOrder.ordering_doctor_name}</Typography>
+                  <Typography variant="body1">{selectedOrder.doctor_name || 'Unassigned'}</Typography>
                 </Grid>
                 <Grid item xs={6}>
                   <Typography variant="body2" color="textSecondary">Order Date:</Typography>
@@ -474,17 +474,21 @@ const RadiologyPage = () => {
               <Divider sx={{ my: 2 }} />
 
               <Typography variant="h6" gutterBottom>Imaging Reports</Typography>
-              {selectedOrder.items && selectedOrder.items.map((item, index) => (
-                <Box key={item.id} sx={{ mb: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
+              {selectedOrder.reports?.length > 0 ? selectedOrder.reports.map((report) => {
+                const item = selectedOrder.items?.find(
+                  study => study.id === report.radiology_order_item_id
+                );
+                return (
+                <Box key={report.id} sx={{ mb: 3, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
                   <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-                    {item.study_name}
+                    {item?.test_name || 'Imaging study'}
                   </Typography>
                   <Box sx={{ mt: 2 }}>
                     <Typography variant="body2" color="textSecondary" fontWeight="bold">
                       Findings:
                     </Typography>
                     <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
-                      {item.findings || 'No findings recorded'}
+                      {report.findings || 'No findings recorded'}
                     </Typography>
                   </Box>
                   <Box sx={{ mt: 2 }}>
@@ -492,21 +496,24 @@ const RadiologyPage = () => {
                       Impression:
                     </Typography>
                     <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
-                      {item.impression || 'No impression recorded'}
+                      {report.impression || 'No impression recorded'}
                     </Typography>
                   </Box>
-                  {item.notes && (
+                  {report.recommendations && (
                     <Box sx={{ mt: 2 }}>
                       <Typography variant="body2" color="textSecondary" fontWeight="bold">
                         Additional Notes:
                       </Typography>
                       <Typography variant="body2" sx={{ mt: 1, whiteSpace: 'pre-wrap' }}>
-                        {item.notes}
+                        {report.recommendations}
                       </Typography>
                     </Box>
                   )}
                 </Box>
-              ))}
+                );
+              }) : (
+                <Alert severity="info">No released report is available for this order.</Alert>
+              )}
             </Box>
           )}
         </DialogContent>
@@ -517,7 +524,7 @@ const RadiologyPage = () => {
           </Button>
         </DialogActions>
       </Dialog>
-    </Container>
+    </Box>
   );
 };
 

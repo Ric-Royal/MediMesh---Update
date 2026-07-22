@@ -1,8 +1,10 @@
 // API Configuration
 // This file centralizes all API URL configuration to prevent hardcoded URLs
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
-const WS_BASE_URL = process.env.REACT_APP_WS_URL || 'http://localhost:3001';
+// Empty means same-origin. In Docker, nginx proxies /api and /socket.io to the
+// patient service, which also makes the UI work from another workstation.
+const API_BASE_URL = process.env.REACT_APP_API_URL || '';
+const WS_BASE_URL = process.env.REACT_APP_WS_URL || window.location.origin;
 
 export const API_CONFIG = {
   // Base URLs
@@ -42,7 +44,7 @@ export const API_CONFIG = {
       tests: `${API_BASE_URL}/api/lab/tests`,
       orders: `${API_BASE_URL}/api/lab/orders`,
       samples: `${API_BASE_URL}/api/lab/samples`,
-      catalog: `${API_BASE_URL}/api/lab/tests/catalog`,
+      catalog: `${API_BASE_URL}/api/lab/tests`,
     },
     
     // Billing
@@ -55,13 +57,20 @@ export const API_CONFIG = {
       finalize: (invoiceId) => `${API_BASE_URL}/api/billing/invoices/${invoiceId}/finalize`,
       processPayment: (invoiceId) => `${API_BASE_URL}/api/billing/invoices/${invoiceId}/payment`,
     },
+
+    payments: {
+      mpesaStkPush: `${API_BASE_URL}/api/payments/mpesa/stk-push`,
+      mpesaStatus: (paymentId) => `${API_BASE_URL}/api/payments/mpesa/query/${paymentId}`,
+      byId: (paymentId) => `${API_BASE_URL}/api/payments/${paymentId}`,
+    },
     
     // Radiology
     radiology: {
       orders: `${API_BASE_URL}/api/radiology/orders`,
       reports: `${API_BASE_URL}/api/radiology/reports`,
       queue: `${API_BASE_URL}/api/radiology/queue`,
-      catalog: `${API_BASE_URL}/api/radiology/studies/catalog`,
+      tests: `${API_BASE_URL}/api/radiology/tests`,
+      catalog: `${API_BASE_URL}/api/radiology/tests`,
       modalities: `${API_BASE_URL}/api/radiology/modalities`,
     },
     
@@ -86,7 +95,7 @@ export const API_CONFIG = {
   
   // Helper function to get auth headers
   getAuthHeaders: () => {
-    const token = localStorage.getItem('token') || localStorage.getItem('dev_token');
+    const token = localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token');
     return {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -9,7 +9,6 @@ import {
   CardContent,
   Avatar,
   Chip,
-  Divider,
   Table,
   TableBody,
   TableCell,
@@ -19,11 +18,7 @@ import {
   IconButton,
   Alert,
   Tab,
-  Tabs,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon
+  Tabs
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -35,15 +30,15 @@ import {
   Home as HomeIcon,
   CalendarToday as CalendarIcon,
   Person as PersonIcon,
-  Description as DescriptionIcon,
-  Payment as PaymentIcon
+  Payment as PaymentIcon,
+  Queue as QueueIcon
 } from '@mui/icons-material';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
-import PaymentDialog from '../components/payments/PaymentDialog';
 import PaymentHistory from '../components/payments/PaymentHistory';
+import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog';
 
 const PatientDetailPage = () => {
   const { id } = useParams();
@@ -54,30 +49,13 @@ const PatientDetailPage = () => {
   const [patient, setPatient] = useState(null);
   const [medicalRecords, setMedicalRecords] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [recordsLoading, setRecordsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState(0);
   const [successMessage, setSuccessMessage] = useState(location.state?.message || null);
-  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
-  const [paymentHistoryKey, setPaymentHistoryKey] = useState(0);
+  const paymentHistoryKey = 0;
+  const [visitDialogOpen, setVisitDialogOpen] = useState(false);
 
-  useEffect(() => {
-    fetchPatientData();
-  }, [id]);
-
-  // Clear success message after showing it
-  useEffect(() => {
-    if (successMessage) {
-      const timer = setTimeout(() => {
-        setSuccessMessage(null);
-        // Clear the location state to prevent showing the message on refresh
-        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [successMessage]);
-
-  const fetchPatientData = async () => {
+  const fetchPatientData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -96,7 +74,23 @@ const PatientDetailPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    fetchPatientData();
+  }, [fetchPatientData]);
+
+  // Clear success message after showing it
+  useEffect(() => {
+    if (successMessage) {
+      const timer = setTimeout(() => {
+        setSuccessMessage(null);
+        // Clear the location state to prevent showing the message on refresh
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage]);
 
   const calculateAge = (dateOfBirth) => {
     const today = new Date();
@@ -157,12 +151,6 @@ const PatientDetailPage = () => {
     setActiveTab(newValue);
   };
 
-  const handlePaymentSuccess = (paymentData) => {
-    setSuccessMessage(`Payment request sent successfully! Checkout ID: ${paymentData.checkout_request_id}`);
-    // Refresh payment history
-    setPaymentHistoryKey(prev => prev + 1);
-  };
-
   if (loading) {
     return <LoadingSpinner message="Loading patient information..." />;
   }
@@ -216,24 +204,40 @@ const PatientDetailPage = () => {
           </Typography>
         </Box>
         
-        <Box sx={{ display: 'flex', gap: 2 }}>
-          {(hasRole('doctor') || hasRole('nurse') || hasRole('admin')) && (
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {(hasRole('doctor') || hasRole('nurse') || hasRole('admin') || hasRole('receptionist')) && (
             <>
               <Button
                 variant="contained"
-                color="success"
-                startIcon={<PaymentIcon />}
-                onClick={() => setPaymentDialogOpen(true)}
+                startIcon={<QueueIcon />}
+                onClick={() => setVisitDialogOpen(true)}
               >
-                Request Payment
+                Register Visit
               </Button>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => navigate('/records/new', { state: { patientId: patient.id } })}
-              >
-                New Record
-              </Button>
+              {(hasRole('doctor') || hasRole('admin')) && (
+                <>
+                  <Button
+                    variant="outlined"
+                    color="success"
+                    startIcon={<PaymentIcon />}
+                    onClick={() => navigate('/billing', {
+                      state: {
+                        patientId: patient.id,
+                        patientName: `${patient.first_name} ${patient.last_name}`,
+                      },
+                    })}
+                  >
+                    Open Billing
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    startIcon={<AddIcon />}
+                    onClick={() => navigate('/records/new', { state: { patientId: patient.id } })}
+                  >
+                    New Record
+                  </Button>
+                </>
+              )}
               <Button
                 variant="outlined"
                 startIcon={<EditIcon />}
@@ -541,15 +545,17 @@ const PatientDetailPage = () => {
         </Paper>
       )}
 
-      {/* Payment Dialog */}
-      <PaymentDialog
-        open={paymentDialogOpen}
-        onClose={() => setPaymentDialogOpen(false)}
-        patient={patient}
-        onSuccess={handlePaymentSuccess}
+      <AddPatientToQueueDialog
+        open={visitDialogOpen}
+        initialPatient={patient}
+        onClose={() => setVisitDialogOpen(false)}
+        onSuccess={() => {
+          setVisitDialogOpen(false);
+          setSuccessMessage('Visit registered and added to the consultation queue.');
+        }}
       />
     </Box>
   );
 };
 
-export default PatientDetailPage; 
+export default PatientDetailPage;

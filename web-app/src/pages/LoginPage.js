@@ -19,13 +19,15 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 
 const LoginPage = () => {
-  const { login } = useAuth();
+  const { login, verifyMfa } = useAuth();
   const [formData, setFormData] = useState({
     username: '',
     password: ''
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [mfaToken, setMfaToken] = useState(null);
+  const [mfaCode, setMfaCode] = useState('');
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
@@ -38,6 +40,18 @@ const LoginPage = () => {
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (mfaToken) {
+      if (!/^\d{6}$/.test(mfaCode)) {
+        setError('Enter the six-digit code from your authenticator app');
+        return;
+      }
+      setLoading(true);
+      setError(null);
+      const result = await verifyMfa(mfaToken, mfaCode);
+      if (!result.success) setError(result.error || 'Authenticator code was not accepted');
+      setLoading(false);
+      return;
+    }
     if (!formData.username.trim() || !formData.password.trim()) {
       setError('Please enter both username and password');
       return;
@@ -50,6 +64,9 @@ const LoginPage = () => {
       const result = await login(formData.username, formData.password);
       if (!result.success) {
         setError(result.error || 'Login failed. Please try again.');
+      } else if (result.mfaRequired) {
+        setMfaToken(result.mfaToken);
+        setMfaCode('');
       }
     } catch (err) {
       setError('An unexpected error occurred. Please try again.');
@@ -61,18 +78,18 @@ const LoginPage = () => {
   const features = [
     {
       icon: <SecurityIcon color="primary" />,
-      title: 'HIPAA Compliant',
-      description: 'Enterprise-grade security and compliance'
+      title: 'One patient journey',
+      description: 'Registration, care, orders and payment stay connected'
     },
     {
       icon: <HealthIcon color="primary" />,
-      title: 'Medical Records',
-      description: 'Comprehensive patient data management'
+      title: 'Role-ready workspaces',
+      description: 'Focused queues for every clinical service'
     },
     {
       icon: <ShieldIcon color="primary" />,
-      title: 'Secure Access',
-      description: 'Role-based authentication and authorization'
+      title: 'Safe hand-offs',
+      description: 'Visible priorities, ownership and next steps'
     }
   ];
 
@@ -80,28 +97,32 @@ const LoginPage = () => {
     <Box
       sx={{
         minHeight: '100vh',
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        background: 'radial-gradient(circle at 15% 20%, #D7EEF0 0, transparent 34%), #F1F5F9',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         p: 2
       }}
     >
-      <Container maxWidth="md">
+      <Container maxWidth="lg">
         <Paper
-          elevation={24}
+          elevation={0}
           sx={{
-            borderRadius: 4,
+            borderRadius: 3,
             overflow: 'hidden',
             display: 'flex',
-            minHeight: 500
+            flexDirection: { xs: 'column', md: 'row' },
+            minHeight: 560,
+            border: '1px solid',
+            borderColor: 'divider',
+            boxShadow: '0 24px 70px rgba(15, 23, 42, 0.12)'
           }}
         >
           {/* Left side - Branding */}
           <Box
             sx={{
               flex: 1,
-              background: 'linear-gradient(45deg, #1976d2 30%, #42a5f5 90%)',
+              background: 'linear-gradient(145deg, #0F3B4D 0%, #176B72 100%)',
               color: 'white',
               p: 4,
               display: 'flex',
@@ -111,12 +132,15 @@ const LoginPage = () => {
               textAlign: 'center'
             }}
           >
-            <HospitalIcon sx={{ fontSize: 80, mb: 2 }} />
-            <Typography variant="h3" component="h1" gutterBottom fontWeight="bold">
+            <HospitalIcon sx={{ fontSize: 64, mb: 2 }} />
+            <Typography variant="h3" component="h1" gutterBottom fontWeight={800}>
               MediMesh
             </Typography>
-            <Typography variant="h6" sx={{ mb: 4, opacity: 0.9 }}>
-              Medical Data Management System
+            <Typography variant="h5" sx={{ mb: 1, color: 'white' }}>
+              Clinical operations, connected.
+            </Typography>
+            <Typography variant="body1" sx={{ mb: 4, opacity: 0.78, maxWidth: 360 }}>
+              A calmer, safer workspace for the people moving patients through care.
             </Typography>
             
             <Stack spacing={3} sx={{ width: '100%', maxWidth: 300 }}>
@@ -146,11 +170,13 @@ const LoginPage = () => {
               justifyContent: 'center'
             }}
           >
-            <Typography variant="h4" component="h2" gutterBottom align="center">
-              Welcome Back
+            <Typography variant="h3" component="h2" gutterBottom>
+              Start your shift
             </Typography>
-            <Typography variant="body1" color="text.secondary" align="center" sx={{ mb: 4 }}>
-              Sign in to access your medical data management dashboard
+            <Typography variant="body1" color="text.secondary" sx={{ mb: 4 }}>
+              {mfaToken
+                ? 'Confirm this sign-in with the six-digit code from your authenticator app.'
+                : 'Sign in to open your clinical workspace and live patient queues.'}
             </Typography>
 
             {error && (
@@ -161,7 +187,7 @@ const LoginPage = () => {
 
             <form onSubmit={handleLogin}>
               <Stack spacing={3}>
-                <TextField
+                {!mfaToken && <TextField
                   fullWidth
                   label="Username"
                   value={formData.username}
@@ -174,9 +200,9 @@ const LoginPage = () => {
                       borderRadius: 2,
                     }
                   }}
-                />
+                />}
 
-                <TextField
+                {!mfaToken && <TextField
                   fullWidth
                   label="Password"
                   type="password"
@@ -190,7 +216,22 @@ const LoginPage = () => {
                       borderRadius: 2,
                     }
                   }}
-                />
+                />}
+
+                {mfaToken && <TextField
+                  fullWidth
+                  label="Authenticator code"
+                  value={mfaCode}
+                  onChange={(e) => {
+                    setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6));
+                    setError(null);
+                  }}
+                  disabled={loading}
+                  autoComplete="one-time-code"
+                  inputProps={{ inputMode: 'numeric', pattern: '[0-9]*', maxLength: 6 }}
+                  autoFocus
+                  required
+                />}
 
                 <Button
                   type="submit"
@@ -206,10 +247,18 @@ const LoginPage = () => {
                   }}
                   fullWidth
                 >
-                  {loading ? 'Signing In...' : 'Sign In'}
+                  {loading ? 'Verifying…' : mfaToken ? 'Verify and sign in' : 'Sign In'}
                 </Button>
 
-                {process.env.NODE_ENV === 'development' && (
+                {mfaToken && <Button
+                  type="button"
+                  onClick={() => { setMfaToken(null); setMfaCode(''); setError(null); }}
+                  disabled={loading}
+                >
+                  Use a different account
+                </Button>}
+
+                {process.env.REACT_APP_SHOW_DEMO_LOGIN === 'true' && !mfaToken && (
                   <>
                     <Divider>
                       <Typography variant="body2" color="text.secondary">
@@ -217,7 +266,7 @@ const LoginPage = () => {
                       </Typography>
                     </Divider>
                     <Typography variant="caption" color="text.secondary" align="center">
-                      Use any username/password combination for testing
+                      Demo access: <strong>admin</strong> / <strong>admin123</strong>
                     </Typography>
                   </>
                 )}
@@ -226,9 +275,9 @@ const LoginPage = () => {
 
             <Box sx={{ mt: 4, textAlign: 'center' }}>
               <Typography variant="caption" color="text.secondary">
-                {process.env.NODE_ENV === 'development' 
-                  ? 'Development Mode - Any credentials accepted'
-                  : 'Secure authentication powered by Keycloak'
+                {process.env.REACT_APP_SHOW_DEMO_LOGIN === 'true'
+                  ? 'Development environment — do not use real patient data'
+                  : 'Protected account authentication with MFA support'
                 }
               </Typography>
             </Box>
@@ -238,7 +287,7 @@ const LoginPage = () => {
         {/* Footer */}
         <Box sx={{ mt: 3, textAlign: 'center' }}>
           <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.8)' }}>
-            © 2024 MediMesh. HIPAA Compliant Medical Data Management.
+            © 2026 MediMesh · Clinical operations platform
           </Typography>
         </Box>
       </Container>
@@ -246,4 +295,4 @@ const LoginPage = () => {
   );
 };
 
-export default LoginPage; 
+export default LoginPage;

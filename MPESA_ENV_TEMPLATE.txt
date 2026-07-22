@@ -28,6 +28,10 @@ MPESA_SHORTCODE=174379
 # Production: https://api.yourdomain.com/api/payments/mpesa/callback
 MPESA_CALLBACK_URL=https://your-subdomain.ngrok.io/api/payments/mpesa/callback
 
+# Random secret used to authenticate callbacks. Required outside development.
+# MediMesh appends it to the callback URL sent to Daraja; do not commit a real value.
+MPESA_CALLBACK_TOKEN=replace_with_a_long_random_secret
+
 # ============================================
 # SANDBOX TEST CREDENTIALS
 # ============================================
@@ -49,6 +53,7 @@ MPESA_CALLBACK_URL=https://your-subdomain.ngrok.io/api/payments/mpesa/callback
 # [ ] Update MPESA_PASSKEY with production passkey
 # [ ] Update MPESA_SHORTCODE with your actual business code
 # [ ] Ensure MPESA_CALLBACK_URL is HTTPS with valid SSL
+# [ ] Set MPESA_CALLBACK_TOKEN to a long, unique secret
 # [ ] Test with small real amounts (KES 1)
 # [ ] Monitor logs and set up alerts
 

@@ -106,7 +106,7 @@ const DiagnosisSection = ({
 
       <Box sx={{ mt: 3, p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
         <Typography variant="body2">
-          ⚠️ <strong>Important:</strong> After entering diagnosis, proceed to the next tabs to order lab tests, radiology studies, or medications as needed.
+          <strong>Important:</strong> After entering diagnosis, proceed to the next tabs to order lab tests, radiology studies, or medications as needed.
         </Typography>
       </Box>
     </Box>

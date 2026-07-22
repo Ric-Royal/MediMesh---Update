@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Container, Paper, Typography, Box, Tab, Tabs, Grid, Card, CardContent,
+  Paper, Typography, Box, Tab, Tabs, Grid, Card, CardContent,
   Button, Chip, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Dialog, DialogTitle, DialogContent, DialogActions, TextField,
   IconButton, Alert, CircularProgress, Divider
@@ -15,6 +15,11 @@ import {
 } from '@mui/icons-material';
 import API_CONFIG from '../config/api';
 import { useNotification } from '../contexts/NotificationContext';
+import {
+  getMaximumDispensableQuantity,
+  getRemainingPrescriptionQuantity,
+  isDispenseQuantityValid,
+} from '../utils/pharmacy';
 
 const PharmacyPage = () => {
   const { notifySuccess, notifyError } = useNotification();
@@ -25,9 +30,11 @@ const PharmacyPage = () => {
   const [dispenseDialogOpen, setDispenseDialogOpen] = useState(false);
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [dispensedQuantities, setDispensedQuantities] = useState({});
+  const [statistics, setStatistics] = useState({});
+  const [dispensing, setDispensing] = useState(false);
 
   // Fetch prescriptions
-  const fetchPrescriptions = async (status = 'pending') => {
+  const fetchPrescriptions = useCallback(async (status = 'pending') => {
     setLoading(true);
     try {
       const response = await fetch(`${API_CONFIG.endpoints.pharmacy.prescriptions}?status=${status}`, {
@@ -45,34 +52,19 @@ const PharmacyPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [notifyError]);
 
   useEffect(() => {
-    const statusMap = ['pending', 'dispensing', 'dispensed'];
+    const statusMap = ['pending', 'partially-dispensed', 'fully-dispensed'];
     fetchPrescriptions(statusMap[activeTab]);
-  }, [activeTab]);
+    fetch(`${API_CONFIG.baseURL}/api/pharmacy/statistics`, { headers: API_CONFIG.getAuthHeaders() })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => data && setStatistics(data.data || {}))
+      .catch(() => {});
+  }, [activeTab, fetchPrescriptions]);
 
   const handleTabChange = (event, newValue) => {
     setActiveTab(newValue);
-  };
-
-  const handleStartDispensing = async (prescription) => {
-    try {
-      const response = await fetch(`${API_CONFIG.endpoints.pharmacy.prescriptions}/${prescription.id}`, {
-        method: 'PUT',
-        headers: API_CONFIG.getAuthHeaders(),
-        body: JSON.stringify({ status: 'dispensing' }),
-      });
-      if (response.ok) {
-        notifySuccess('Prescription started');
-        fetchPrescriptions('pending');
-      } else {
-        notifyError('Failed to start prescription');
-      }
-    } catch (error) {
-      console.error('Error starting prescription:', error);
-      notifyError('An error occurred');
-    }
   };
 
   const handleOpenDispenseDialog = async (prescription) => {
@@ -88,10 +80,12 @@ const PharmacyPage = () => {
         const initialQuantities = {};
         if (prescriptionDetails.items) {
           prescriptionDetails.items.forEach(item => {
-            initialQuantities[item.id] = {
-              dispensed_quantity: item.dispensed_quantity || item.quantity || 0,
-              notes: item.notes || '',
-            };
+            if (item.status !== 'dispensed') {
+              initialQuantities[item.id] = {
+                dispensed_quantity: getMaximumDispensableQuantity(item),
+                notes: item.notes || '',
+              };
+            }
           });
         }
         setDispensedQuantities(initialQuantities);
@@ -117,37 +111,42 @@ const PharmacyPage = () => {
   const handleDispense = async () => {
     if (!selectedPrescription) return;
 
+    setDispensing(true);
     try {
+      let finalPrescriptionStatus = 'fully-dispensed';
       // Update each medication item
       for (const [itemId, dispenseData] of Object.entries(dispensedQuantities)) {
-        await fetch(`${API_CONFIG.endpoints.pharmacy.prescriptions}/${selectedPrescription.id}/items/${itemId}`, {
-          method: 'PUT',
+        const dispenseResponse = await fetch(`${API_CONFIG.endpoints.pharmacy.prescriptions}/${selectedPrescription.id}/items/${itemId}/dispense`, {
+          method: 'POST',
           headers: API_CONFIG.getAuthHeaders(),
           body: JSON.stringify({
-            dispensed_quantity: dispenseData.dispensed_quantity,
+            quantity_dispensed: Number(dispenseData.dispensed_quantity),
             notes: dispenseData.notes,
           }),
         });
+        const payload = await dispenseResponse.json().catch(() => ({}));
+        if (!dispenseResponse.ok) {
+          throw new Error(payload.error || 'Failed to dispense a medication');
+        }
+        finalPrescriptionStatus = payload.data?.prescription_status || finalPrescriptionStatus;
+        setDispensedQuantities(previous => {
+          const remainingItems = { ...previous };
+          delete remainingItems[itemId];
+          return remainingItems;
+        });
       }
 
-      // Mark prescription as dispensed
-      const response = await fetch(`${API_CONFIG.endpoints.pharmacy.prescriptions}/${selectedPrescription.id}`, {
-        method: 'PUT',
-        headers: API_CONFIG.getAuthHeaders(),
-        body: JSON.stringify({ status: 'dispensed' }),
-      });
-
-      if (response.ok) {
-        notifySuccess('Medications dispensed successfully! Invoice updated automatically.');
-        setDispenseDialogOpen(false);
-        setSelectedPrescription(null);
-        fetchPrescriptions('dispensing');
-      } else {
-        notifyError('Failed to dispense medications');
-      }
+      notifySuccess(finalPrescriptionStatus === 'fully-dispensed'
+        ? 'Medications dispensed. Stock, visit, queue and invoice were updated.'
+        : 'Partial supply recorded. The remaining medication stays in the pharmacy queue.');
+      setDispenseDialogOpen(false);
+      setSelectedPrescription(null);
+      setActiveTab(finalPrescriptionStatus === 'fully-dispensed' ? 2 : 1);
     } catch (error) {
       console.error('Error dispensing medications:', error);
-      notifyError('An error occurred while dispensing medications');
+      notifyError(error.message || 'An error occurred while dispensing medications');
+    } finally {
+      setDispensing(false);
     }
   };
 
@@ -168,15 +167,16 @@ const PharmacyPage = () => {
   };
 
   const getStatusChip = (status) => {
+    const safeStatus = status || 'pending';
     const statusConfig = {
       pending: { color: 'warning', icon: <PendingIcon fontSize="small" /> },
-      dispensing: { color: 'info', icon: <PharmacyIcon fontSize="small" /> },
-      dispensed: { color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
+      'partially-dispensed': { color: 'info', icon: <PharmacyIcon fontSize="small" /> },
+      'fully-dispensed': { color: 'success', icon: <CheckCircleIcon fontSize="small" /> },
     };
-    const config = statusConfig[status] || statusConfig.pending;
+    const config = statusConfig[safeStatus] || statusConfig.pending;
     return (
       <Chip
-        label={status.toUpperCase()}
+        label={safeStatus.replaceAll('-', ' ').toUpperCase()}
         color={config.color}
         size="small"
         icon={config.icon}
@@ -184,8 +184,13 @@ const PharmacyPage = () => {
     );
   };
 
+  const hasInvalidDispenseQuantity = Object.entries(dispensedQuantities).some(([itemId, value]) => {
+    const item = selectedPrescription?.items?.find(candidate => String(candidate.id) === String(itemId));
+    return !item || !isDispenseQuantityValid(item, value.dispensed_quantity);
+  });
+
   return (
-    <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
+    <Box component="section" sx={{ width: '100%', minWidth: 0, mb: 3 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
         <MedicalServicesIcon sx={{ fontSize: 40, mr: 2, color: 'primary.main' }} />
         <Typography variant="h4" component="h1">
@@ -204,7 +209,7 @@ const PharmacyPage = () => {
                     Pending Prescriptions
                   </Typography>
                   <Typography variant="h4">
-                    {prescriptions.filter(p => p.status === 'pending').length}
+                    {statistics.pending_prescriptions || 0}
                   </Typography>
                 </Box>
                 <PendingIcon sx={{ fontSize: 48, color: 'warning.main', opacity: 0.3 }} />
@@ -218,10 +223,10 @@ const PharmacyPage = () => {
               <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Box>
                   <Typography color="textSecondary" gutterBottom>
-                    Being Dispensed
+                    Partially Dispensed
                   </Typography>
                   <Typography variant="h4">
-                    {prescriptions.filter(p => p.status === 'dispensing').length}
+                    {statistics.partial_prescriptions || 0}
                   </Typography>
                 </Box>
                 <PharmacyIcon sx={{ fontSize: 48, color: 'info.main', opacity: 0.3 }} />
@@ -238,7 +243,7 @@ const PharmacyPage = () => {
                     Dispensed Today
                   </Typography>
                   <Typography variant="h4">
-                    {prescriptions.filter(p => p.status === 'dispensed').length}
+                    {statistics.dispensed_today || 0}
                   </Typography>
                 </Box>
                 <CheckCircleIcon sx={{ fontSize: 48, color: 'success.main', opacity: 0.3 }} />
@@ -252,7 +257,7 @@ const PharmacyPage = () => {
       <Paper sx={{ mb: 3 }}>
         <Tabs value={activeTab} onChange={handleTabChange} indicatorColor="primary" textColor="primary">
           <Tab label="Pending" icon={<PendingIcon />} iconPosition="start" />
-          <Tab label="Dispensing" icon={<PharmacyIcon />} iconPosition="start" />
+          <Tab label="Partial" icon={<PharmacyIcon />} iconPosition="start" />
           <Tab label="Dispensed" icon={<CheckCircleIcon />} iconPosition="start" />
         </Tabs>
       </Paper>
@@ -298,7 +303,7 @@ const PharmacyPage = () => {
                     <TableCell>{prescription.uhid}</TableCell>
                     <TableCell>
                       <Typography variant="body2">
-                        {prescription.medication_count || 0} medication(s)
+                        {prescription.item_count || 0} medication(s)
                       </Typography>
                     </TableCell>
                     <TableCell>{prescription.doctor_name}</TableCell>
@@ -313,12 +318,12 @@ const PharmacyPage = () => {
                             size="small"
                             variant="contained"
                             color="primary"
-                            onClick={() => handleStartDispensing(prescription)}
+                            onClick={() => handleOpenDispenseDialog(prescription)}
                           >
-                            Start
+                            Review & Dispense
                           </Button>
                         )}
-                        {prescription.status === 'dispensing' && (
+                        {prescription.status === 'partially-dispensed' && (
                           <Button
                             size="small"
                             variant="contained"
@@ -328,7 +333,7 @@ const PharmacyPage = () => {
                             Dispense
                           </Button>
                         )}
-                        {prescription.status === 'dispensed' && (
+                        {prescription.status === 'fully-dispensed' && (
                           <>
                             <IconButton
                               size="small"
@@ -353,7 +358,12 @@ const PharmacyPage = () => {
       </Paper>
 
       {/* Dispense Dialog */}
-      <Dialog open={dispenseDialogOpen} onClose={() => setDispenseDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog
+        open={dispenseDialogOpen}
+        onClose={() => { if (!dispensing) setDispenseDialogOpen(false); }}
+        maxWidth="md"
+        fullWidth
+      >
         <DialogTitle>
           Dispense Medications - {selectedPrescription?.prescription_number}
           <Typography variant="body2" color="textSecondary">
@@ -365,7 +375,10 @@ const PharmacyPage = () => {
             selectedPrescription.items.map((item, index) => (
               <Box key={item.id} sx={{ mb: 3 }}>
                 <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-                  {index + 1}. {item.drug_name}
+                  {index + 1}. {item.generic_name}{item.brand_name ? ` (${item.brand_name})` : ''}
+                  {item.status === 'dispensed' && (
+                    <Chip label="Dispensed" color="success" size="small" sx={{ ml: 1 }} />
+                  )}
                 </Typography>
                 <Grid container spacing={2}>
                   <Grid item xs={12} sm={6}>
@@ -388,7 +401,7 @@ const PharmacyPage = () => {
                     <TextField
                       label="Duration"
                       fullWidth
-                      value={item.duration || ''}
+                      value={item.duration_days ? `${item.duration_days} days` : ''}
                       disabled
                     />
                   </Grid>
@@ -405,9 +418,20 @@ const PharmacyPage = () => {
                       label="Dispensed Quantity"
                       fullWidth
                       type="number"
-                      value={dispensedQuantities[item.id]?.dispensed_quantity || 0}
+                      value={item.status === 'dispensed'
+                        ? (item.quantity_dispensed || item.dispensed_quantity || 0)
+                        : (dispensedQuantities[item.id]?.dispensed_quantity || 0)}
                       onChange={(e) => handleQuantityChange(item.id, 'dispensed_quantity', parseInt(e.target.value) || 0)}
                       required
+                      disabled={item.status === 'dispensed' || dispensing}
+                      inputProps={{ min: 1, max: getMaximumDispensableQuantity(item) }}
+                      error={item.status !== 'dispensed' && !isDispenseQuantityValid(
+                        item,
+                        dispensedQuantities[item.id]?.dispensed_quantity
+                      )}
+                      helperText={item.status === 'dispensed'
+                        ? 'Already supplied'
+                        : `${getRemainingPrescriptionQuantity(item)} remaining · ${item.current_stock || 0} in stock`}
                     />
                   </Grid>
                   <Grid item xs={12}>
@@ -419,6 +443,7 @@ const PharmacyPage = () => {
                       value={dispensedQuantities[item.id]?.notes || ''}
                       onChange={(e) => handleQuantityChange(item.id, 'notes', e.target.value)}
                       placeholder="Any special instructions or notes for the patient..."
+                      disabled={item.status === 'dispensed' || dispensing}
                     />
                   </Grid>
                 </Grid>
@@ -430,9 +455,14 @@ const PharmacyPage = () => {
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDispenseDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" color="primary" onClick={handleDispense}>
-            Dispense & Complete
+          <Button onClick={() => setDispenseDialogOpen(false)} disabled={dispensing}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleDispense}
+            disabled={dispensing || Object.keys(dispensedQuantities).length === 0 || hasInvalidDispenseQuantity}
+          >
+            {dispensing ? <CircularProgress size={20} /> : 'Confirm Dispensing'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -516,7 +546,7 @@ const PharmacyPage = () => {
           </Button>
         </DialogActions>
       </Dialog>
-    </Container>
+    </Box>
   );
 };
 

@@ -132,7 +132,6 @@ const uuidSchema = Joi.string().uuid().required();
 // Validation middleware
 const validate = (schema) => {
   return (req, res, next) => {
-    const { logger } = require('./logger');
     
     // Helper function to convert empty strings to null for optional fields
     const convertEmptyStringsToNull = (obj) => {
@@ -156,15 +155,6 @@ const validate = (schema) => {
     // Convert empty strings to null before validation
     const processedBody = convertEmptyStringsToNull(req.body);
     
-    // Debug: Log the incoming request data
-    logger.info('=== VALIDATION DEBUG ===', {
-      originalBody: req.body,
-      processedBody: processedBody,
-      requestHeaders: req.headers,
-      url: req.url,
-      method: req.method
-    });
-    
     const { error, value } = schema.validate(processedBody, { 
       abortEarly: false,
       stripUnknown: true 
@@ -173,15 +163,8 @@ const validate = (schema) => {
     if (error) {
       const errorDetails = error.details.map(detail => ({
         field: detail.path.join('.'),
-        message: detail.message,
-        value: detail.context?.value
+        message: detail.message
       }));
-
-      logger.error('=== VALIDATION ERROR ===', {
-        errorDetails,
-        originalBody: req.body,
-        processedBody: processedBody
-      });
 
       return res.status(400).json({
         error: 'Validation failed',
@@ -204,8 +187,7 @@ const validateQuery = (schema) => {
     if (error) {
       const errorDetails = error.details.map(detail => ({
         field: detail.path.join('.'),
-        message: detail.message,
-        value: detail.context?.value
+        message: detail.message
       }));
 
       return res.status(400).json({
@@ -229,8 +211,7 @@ const validateParams = (schema) => {
     if (error) {
       const errorDetails = error.details.map(detail => ({
         field: detail.path.join('.'),
-        message: detail.message,
-        value: detail.context?.value
+        message: detail.message
       }));
 
       return res.status(400).json({
@@ -259,4 +240,4 @@ module.exports = {
   validate,
   validateQuery,
   validateParams
-}; 
+};

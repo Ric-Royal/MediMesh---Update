@@ -7,188 +7,196 @@ import {
   Typography,
   Paper,
   List,
-  ListItem,
+  ListItemButton,
   ListItemText,
-  ListItemIcon,
-  Chip,
   Button,
   Alert,
   Skeleton,
-  Fade,
   Divider,
+  CircularProgress,
 } from '@mui/material';
 import {
-  People as PeopleIcon,
-  Description as DescriptionIcon,
-  TrendingUp as TrendingUpIcon,
-  AccessTime as AccessTimeIcon,
   Add as AddIcon,
-  Payment as PaymentIcon,
   Refresh as RefreshIcon,
-  LocalHospital as LocalHospitalIcon,
+  ChevronRight as ChevronRightIcon,
 } from '@mui/icons-material';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
 import { useNavigate } from 'react-router-dom';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../contexts/NotificationContext';
+import { useSettings } from '../contexts/SettingsContext';
 import MetricCard from '../components/common/MetricCard';
 import ProgressStat from '../components/common/ProgressStat';
+import StatusPill from '../components/common/StatusPill';
 import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog';
-
-const weekLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
-const createTrendData = (baseValue = 40) =>
-  weekLabels.map((label, index) => ({
-    label,
-    value: Math.max(5, Math.round(baseValue + baseValue * 0.15 * Math.sin((index + 1) * 1.2))),
-  }));
 
 const DashboardPage = () => {
   const [patientStats, setPatientStats] = useState(null);
   const [recordStats, setRecordStats] = useState(null);
   const [paymentStats, setPaymentStats] = useState(null);
+  const [dashboardStats, setDashboardStats] = useState(null);
+  const [systemStatus, setSystemStatus] = useState(null);
   const [recentRecords, setRecentRecords] = useState([]);
+  const [dataAvailability, setDataAvailability] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [addPatientDialogOpen, setAddPatientDialogOpen] = useState(false);
 
   const { user, hasRole } = useAuth();
+  const { systemSettings } = useSettings();
   const { notifySuccess, notifyError } = useNotification();
   const navigate = useNavigate();
+  const patientLabel = systemSettings?.patientLabel || 'Patient';
+  const visitLabel = systemSettings?.visitLabel || 'Visit';
+  const currency = systemSettings?.currency || 'KES';
+  const todayLabel = new Intl.DateTimeFormat('en-KE', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date());
 
+  /* ── Data fetching ───────────────────────────────────────── */
   const fetchDashboardData = useCallback(
     async ({ silent = false } = {}) => {
       try {
-        if (!silent) {
-          setRefreshing(true);
-        }
+        if (!silent) setRefreshing(true);
         setError(null);
 
-        const promises = [
-          apiService.patients.getStatistics(),
-          apiService.medicalRecords.getStatistics(),
-          apiService.medicalRecords.getAll({ limit: 5, offset: 0 }),
+        const requests = [
+          ['patients', apiService.patients.getStatistics()],
+          ['records', apiService.medicalRecords.getStatistics()],
+          ['recentRecords', apiService.medicalRecords.getAll({ limit: 5, offset: 0 })],
+          ['dashboard', apiService.dashboard.getStatistics()],
+          ['systemStatus', apiService.dashboard.getSystemStatus()],
+          ['payments', apiService.payments.getStatistics()],
         ];
+        const settled = await Promise.all(requests.map(async ([key, request]) => {
+          try {
+            return [key, { available: true, response: await request }];
+          } catch (requestError) {
+            console.error(`Dashboard request failed (${key}):`, requestError);
+            return [key, { available: false, response: null }];
+          }
+        }));
+        const results = Object.fromEntries(settled);
+        const availability = Object.fromEntries(
+          settled.map(([key, result]) => [key, result.available])
+        );
 
-        try {
-          promises.push(apiService.payments.getStatistics());
-        } catch {
-          // payments optional
-        }
+        setDataAvailability(availability);
+        setPatientStats(results.patients.available ? results.patients.response?.data ?? null : null);
+        setRecordStats(results.records.available ? results.records.response?.data ?? null : null);
+        setRecentRecords(results.recentRecords.available ? results.recentRecords.response?.data ?? [] : []);
+        setDashboardStats(results.dashboard.available ? results.dashboard.response?.data ?? null : null);
+        setSystemStatus(results.systemStatus.available ? results.systemStatus.response?.data ?? null : null);
+        setPaymentStats(results.payments.available ? results.payments.response?.data ?? null : null);
 
-        const responses = await Promise.all(promises);
-        setPatientStats(responses[0].data);
-        setRecordStats(responses[1].data);
-        setRecentRecords(responses[2].data || []);
-
-        if (responses[3]) {
-          setPaymentStats(responses[3].data);
-        }
-
-        if (!silent) {
+        const failedLabels = {
+          patients: `${patientLabel.toLowerCase()} totals`,
+          records: 'record totals',
+          recentRecords: 'recent records',
+          dashboard: 'operational metrics',
+          systemStatus: 'workspace status',
+          payments: 'payment totals',
+        };
+        const failed = Object.entries(availability)
+          .filter(([, available]) => !available)
+          .map(([key]) => failedLabels[key]);
+        if (failed.length) {
+          setError(`Some dashboard information is unavailable: ${failed.join(', ')}.`);
+          if (!silent) notifyError('Dashboard refreshed with unavailable sections');
+        } else if (!silent) {
           notifySuccess('Dashboard refreshed');
         }
       } catch (err) {
         console.error('Error fetching dashboard data:', err);
-        setError('Failed to load dashboard data. Please try again.');
-        if (!silent) {
-          notifyError('Unable to refresh dashboard');
-        }
+        setPatientStats(null);
+        setRecordStats(null);
+        setPaymentStats(null);
+        setDashboardStats(null);
+        setSystemStatus(null);
+        setRecentRecords([]);
+        setDataAvailability({
+          patients: false,
+          records: false,
+          recentRecords: false,
+          dashboard: false,
+          systemStatus: false,
+          payments: false,
+        });
+        setError('Dashboard information is unavailable. No cached operational values are being shown.');
+        if (!silent) notifyError('Unable to refresh dashboard');
       } finally {
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [notifyError, notifySuccess]
+    [notifyError, notifySuccess, patientLabel]
   );
 
-  useEffect(() => {
-    fetchDashboardData({ silent: true });
-  }, [fetchDashboardData]);
+  useEffect(() => { fetchDashboardData({ silent: true }); }, [fetchDashboardData]);
 
-  const getRecordTypeColor = (type) => {
-    const colors = {
-      'consultation': 'primary',
-      'diagnosis': 'secondary',
-      'treatment': 'success',
-      'lab_result': 'info',
-      'imaging': 'warning',
-      'prescription': 'error',
-      'vaccination': 'success',
-      'surgery': 'secondary',
-      'emergency': 'error',
-      'discharge': 'info',
-      'referral': 'warning',
-      'other': 'default'
-    };
-    return colors[type] || 'default';
-  };
+  /* ── Helpers ─────────────────────────────────────────────── */
+  const formatDate = (d) =>
+    new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric'
-    });
-  };
+  const dashboardAvailable = dataAvailability.dashboard === true;
+  const paymentStatsAvailable = dataAvailability.payments === true;
 
-  const createTrendData = (baseValue) =>
-    Array.from({ length: 8 }, (_, i) => ({
-      label: `D${i + 1}`,
-      value: Math.round(baseValue * (0.7 + Math.random() * 0.6)),
-    }));
+  /* ── Trend data ──────────────────────────────────────────── */
+  const patientTrend = useMemo(() => {
+    if (!dashboardAvailable) return [];
+    if (dashboardStats?.trends?.patients?.length) return dashboardStats.trends.patients;
+    return emptyWeekTrend();
+  }, [dashboardAvailable, dashboardStats]);
 
-  const patientTrend = useMemo(
-    () => createTrendData(patientStats?.new_patients_30d || 40),
-    [patientStats]
-  );
-  const recordTrend = useMemo(
-    () => createTrendData(recordStats?.new_records_30d || 30),
-    [recordStats]
-  );
-  const billingTrend = useMemo(
-    () => createTrendData(paymentStats?.total_transactions || 25),
-    [paymentStats]
-  );
+  const encounterTrend = useMemo(() => {
+    if (!dashboardAvailable) return [];
+    if (dashboardStats?.trends?.encounters?.length) return dashboardStats.trends.encounters;
+    return emptyWeekTrend();
+  }, [dashboardAvailable, dashboardStats]);
 
-  const combinedTrend = patientTrend.map((point, index) => ({
-    label: point.label,
-    patients: point.value,
-    queue: recordTrend[index]?.value || 0,
-    billing: billingTrend[index]?.value || 0,
+  const billingTrend = useMemo(() => {
+    if (!dashboardAvailable) return [];
+    if (dashboardStats?.trends?.payments?.length) return dashboardStats.trends.payments;
+    return emptyWeekTrend();
+  }, [dashboardAvailable, dashboardStats]);
+
+  const combinedTrend = patientTrend.map((pt, i) => ({
+    label: pt.label,
+    patients: pt.value,
+    encounters: encounterTrend[i]?.value || 0,
+    billing: billingTrend[i]?.value || 0,
   }));
 
-  const bedOccupancyRate = recordStats?.active_records && recordStats?.total_records
-    ? Math.min(100, (recordStats.active_records / recordStats.total_records) * 100)
-    : 72;
-  const queuePressure = patientStats?.new_patients_30d
-    ? Math.min(100, (patientStats.new_patients_30d / (patientStats.total_patients || 1)) * 100)
-    : 58;
-  const billingRecovery = paymentStats?.total_revenue && paymentStats?.pending_amount
-    ? Math.max(
-        0,
-        Math.min(100, ((paymentStats.total_revenue - paymentStats.pending_amount) / paymentStats.total_revenue) * 100)
-      )
-    : 82;
+  /* ── Operational metrics ─────────────────────────────────── */
+  const bedOccupancy = dashboardAvailable ? dashboardStats?.operational?.bedOccupancy ?? 0 : null;
+  const queuePressure = dashboardAvailable ? dashboardStats?.operational?.queuePressure ?? 0 : null;
+  const billingRecovery = dashboardAvailable ? dashboardStats?.operational?.billingRecovery ?? 0 : null;
+  const avgWait = dashboardAvailable ? dashboardStats?.queue?.avgWaitMinutes ?? 0 : null;
+  const outstandingBalance = dashboardAvailable
+    ? dashboardStats?.billing?.outstanding ?? 0
+    : paymentStatsAvailable ? paymentStats?.pending_amount ?? null : null;
 
+  /* ── System status ───────────────────────────────────────── */
+  const systemStatusAvailable = dataAvailability.systemStatus === true;
+  const apiStatus = systemStatusAvailable ? systemStatus?.checks?.api?.status || 'unknown' : 'unavailable';
+  const dbStatus = systemStatusAvailable ? systemStatus?.checks?.database?.status || 'unknown' : 'unavailable';
+  const cacheStatus = systemStatusAvailable ? systemStatus?.checks?.cache?.status || 'unknown' : 'unavailable';
+
+  /* ── Loading skeleton ────────────────────────────────────── */
   if (loading) {
     return (
       <Box>
-        <Typography variant="h4" gutterBottom>
-          Dashboard
-        </Typography>
-        <Grid container spacing={3}>
-          {[1, 2, 3, 4].map((item) => (
-            <Grid item xs={12} sm={6} md={3} key={item}>
-              <Card>
-                <CardContent>
-                  <Skeleton variant="text" width="60%" />
-                  <Skeleton variant="text" width="40%" height={40} />
-                  <Skeleton variant="text" width="80%" />
-                </CardContent>
-              </Card>
+        <Skeleton width={260} height={42} sx={{ mb: 1 }} />
+        <Skeleton width={340} sx={{ mb: 2.5 }} />
+        <Grid container spacing={2}>
+          {[1, 2, 3, 4].map((n) => (
+            <Grid item xs={12} sm={6} md={3} key={n}>
+              <Card><CardContent><Skeleton width="50%" /><Skeleton width="30%" height={36} /><Skeleton /></CardContent></Card>
             </Grid>
           ))}
         </Grid>
@@ -196,290 +204,275 @@ const DashboardPage = () => {
     );
   }
 
+  /* ── Render ──────────────────────────────────────────────── */
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+    <Box sx={{ width: '100%', minWidth: 0 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: { xs: 'column', md: 'row' },
+          justifyContent: 'space-between',
+          alignItems: { xs: 'stretch', md: 'flex-start' },
+          gap: 2,
+          mb: 2.5,
+        }}
+      >
         <Box>
-          <Typography variant="h4" gutterBottom fontWeight={700}>
-            Welcome back, {user?.firstName || user?.username}!
+          <Typography variant="h4" fontWeight={700} sx={{ lineHeight: 1.2 }}>
+            Today&apos;s operations
           </Typography>
-          <Typography variant="body1" color="text.secondary">
-            Here is a snapshot of today’s hospital performance.
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+            {todayLabel} · Signed in as {user?.fullName || user?.username}
           </Typography>
         </Box>
-        <Box sx={{ display: 'flex', gap: 2 }}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
           <Button
             variant="outlined"
-            startIcon={<RefreshIcon />}
+            size="small"
             onClick={() => fetchDashboardData({ silent: false })}
             disabled={refreshing}
+            startIcon={refreshing ? <CircularProgress size={14} /> : <RefreshIcon sx={{ fontSize: 16 }} />}
           >
             Refresh
           </Button>
           {(hasRole('doctor') || hasRole('nurse') || hasRole('admin') || hasRole('receptionist')) && (
             <>
-              <Button
-                variant="outlined"
-                startIcon={<AddIcon />}
-                onClick={() => setAddPatientDialogOpen(true)}
-              >
-                Add to Queue
+              <Button variant="outlined" size="small" onClick={() => setAddPatientDialogOpen(true)}>
+                Add to {visitLabel} queue
               </Button>
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => navigate('/patients/new')}
-              >
-                New Patient
+              <Button variant="contained" size="small" onClick={() => navigate('/patients/new')} startIcon={<AddIcon sx={{ fontSize: 16 }} />}>
+                New {patientLabel}
               </Button>
             </>
           )}
         </Box>
       </Box>
 
-      {error && (
-        <Alert severity="error" sx={{ mb: 3 }}>
-          {error}
-        </Alert>
-      )}
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      <Fade in>
-        <Grid container spacing={3} sx={{ mb: 3 }}>
-          <Grid item xs={12} sm={6} md={3}>
-            <MetricCard
-              title="Total Patients"
-              value={patientStats?.total_patients || '0'}
-              subtitle={`${patientStats?.new_patients_30d || 0} new this month`}
-              icon={<PeopleIcon color="primary" />}
-              chip={{ label: 'Live', color: 'success' }}
-              trendData={patientTrend}
-              trendLabel="Registrations (7 days)"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <MetricCard
-              title="Records Created"
-              value={recordStats?.total_records || '0'}
-              subtitle={`${recordStats?.new_records_30d || 0} new this month`}
-              icon={<DescriptionIcon color="secondary" />}
-              chip={{ label: 'Clinical', color: 'secondary' }}
-              trendData={recordTrend}
-              trendLabel="Clinical updates"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <MetricCard
-              title="Revenue"
-              value={
-                paymentStats ? `KES ${parseFloat(paymentStats.total_revenue || 0).toLocaleString()}` : 'KES 0'
-              }
-              subtitle={`${paymentStats?.successful_transactions || 0} successful payments`}
-              icon={<PaymentIcon color="success" />}
-              trendData={billingTrend}
-              trendLabel="Payments trend"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <MetricCard
-              title="Outstanding"
-              value={
-                paymentStats ? `KES ${parseFloat(paymentStats.pending_amount || 0).toLocaleString()}` : 'KES 0'
-              }
-              subtitle={`${paymentStats?.total_transactions || 0} transactions`}
-              icon={<TrendingUpIcon color="warning" />}
-              status="overdue"
-              trendData={billingTrend}
-              trendLabel="Collections trend"
-            />
-          </Grid>
+      <Grid container spacing={1.5} sx={{ mb: 2.5 }}>
+        <Grid item xs={12} sm={6} lg={3}>
+          <MetricCard
+            title="Waiting now"
+            value={dashboardAvailable ? dashboardStats?.queue?.totalWaiting ?? 0 : '—'}
+            subtitle={dashboardAvailable
+              ? `${dashboardStats?.queue?.completedToday ?? 0} completed today`
+              : 'Operational data unavailable'}
+            accent="warning.main"
+            onClick={() => navigate('/queue')}
+          />
         </Grid>
-      </Fade>
+        <Grid item xs={12} sm={6} lg={3}>
+          <MetricCard
+            title="In service"
+            value={dashboardAvailable ? dashboardStats?.queue?.inService ?? 0 : '—'}
+            subtitle={dashboardAvailable ? `${avgWait} min average wait` : 'Operational data unavailable'}
+            accent="primary.main"
+            onClick={() => navigate('/queue')}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} lg={3}>
+          <MetricCard
+            title="Bed occupancy"
+            value={dashboardAvailable ? `${bedOccupancy}%` : '—'}
+            subtitle={dashboardAvailable
+              ? `${dashboardStats?.operational?.occupiedBeds ?? 0} of ${dashboardStats?.operational?.totalBeds ?? 0} beds occupied`
+              : 'Operational data unavailable'}
+            accent={!dashboardAvailable ? 'text.disabled' : bedOccupancy >= 85 ? 'error.main' : 'success.main'}
+            onClick={() => navigate('/wards')}
+          />
+        </Grid>
+        <Grid item xs={12} sm={6} lg={3}>
+          <MetricCard
+            title="Outstanding balance"
+            value={outstandingBalance == null
+              ? '—'
+              : `${currency} ${parseFloat(outstandingBalance).toLocaleString()}`}
+            subtitle={dashboardAvailable
+              ? `${dashboardStats?.billing?.pendingCount ?? 0} invoices need attention`
+              : outstandingBalance != null
+                ? 'Payment total available; invoice detail unavailable'
+                : 'Billing data unavailable'}
+            accent="warning.dark"
+            onClick={hasRole('admin') || hasRole('billing') ? () => navigate('/billing') : undefined}
+          />
+        </Grid>
+      </Grid>
 
-      <Grid container spacing={3} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 3, height: '100%' }}>
-            <Typography variant="h6" gutterBottom>
-              Operational Load
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <ProgressStat
-                label="Bed Occupancy"
-                value={bedOccupancyRate}
-                color="error"
-                helperText="Target &lt; 85%"
-                icon={<LocalHospitalIcon fontSize="small" color="error" />}
-              />
-              <ProgressStat
-                label="Queue Pressure"
-                value={queuePressure}
-                color="warning"
-                helperText="Avg wait time 18 mins"
-                icon={<AccessTimeIcon fontSize="small" color="warning" />}
-              />
-              <ProgressStat
-                label="Billing Recovery"
-                value={billingRecovery}
-                color="success"
-                helperText="Collected vs Outstanding"
-                icon={<PaymentIcon fontSize="small" color="success" />}
-              />
-            </Box>
+      {/* Operational thresholds and recent activity */}
+      <Grid container spacing={2} sx={{ mb: 2.5 }}>
+        <Grid item xs={12} lg={4}>
+          <Paper sx={{ p: 2.25, height: '100%' }}>
+            <Typography variant="h6" sx={{ mb: 2 }}>Operational thresholds</Typography>
+            {dashboardAvailable ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <ProgressStat
+                  label="Bed Occupancy"
+                  value={bedOccupancy}
+                  color="error"
+                  helperText={`${dashboardStats?.operational?.occupiedBeds ?? 0}/${dashboardStats?.operational?.totalBeds ?? 0} beds`}
+                />
+                <ProgressStat
+                  label="Queue Pressure"
+                  value={queuePressure}
+                  color="warning"
+                  helperText={`Avg wait ${avgWait} min`}
+                />
+                <ProgressStat
+                  label="Billing Recovery"
+                  value={billingRecovery}
+                  color="success"
+                  helperText="Collected vs billed"
+                />
+              </Box>
+            ) : (
+              <Alert severity="warning">Operational thresholds are unavailable.</Alert>
+            )}
           </Paper>
         </Grid>
-        <Grid item xs={12} md={6}>
-          <Paper sx={{ p: 3, height: '100%' }}>
-            <Typography variant="h6" gutterBottom>
-              Trend Overview
+        <Grid item xs={12} lg={8}>
+          <Paper sx={{ p: 2.25, height: '100%' }}>
+            <Typography variant="h6" sx={{ mb: 0.25 }}>Seven-day activity</Typography>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.25 }}>
+              Registrations, encounters and collections
             </Typography>
-            <ResponsiveContainer width="100%" height={260}>
-              <AreaChart data={combinedTrend}>
+            {dashboardAvailable ? (
+              <ResponsiveContainer width="100%" height={220}>
+                <AreaChart data={combinedTrend}>
                 <defs>
-                  <linearGradient id="colorPatients" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#0066CC" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#0066CC" stopOpacity={0} />
+                  <linearGradient id="gPatients" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#1B6B93" stopOpacity={0.25} />
+                    <stop offset="100%" stopColor="#1B6B93" stopOpacity={0} />
                   </linearGradient>
-                  <linearGradient id="colorQueue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#FB8C00" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#FB8C00" stopOpacity={0} />
+                  <linearGradient id="gEncounters" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#D97706" stopOpacity={0.2} />
+                    <stop offset="100%" stopColor="#D97706" stopOpacity={0} />
                   </linearGradient>
-                  <linearGradient id="colorBilling" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#00A86B" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#00A86B" stopOpacity={0} />
+                  <linearGradient id="gBilling" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#059669" stopOpacity={0.2} />
+                    <stop offset="100%" stopColor="#059669" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="label" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Area type="monotone" dataKey="patients" stroke="#0066CC" fill="url(#colorPatients)" name="Patients" />
-                <Area type="monotone" dataKey="queue" stroke="#FB8C00" fill="url(#colorQueue)" name="Queue" />
-                <Area type="monotone" dataKey="billing" stroke="#00A86B" fill="url(#colorBilling)" name="Billing" />
-              </AreaChart>
-            </ResponsiveContainer>
+                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="activity" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis yAxisId="billing" orientation="right" tick={{ fontSize: 11, fill: '#94A3B8' }} axisLine={false} tickLine={false} width={48} />
+                <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 12 }} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                <Area yAxisId="activity" type="monotone" dataKey="patients" stroke="#1B6B93" strokeWidth={2} fill="url(#gPatients)" name={`${patientLabel}s`} />
+                <Area yAxisId="activity" type="monotone" dataKey="encounters" stroke="#D97706" strokeWidth={2} fill="url(#gEncounters)" name="Encounters" />
+                <Area yAxisId="billing" type="monotone" dataKey="billing" stroke="#059669" strokeWidth={2} fill="url(#gBilling)" name={`Collections (${currency})`} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <Alert severity="warning" sx={{ mt: 2 }}>Seven-day activity is unavailable.</Alert>
+            )}
           </Paper>
         </Grid>
       </Grid>
 
-      {/* Recent Activity and Quick Actions */}
-      <Grid container spacing={3}>
-        <Grid item xs={12} md={8}>
-          <Paper sx={{ p: 3 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">Recent Medical Records</Typography>
-              <Button size="small" onClick={() => navigate('/records')}>
+      {/* ── Recent Records + Sidebar ── */}
+      <Grid container spacing={2}>
+        <Grid item xs={12} lg={8}>
+          <Paper sx={{ p: 2.25 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+              <Typography variant="h6">Recent clinical records</Typography>
+              <Button size="small" endIcon={<ChevronRightIcon sx={{ fontSize: 16 }} />} onClick={() => navigate('/records')}>
                 View all
               </Button>
             </Box>
-            <Divider sx={{ mb: 2 }} />
-            {recentRecords.length > 0 ? (
-              <List>
+            <Divider sx={{ mb: 1 }} />
+            {dataAvailability.recentRecords === false ? (
+              <Alert severity="warning">Recent clinical records are unavailable.</Alert>
+            ) : recentRecords.length > 0 ? (
+              <List disablePadding>
                 {recentRecords.map((record) => (
-                  <ListItem
+                  <ListItemButton
                     key={record.id}
-                    sx={{
-                      cursor: 'pointer',
-                      borderRadius: 1,
-                      '&:hover': { backgroundColor: 'action.hover' },
-                    }}
+                    sx={{ cursor: 'pointer', borderRadius: 1, py: 1, px: 1.5, '&:hover': { backgroundColor: 'action.hover' } }}
                     onClick={() => navigate(`/records/${record.id}`)}
                   >
-                    <ListItemIcon>
-                      <DescriptionIcon color="primary" />
-                    </ListItemIcon>
                     <ListItemText
                       primary={
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Typography variant="subtitle2">
                             {record.patient_info?.first_name} {record.patient_info?.last_name}
                           </Typography>
-                          <Chip
-                            label={record.record_type}
-                            size="small"
-                            color={getRecordTypeColor(record.record_type)}
-                            variant="outlined"
-                          />
+                          <StatusPill status={record.record_type} size="small" />
                         </Box>
                       }
                       secondary={
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">
-                            {record.provider_name} • {formatDate(record.record_date)}
-                          </Typography>
-                          {record.notes && (
-                            <Typography variant="caption" sx={{ display: 'block', mt: 0.5 }}>
-                              {record.notes.length > 100 ? `${record.notes.substring(0, 100)}...` : record.notes}
-                            </Typography>
-                          )}
-                        </Box>
+                        <Typography variant="caption" color="text.secondary">
+                          {record.provider_name} &middot; {formatDate(record.record_date)}
+                          {record.notes && ` — ${record.notes.length > 80 ? record.notes.substring(0, 80) + '...' : record.notes}`}
+                        </Typography>
                       }
                     />
-                    <ListItemIcon>
-                      <AccessTimeIcon fontSize="small" color="action" />
-                    </ListItemIcon>
-                  </ListItem>
+                  </ListItemButton>
                 ))}
               </List>
             ) : (
-              <Typography color="text.secondary" sx={{ py: 2 }}>
+              <Typography color="text.secondary" variant="body2" sx={{ py: 2, textAlign: 'center' }}>
                 No recent records found.
               </Typography>
             )}
           </Paper>
         </Grid>
 
-        <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 3, mb: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              Quick Actions
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              <Button
-                variant="outlined"
-                startIcon={<AddIcon />}
-                onClick={() => navigate('/patients/new')}
-                fullWidth
-              >
-                Add New Patient
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<AddIcon />}
-                onClick={() => navigate('/records/new')}
-                fullWidth
-              >
-                Create Record
-              </Button>
-              <Button variant="outlined" onClick={() => navigate('/queue')} fullWidth>
-                View Queue
-              </Button>
-              <Button variant="outlined" onClick={() => navigate('/billing')} fullWidth>
-                Billing Center
-              </Button>
+        <Grid item xs={12} lg={4}>
+          <Paper sx={{ p: 2.25, mb: 2 }}>
+            <Typography variant="h6" sx={{ mb: 1.5 }}>At a glance</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+              <SummaryRow
+                label={`Registered ${patientLabel.toLowerCase()}s`}
+                value={dataAvailability.patients ? patientStats?.total_patients ?? 0 : '—'}
+              />
+              <SummaryRow
+                label="Clinical records"
+                value={dataAvailability.records ? recordStats?.total_records ?? 0 : '—'}
+              />
+              <SummaryRow
+                label="Collected"
+                value={dashboardAvailable
+                  ? `${currency} ${parseFloat(dashboardStats?.billing?.totalCollected ?? 0).toLocaleString()}`
+                  : paymentStatsAvailable && paymentStats?.total_revenue != null
+                    ? `${currency} ${parseFloat(paymentStats.total_revenue).toLocaleString()}`
+                    : '—'}
+              />
+              <SummaryRow
+                label="Completed today"
+                value={dashboardAvailable ? dashboardStats?.queue?.completedToday ?? 0 : '—'}
+                last
+              />
             </Box>
           </Paper>
 
-          <Paper sx={{ p: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              System Status
-            </Typography>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-              <StatusChip label="API Status" value="Online" color="success" />
-              <StatusChip label="Database" value="Connected" color="success" />
-              <StatusChip label="Cache" value="Active" color="success" />
-              <StatusChip label="Role" value={user?.roles?.[0] || 'user'} color="primary" />
+          <Paper sx={{ p: 2.25 }}>
+            <Typography variant="h6" sx={{ mb: 1.5 }}>Workspace status</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <StatusRow label="API" status={apiStatus} />
+              <StatusRow label="Database" status={dbStatus} />
+              <StatusRow label="Cache" status={cacheStatus} />
+              <Divider />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Typography variant="caption" color="text.secondary">Role</Typography>
+                <Typography variant="caption" fontWeight={600}>{user?.roles?.[0] || 'user'}</Typography>
+              </Box>
+              {systemStatus?.uptime != null && (
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="caption" color="text.secondary">Uptime</Typography>
+                  <Typography variant="caption" fontWeight={600}>{formatUptime(systemStatus.uptime)}</Typography>
+                </Box>
+              )}
             </Box>
           </Paper>
         </Grid>
       </Grid>
 
-      {/* Add Patient to Queue Dialog */}
       <AddPatientToQueueDialog
         open={addPatientDialogOpen}
         onClose={() => setAddPatientDialogOpen(false)}
-        onSuccess={() => {
-          fetchDashboardData({ silent: true });
-        }}
+        onSuccess={() => fetchDashboardData({ silent: true })}
       />
     </Box>
   );
@@ -487,11 +480,54 @@ const DashboardPage = () => {
 
 export default DashboardPage;
 
-const StatusChip = ({ label, value, color }) => (
-  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-    <Typography variant="body2" color="text.secondary">
-      {label}
-    </Typography>
-    <Chip label={value} color={color} size="small" />
+/* ── Helpers ─────────────────────────────────────────────────── */
+
+const SummaryRow = ({ label, value, last = false }) => (
+  <Box
+    sx={{
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 2,
+      py: 1,
+      borderBottom: last ? 0 : '1px solid',
+      borderColor: 'divider',
+    }}
+  >
+    <Typography variant="body2" color="text.secondary">{label}</Typography>
+    <Typography variant="body2" fontWeight={700} sx={{ fontVariantNumeric: 'tabular-nums' }}>{value}</Typography>
   </Box>
 );
+
+const StatusRow = ({ label, status }) => {
+  const isOk = ['online', 'connected', 'active'].includes(status);
+  const dotColor = isOk ? '#059669' : status === 'unknown' ? '#D97706' : '#DC2626';
+  const display = status === 'unknown' ? 'Checking...' : status.charAt(0).toUpperCase() + status.slice(1);
+
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <Typography variant="caption" color="text.secondary">{label}</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        <Box sx={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: dotColor }} />
+        <Typography variant="caption" fontWeight={600} sx={{ color: dotColor }}>{display}</Typography>
+      </Box>
+    </Box>
+  );
+};
+
+function formatUptime(seconds) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function emptyWeekTrend() {
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (6 - index));
+    return {
+      label: date.toLocaleDateString('en-KE', { weekday: 'short' }),
+      value: 0,
+    };
+  });
+}

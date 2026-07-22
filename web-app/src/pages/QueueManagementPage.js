@@ -1,7 +1,6 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import io from 'socket.io-client';
 import {
-  Container,
   Paper,
   Typography,
   Box,
@@ -36,7 +35,6 @@ import {
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
-import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningIcon from '@mui/icons-material/Warning';
 import TrendSparkline from '../components/common/TrendSparkline';
 import StatusPill from '../components/common/StatusPill';
@@ -46,10 +44,17 @@ import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog
 import ConsultationForm from '../components/consultation/ConsultationForm';
 import { useNotification } from '../contexts/NotificationContext';
 import API_CONFIG from '../config/api';
+import { useNavigate } from 'react-router-dom';
+import {
+  DEPARTMENT_WORKSPACES,
+  getQueueType,
+  requiresDepartmentCompletion,
+} from '../utils/workflowRouting';
 
 const QueueManagementPage = () => {
   const [queue, setQueue] = useState([]);
   const [statistics, setStatistics] = useState(null);
+  const [clinics, setClinics] = useState([]);
   const [selectedClinic, setSelectedClinic] = useState('all');
   const [selectedQueueType, setSelectedQueueType] = useState('consultation');
   const [loading, setLoading] = useState(false);
@@ -62,12 +67,22 @@ const QueueManagementPage = () => {
   const [selectedEncounter, setSelectedEncounter] = useState(null);
   const [nextQueue, setNextQueue] = useState('discharge');
   const socketRef = useRef(null);
-  const { notifySuccess, notifyError } = useNotification();
+  const joinedClinicRef = useRef(null);
+  const fetchQueueRef = useRef(null);
+  const fetchStatisticsRef = useRef(null);
+  const queueFiltersRef = useRef({ selectedClinic, selectedQueueType });
+  const { notifySuccess, notifyError, notifyWarning } = useNotification();
+  const navigate = useNavigate();
+
+  queueFiltersRef.current = { selectedClinic, selectedQueueType };
 
   useEffect(() => {
     // Initialize WebSocket connection
     const socket = io(API_CONFIG.wsURL, {
-      transports: ['websocket', 'polling']
+      transports: ['websocket', 'polling'],
+      auth: {
+        token: localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token')
+      }
     });
 
     socket.on('connect', () => {
@@ -75,8 +90,10 @@ const QueueManagementPage = () => {
       setWsConnected(true);
 
       // Join queue room for selected clinic
-      if (selectedClinic !== 'all') {
-        socket.emit('join-queue', { clinicId: selectedClinic });
+      const currentClinic = queueFiltersRef.current.selectedClinic;
+      if (currentClinic !== 'all') {
+        socket.emit('join-queue', { clinicId: currentClinic });
+        joinedClinicRef.current = currentClinic;
       }
     });
 
@@ -85,43 +102,75 @@ const QueueManagementPage = () => {
       setWsConnected(false);
     });
 
-    socket.on('queue-update', (data) => {
-      console.log('Received queue update:', data);
+    socket.on('queue-update', () => {
       // Refresh queue data when update is received
-      fetchQueue({ silent: true, showSpinner: false });
+      const filters = queueFiltersRef.current;
+      fetchQueueRef.current?.({
+        silent: true,
+        showSpinner: false,
+        clinic: filters.selectedClinic,
+        queueType: filters.selectedQueueType,
+      });
     });
 
     socketRef.current = socket;
 
     return () => {
+      if (joinedClinicRef.current) {
+        socket.emit('leave-queue', { clinicId: joinedClinicRef.current });
+        joinedClinicRef.current = null;
+      }
       socket.disconnect();
     };
+  }, []);
+
+  // Fetch clinics dynamically on mount
+  useEffect(() => {
+    const fetchClinics = async () => {
+      try {
+        const response = await fetch(`${API_CONFIG.endpoints.clinics}`, {
+          headers: API_CONFIG.getAuthHeaders()
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setClinics(data.data || []);
+        }
+      } catch (error) {
+        console.error('Error fetching clinics:', error);
+      }
+    };
+    fetchClinics();
   }, []);
 
   useEffect(() => {
     // Join/leave queue rooms when clinic changes
     if (socketRef.current && socketRef.current.connected) {
+      if (joinedClinicRef.current && joinedClinicRef.current !== selectedClinic) {
+        socketRef.current.emit('leave-queue', { clinicId: joinedClinicRef.current });
+        joinedClinicRef.current = null;
+      }
       if (selectedClinic !== 'all') {
         socketRef.current.emit('join-queue', { clinicId: selectedClinic });
+        joinedClinicRef.current = selectedClinic;
       }
     }
   }, [selectedClinic]);
 
   useEffect(() => {
-    fetchQueue({ silent: true });
-    fetchStatistics({ silent: true });
+    fetchQueueRef.current?.({ silent: true });
+    fetchStatisticsRef.current?.({ silent: true });
 
     // Auto-refresh every 30 seconds as backup
     const interval = setInterval(() => {
       if (!wsConnected) {
-        fetchQueue({ silent: true, showSpinner: false });
-        fetchStatistics({ silent: true });
+        fetchQueueRef.current?.({ silent: true, showSpinner: false });
+        fetchStatisticsRef.current?.({ silent: true });
       }
     }, 30000);
 
     // Update waiting times every 10 seconds for live timer
     const timerInterval = setInterval(() => {
-      fetchQueue({ silent: true, showSpinner: false });
+      fetchQueueRef.current?.({ silent: true, showSpinner: false });
     }, 10000);
 
     return () => {
@@ -130,17 +179,22 @@ const QueueManagementPage = () => {
     };
   }, [selectedClinic, selectedQueueType, wsConnected]);
 
-  const fetchQueue = async ({ silent = true, showSpinner = true } = {}) => {
+  const fetchQueue = useCallback(async ({
+    silent = true,
+    showSpinner = true,
+    clinic = selectedClinic,
+    queueType = selectedQueueType,
+  } = {}) => {
     if (showSpinner) {
       setLoading(true);
     }
     try {
-      let endpoint = selectedClinic === 'all'
+      let endpoint = clinic === 'all'
         ? `${API_CONFIG.endpoints.queue}`
-        : `${API_CONFIG.endpoints.queue}/clinic/${selectedClinic}`;
+        : `${API_CONFIG.endpoints.queue}/clinic/${clinic}`;
       
       // Add queue type filter
-      endpoint += `?queueType=${selectedQueueType}`;
+      endpoint += `?queueType=${encodeURIComponent(queueType)}`;
 
       const response = await fetch(endpoint, {
         headers: API_CONFIG.getAuthHeaders()
@@ -173,30 +227,37 @@ const QueueManagementPage = () => {
         setLoading(false);
       }
     }
-  };
+  }, [notifyError, notifySuccess, selectedClinic, selectedQueueType]);
 
-  const fetchStatistics = async ({ silent = true } = {}) => {
-    if (selectedClinic === 'all') {
-      setStatistics(null);
-      return;
-    }
-
+  const fetchStatistics = useCallback(async ({ silent = true } = {}) => {
     try {
-      const response = await fetch(`${API_CONFIG.endpoints.queue}/clinic/${selectedClinic}/statistics`, {
-        headers: API_CONFIG.getAuthHeaders()
-      });
+      const statisticsEndpoint = selectedClinic === 'all'
+        ? `${API_CONFIG.endpoints.queue}/statistics`
+        : `${API_CONFIG.endpoints.queue}/clinic/${selectedClinic}/statistics`;
+      const response = await fetch(
+        `${statisticsEndpoint}?queueType=${encodeURIComponent(selectedQueueType)}`,
+        {
+          headers: API_CONFIG.getAuthHeaders()
+        }
+      );
 
       if (response.ok) {
         const data = await response.json();
         setStatistics(data.data);
+      } else {
+        setStatistics(null);
       }
     } catch (error) {
+      setStatistics(null);
       console.error('Error fetching statistics:', error);
       if (!silent) {
         notifyError('Unable to load queue insights');
       }
     }
-  };
+  }, [notifyError, selectedClinic, selectedQueueType]);
+
+  fetchQueueRef.current = fetchQueue;
+  fetchStatisticsRef.current = fetchStatistics;
 
   const handleRefresh = () => {
     fetchQueue({ silent: false });
@@ -277,7 +338,16 @@ const QueueManagementPage = () => {
 
         if (response.ok) {
           fetchQueue({ silent: true });
-          notifySuccess('Service started');
+          const queueType = getQueueType(queueEntry);
+          notifySuccess('Service started — opening the department workspace');
+          if (DEPARTMENT_WORKSPACES[queueType]) {
+            navigate(DEPARTMENT_WORKSPACES[queueType], {
+              state: {
+                encounterId: queueEntry.encounterId || queueEntry.encounter_id,
+                patientId: queueEntry.patientId || queueEntry.patient_id
+              }
+            });
+          }
         }
       } catch (error) {
         console.error('Error starting service:', error);
@@ -287,6 +357,13 @@ const QueueManagementPage = () => {
   };
 
   const handleOpenCompleteDialog = (queueEntry) => {
+    if (requiresDepartmentCompletion(queueEntry)) {
+      const queueType = getQueueType(queueEntry);
+      notifyWarning(`Complete this service in the ${queueType} workspace after its clinical work is recorded.`);
+      if (DEPARTMENT_WORKSPACES[queueType]) navigate(DEPARTMENT_WORKSPACES[queueType]);
+      return;
+    }
+
     setSelectedQueueEntry(queueEntry);
     
     // Smart default based on current queue type
@@ -308,14 +385,15 @@ const QueueManagementPage = () => {
 
   const handleCompleteService = async () => {
     if (!selectedQueueEntry) return;
+
+    if (requiresDepartmentCompletion(selectedQueueEntry)) {
+      const queueType = getQueueType(selectedQueueEntry);
+      notifyWarning(`The ${queueType} queue closes automatically when its order is completed.`);
+      handleCloseCompleteDialog();
+      return;
+    }
     
     try {
-      console.log('Completing service:', {
-        queueEntryId: selectedQueueEntry.id,
-        currentQueue: selectedQueueEntry.queueType || selectedQueueEntry.queue_type,
-        nextQueue: nextQueue
-      });
-      
       const response = await fetch(`${API_CONFIG.baseURL}/api/queue/${selectedQueueEntry.id}/status`, {
         method: 'PUT',
         headers: {
@@ -330,7 +408,6 @@ const QueueManagementPage = () => {
 
       if (response.ok) {
         const result = await response.json();
-        console.log('Service completed successfully:', result);
         fetchQueue({ silent: true });
         handleCloseCompleteDialog();
         notifySuccess(result.message || `Service completed. Patient moved to ${nextQueue || 'discharge'}`);
@@ -343,17 +420,6 @@ const QueueManagementPage = () => {
       console.error('Error completing service:', error);
       notifyError('Failed to complete service: ' + error.message);
     }
-  };
-
-  const getStatusColor = (status) => {
-    const colors = {
-      'waiting': 'warning',
-      'called': 'info',
-      'in-service': 'primary',
-      'completed': 'success',
-      'cancelled': 'error'
-    };
-    return colors[status] || 'default';
   };
 
   const getWaitTimeColor = (minutes) => {
@@ -443,12 +509,12 @@ const QueueManagementPage = () => {
   );
 
   return (
-    <Container sx={{ mt: 4, mb: 4 }}>
+    <Box component="section" sx={{ width: '100%', minWidth: 0, mb: 3 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
           <Typography variant="h4" component="h1" fontWeight="bold">
-            📋 Queue Management
+            Queue Management
           </Typography>
           <Chip
             icon={wsConnected ? <FiberManualRecordIcon /> : <WarningIcon />}
@@ -517,12 +583,12 @@ const QueueManagementPage = () => {
                 label="Queue Type"
                 onChange={(e) => setSelectedQueueType(e.target.value)}
               >
-                <MenuItem value="consultation">🩺 Consultation Queue</MenuItem>
-                <MenuItem value="pharmacy">💊 Pharmacy Queue</MenuItem>
-                <MenuItem value="lab">🔬 Laboratory Queue</MenuItem>
-                <MenuItem value="radiology">📷 Radiology Queue</MenuItem>
-                <MenuItem value="billing">💳 Billing Queue</MenuItem>
-                <MenuItem value="triage">🚑 Triage Queue</MenuItem>
+                <MenuItem value="consultation">Consultation</MenuItem>
+                <MenuItem value="pharmacy">Pharmacy</MenuItem>
+                <MenuItem value="lab">Laboratory</MenuItem>
+                <MenuItem value="radiology">Radiology</MenuItem>
+                <MenuItem value="billing">Billing</MenuItem>
+                <MenuItem value="triage">Triage</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -535,9 +601,11 @@ const QueueManagementPage = () => {
                 onChange={(e) => setSelectedClinic(e.target.value)}
               >
                 <MenuItem value="all">All Clinics</MenuItem>
-                <MenuItem value="1">General Medicine</MenuItem>
-                <MenuItem value="2">Pediatrics</MenuItem>
-                <MenuItem value="3">Surgery</MenuItem>
+                {clinics.map((clinic) => (
+                  <MenuItem key={clinic.id} value={String(clinic.id)}>
+                    {clinic.clinic_name || clinic.name}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
           </Grid>
@@ -589,15 +657,15 @@ const QueueManagementPage = () => {
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
-            <TableRow sx={{ backgroundColor: 'primary.main' }}>
-              <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>#</TableCell>
-              <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Patient</TableCell>
-              <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>UHID</TableCell>
-              <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Clinic</TableCell>
-              <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Priority</TableCell>
-              <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Wait Time</TableCell>
-              <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Status</TableCell>
-              <TableCell sx={{ color: 'white', fontWeight: 'bold' }}>Actions</TableCell>
+            <TableRow>
+              <TableCell>#</TableCell>
+              <TableCell>Patient</TableCell>
+              <TableCell>UHID</TableCell>
+              <TableCell>Clinic</TableCell>
+              <TableCell>Priority</TableCell>
+              <TableCell>Wait Time</TableCell>
+              <TableCell>Status</TableCell>
+              <TableCell>Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -680,14 +748,24 @@ const QueueManagementPage = () => {
                         </Button>
                       )}
                       {entry.status === 'in-service' && (
-                        <Button 
-                          size="small" 
-                          variant="contained"
-                          color="success"
-                          onClick={() => handleOpenCompleteDialog(entry)}
-                        >
-                          Complete
-                        </Button>
+                        requiresDepartmentCompletion(entry) ? (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => navigate(DEPARTMENT_WORKSPACES[getQueueType(entry)])}
+                          >
+                            Open workspace
+                          </Button>
+                        ) : (
+                          <Button
+                            size="small"
+                            variant="contained"
+                            color="success"
+                            onClick={() => handleOpenCompleteDialog(entry)}
+                          >
+                            Complete
+                          </Button>
+                        )
                       )}
                     </Box>
                   </TableCell>
@@ -699,15 +777,16 @@ const QueueManagementPage = () => {
       </TableContainer>
 
       {/* Legend */}
-      <Paper sx={{ p: 2, mt: 3 }}>
-        <Typography variant="subtitle2" gutterBottom>
-          Legend:
+      <Paper sx={{ p: 2, mt: 2 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
+          Legend
         </Typography>
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-          <Chip label="Waiting" color="warning" size="small" />
-          <Chip label="Called" color="info" size="small" />
-          <Chip label="In Service" color="primary" size="small" />
-          <Chip label="Completed" color="success" size="small" icon={<CheckCircleIcon />} />
+        <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
+          <StatusPill status="waiting" size="small" />
+          <StatusPill status="called" size="small" />
+          <StatusPill status="in-service" size="small" />
+          <StatusPill status="completed" size="small" />
+          <Box sx={{ width: 1, height: 16, backgroundColor: 'divider' }} />
           <PriorityBadge priority="routine" />
           <PriorityBadge priority="urgent" />
           <PriorityBadge priority="stat" />
@@ -752,29 +831,29 @@ const QueueManagementPage = () => {
                     <FormControlLabel 
                       value="pharmacy" 
                       control={<Radio />} 
-                      label="🏥 Pharmacy - Patient needs medication" 
+                      label="Pharmacy — Patient needs medication"
                     />
                     <FormControlLabel 
                       value="lab" 
                       control={<Radio />} 
-                      label="🔬 Laboratory - Patient needs lab tests" 
+                      label="Laboratory — Patient needs lab tests"
                     />
                     <FormControlLabel 
                       value="radiology" 
                       control={<Radio />} 
-                      label="📷 Radiology - Patient needs imaging" 
+                      label="Radiology — Patient needs imaging"
                     />
                   </>
                 )}
                 <FormControlLabel 
                   value="billing" 
                   control={<Radio />} 
-                  label="💳 Billing - Patient ready to pay and leave" 
+                  label="Billing — Patient ready to pay and leave"
                 />
                 <FormControlLabel 
                   value="discharge" 
                   control={<Radio />} 
-                  label="✅ Discharge - Patient can leave (no further action)" 
+                  label="Discharge — Patient can leave (no further action)"
                 />
               </RadioGroup>
             </FormControl>
@@ -819,7 +898,7 @@ const QueueManagementPage = () => {
           }}
         />
       )}
-    </Container>
+    </Box>
   );
 };
 

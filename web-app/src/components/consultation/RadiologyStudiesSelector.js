@@ -43,7 +43,7 @@ const RadiologyStudiesSelector = ({ selectedStudies, onChange }) => {
   useEffect(() => {
     const fetchStudyCatalog = async () => {
       try {
-        const response = await fetch(`${API_CONFIG.baseURL}/api/radiology/study-catalog`, {
+        const response = await fetch(API_CONFIG.endpoints.radiology.tests, {
           headers: API_CONFIG.getAuthHeaders(),
         });
 
@@ -70,20 +70,20 @@ const RadiologyStudiesSelector = ({ selectedStudies, onChange }) => {
 
     if (searchTerm) {
       filtered = filtered.filter(study =>
-        study.study_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        study.study_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        study.body_part.toLowerCase().includes(searchTerm.toLowerCase())
+        study.test_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        study.test_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (study.body_part || '').toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
 
     if (modalityFilter !== 'all') {
-      filtered = filtered.filter(study => study.modality === modalityFilter);
+      filtered = filtered.filter(study => study.modality_name === modalityFilter);
     }
 
     setFilteredStudies(filtered);
   }, [searchTerm, modalityFilter, studyCatalog]);
 
-  const modalities = [...new Set(studyCatalog.map(study => study.modality))];
+  const modalities = [...new Set(studyCatalog.map(study => study.modality_name).filter(Boolean))];
 
   const handleAddStudy = (study) => {
     // Check if already added
@@ -93,12 +93,12 @@ const RadiologyStudiesSelector = ({ selectedStudies, onChange }) => {
 
     const newStudy = {
       studyId: study.id,
-      studyName: study.study_name,
-      studyCode: study.study_code,
-      modality: study.modality,
+      studyName: study.test_name,
+      studyCode: study.test_code,
+      modality: study.modality_name,
       bodyPart: study.body_part,
-      contrastRequired: study.contrast_required,
-      price: study.price,
+      contrastRequired: study.requires_contrast,
+      price: parseFloat(study.price) || 0,
       priority: 'routine',
       reason: '',
     };
@@ -190,7 +190,7 @@ const RadiologyStudiesSelector = ({ selectedStudies, onChange }) => {
                         fullWidth
                       />
                     </TableCell>
-                    <TableCell align="right">${study.price?.toFixed(2)}</TableCell>
+                    <TableCell align="right">KES {parseFloat(study.price || 0).toLocaleString()}</TableCell>
                     <TableCell align="center">
                       <IconButton
                         size="small"
@@ -207,7 +207,7 @@ const RadiologyStudiesSelector = ({ selectedStudies, onChange }) => {
                     <strong>Total Cost:</strong>
                   </TableCell>
                   <TableCell align="right">
-                    <strong>${totalCost.toFixed(2)}</strong>
+                    <strong>KES {totalCost.toLocaleString()}</strong>
                   </TableCell>
                   <TableCell />
                 </TableRow>
@@ -279,29 +279,29 @@ const RadiologyStudiesSelector = ({ selectedStudies, onChange }) => {
                     <Box display="flex" alignItems="center" gap={1} mb={1}>
                       <ImagingIcon color={isSelected ? 'info' : 'primary'} />
                       <Typography variant="subtitle1" fontWeight="bold">
-                        {study.study_name}
+                        {study.test_name}
                       </Typography>
                     </Box>
                     <Chip 
-                      label={study.study_code} 
+                      label={study.test_code}
                       size="small" 
                       sx={{ mb: 1 }}
                       color={isSelected ? 'info' : 'default'}
                     />
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      Modality: {study.modality}
+                      Modality: {study.modality_name}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" gutterBottom>
                       Body Part: {study.body_part}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" gutterBottom>
-                      Duration: {study.typical_duration} min
+                      Duration: {study.typical_duration_minutes || 0} min
                     </Typography>
-                    {study.contrast_required && (
+                    {study.requires_contrast && (
                       <Chip label="Contrast Required" size="small" color="warning" sx={{ mb: 1 }} />
                     )}
                     <Typography variant="body2" fontWeight="bold" color="primary">
-                      ${study.price?.toFixed(2)}
+                      KES {parseFloat(study.price || 0).toLocaleString()}
                     </Typography>
                   </CardContent>
                   <CardActions>
@@ -335,4 +335,3 @@ const RadiologyStudiesSelector = ({ selectedStudies, onChange }) => {
 };
 
 export default RadiologyStudiesSelector;
-

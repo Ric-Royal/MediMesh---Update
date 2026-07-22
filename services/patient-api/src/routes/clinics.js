@@ -4,8 +4,10 @@ const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
 
+const CLINIC_DIRECTORY_ROLES = ['admin', 'doctor', 'nurse', 'receptionist', 'lab-tech', 'pharmacist', 'billing', 'radiologist', 'radiographer'];
+
 // GET /api/clinics - Get all clinics
-router.get('/', async (req, res) => {
+router.get('/', authorize(CLINIC_DIRECTORY_ROLES), async (req, res) => {
   try {
     const db = getDB();
     const query = `
@@ -32,7 +34,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/clinics/:id - Get single clinic
-router.get('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
+router.get('/:id', authorize(CLINIC_DIRECTORY_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     

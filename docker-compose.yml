@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Core Database
   postgres:
@@ -12,8 +10,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-scripts:/docker-entrypoint-initdb.d
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     secrets:
       - db_password
     networks:
@@ -30,8 +28,8 @@ services:
     container_name: medimesh-redis
     volumes:
       - redis_data:/data
-    ports:
-      - "6379:6379"
+    expose:
+      - "6379"
     command: redis-server --appendonly yes --requirepass redis_password
     networks:
       - medimesh-network
@@ -51,9 +49,9 @@ services:
       MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_password
     volumes:
       - minio_data:/data
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+    expose:
+      - "9000"
+      - "9001"
     secrets:
       - minio_user
       - minio_password
@@ -78,8 +76,8 @@ services:
     volumes:
       - vault_data:/vault/data
       - ./vault-config:/vault/config
-    ports:
-      - "8200:8200"
+    expose:
+      - "8200"
     networks:
       - medimesh-network
     command: vault server -dev -dev-listen-address=0.0.0.0:8200
@@ -88,6 +86,7 @@ services:
   keycloak:
     image: quay.io/keycloak/keycloak:latest
     container_name: medimesh-keycloak
+    profiles: ["identity"]
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin123
@@ -122,6 +121,7 @@ services:
   traefik:
     image: traefik:v3.0
     container_name: medimesh-traefik
+    profiles: ["gateway"]
     command:
       - "--api.insecure=true"
       - "--providers.docker=true"
@@ -150,8 +150,12 @@ services:
       REDIS_PASSWORD: redis_password
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: myroot
-      JWT_SECRET: your-super-secret-jwt-key-change-this-in-production-12345
-      NODE_ENV: development
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-jwt-key-change-this-in-production-12345}
+      NODE_ENV: ${NODE_ENV:-development}
+      ALLOW_DEMO_AUTH: ${ALLOW_DEMO_AUTH:-true}
+      ALLOW_INSECURE_DEV_TOKENS: ${ALLOW_INSECURE_DEV_TOKENS:-false}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"
       PORT: 3000
       ALLOWED_ORIGINS: http://localhost:3000,http://localhost
       LOG_LEVEL: info
@@ -165,8 +169,9 @@ services:
       MPESA_PASSKEY: ${MPESA_PASSKEY}
       MPESA_SHORTCODE: ${MPESA_SHORTCODE:-174379}
       MPESA_CALLBACK_URL: ${MPESA_CALLBACK_URL}
-    ports:
-      - "3001:3000"
+      MPESA_CALLBACK_TOKEN: ${MPESA_CALLBACK_TOKEN:-}
+    expose:
+      - "3000"
     networks:
       - medimesh-network
     depends_on:
@@ -194,6 +199,8 @@ services:
         REACT_APP_KEYCLOAK_REALM: medimesh
         REACT_APP_KEYCLOAK_CLIENT_ID: medimesh-client
         REACT_APP_DEV_MODE: "true"
+        REACT_APP_IDENTITY_MODE: "local"
+        REACT_APP_SHOW_DEMO_LOGIN: "true"
     container_name: medimesh-web-app
     ports:
       - "3000:80"
@@ -210,6 +217,7 @@ services:
   airflow-webserver:
     image: apache/airflow:2.8.1
     container_name: medimesh-airflow-webserver
+    profiles: ["analytics"]
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow_user:AirflowDB2024!@postgres:5432/airflow
@@ -247,6 +255,7 @@ services:
   metabase:
     image: metabase/metabase:v0.47.0
     container_name: medimesh-metabase
+    profiles: ["analytics"]
     environment:
       MB_DB_TYPE: postgres
       MB_DB_DBNAME: metabase
@@ -271,6 +280,7 @@ services:
   superset:
     image: apache/superset:3.0.0
     container_name: medimesh-superset
+    profiles: ["analytics"]
     environment:
       SUPERSET_CONFIG_PATH: /app/pythonpath/superset_config.py
       DATABASE_URL: postgresql://superset_user:SupersetDB2024!@postgres:5432/superset
@@ -304,6 +314,7 @@ services:
   ngrok:
     image: ngrok/ngrok:latest
     container_name: medimesh-ngrok
+    profiles: ["tunnel"]
     restart: unless-stopped
     command:
       - "start"
@@ -315,7 +326,7 @@ services:
     ports:
       - "4040:4040"  # ngrok web interface
     environment:
-      - NGROK_AUTHTOKEN=2nOO7p1AcCCJLktKnG7wblLoSS0_4GMoec8ER5ms1j1EnsHKW
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN:-}
     networks:
       - medimesh-network
     depends_on:
@@ -343,4 +354,4 @@ secrets:
   minio_password:
     file: ./secrets/minio_password.txt
   ngrok_authtoken:
-    file: ./secrets/ngrok_authtoken.txt 
+    file: ./secrets/ngrok_authtoken.txt

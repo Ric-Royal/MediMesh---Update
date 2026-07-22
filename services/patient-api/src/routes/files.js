@@ -1,9 +1,17 @@
 const express = require('express');
 const multer = require('multer');
 const Joi = require('joi');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 const router = express.Router();
 
-const { storageService, BUCKETS, ALLOWED_FILE_TYPES, MAX_FILE_SIZE } = require('../utils/storage');
+const {
+  storageService,
+  BUCKETS,
+  ALLOWED_FILE_TYPES,
+  MAX_FILE_SIZE,
+  isNotFoundError
+} = require('../utils/storage');
 const { authorize } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const { auditLogger } = require('../utils/logger');
@@ -48,6 +56,81 @@ const fileParamsSchema = Joi.object({
   fileId: Joi.string().uuid().required()
 });
 
+const CATEGORY_BUCKETS = Object.freeze({
+  'medical-records': BUCKETS.medical_records,
+  'patient-documents': BUCKETS.patient_documents,
+  'system-files': BUCKETS.system_files
+});
+
+class InvalidStorageLocationError extends Error {}
+
+const resolveStorageLocation = (attachment) => {
+  const category = String(attachment.category || '');
+  const uploadedBy = String(attachment.uploaded_by || '');
+  const bucket = String(attachment.storage_bucket || '');
+  const key = String(attachment.storage_key || '');
+  const expectedBucket = CATEGORY_BUCKETS[category];
+  const segments = key.split('/');
+
+  if (
+    !expectedBucket ||
+    bucket !== expectedBucket ||
+    !uploadedBy ||
+    key.length === 0 ||
+    key.length > 1024 ||
+    /[\\%\x00-\x1F\x7F]/.test(key) ||
+    segments.length !== 3 ||
+    segments[0] !== category ||
+    segments[1] !== uploadedBy ||
+    !segments[2] ||
+    segments[2] === '.' ||
+    segments[2] === '..' ||
+    !/^[A-Za-z0-9._-]+$/.test(segments[2])
+  ) {
+    throw new InvalidStorageLocationError('Attachment storage metadata failed validation');
+  }
+
+  return { bucket, key };
+};
+
+const isAdmin = (req) => (req.user?.roles || []).includes('admin');
+const isOwner = (req, attachment) => String(req.user?.id || '') === String(attachment.uploaded_by || '');
+
+const safeContentType = (...candidates) => {
+  const contentType = candidates
+    .map(value => String(value || '').trim())
+    .find(value => /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/.test(value));
+  return contentType || 'application/octet-stream';
+};
+
+const contentDisposition = (fileName) => {
+  const cleaned = String(fileName || 'download')
+    .split(/[\\/]/)
+    .pop()
+    .replace(/[\x00-\x1F\x7F]/g, '_')
+    .slice(0, 180) || 'download';
+  const ascii = cleaned.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+  const encoded = encodeURIComponent(cleaned).replace(/['()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+};
+
+const pipeBody = async (body, response) => {
+  if (body == null) throw new Error('Stored object has no response body');
+  if (Buffer.isBuffer(body) || body instanceof Uint8Array) {
+    await pipeline(Readable.from([body]), response);
+    return;
+  }
+  if (typeof body.pipe === 'function') {
+    await pipeline(body, response);
+    return;
+  }
+  if (typeof body[Symbol.asyncIterator] === 'function') {
+    await pipeline(Readable.from(body), response);
+    return;
+  }
+  throw new Error('Stored object body is not streamable');
+};
+
 // POST /api/files/upload - Upload files
 router.post('/upload',
   authorize(['doctor', 'nurse', 'admin']),
@@ -61,8 +144,10 @@ router.post('/upload',
       }
 
       // Validate metadata
-      logger.info('Upload request body:', req.body);
-      logger.info('Upload files:', req.files ? req.files.length : 0);
+      logger.info('Authenticated file upload received', {
+        userId: req.user.id,
+        fileCount: req.files ? req.files.length : 0
+      });
       
       const { error, value } = uploadMetadataSchema.validate(req.body);
       if (error) {
@@ -77,6 +162,7 @@ router.post('/upload',
 
       // Upload files
       const uploadPromises = req.files.map(async (file) => {
+        let storageResult;
         try {
           const metadata = {
             category,
@@ -88,7 +174,7 @@ router.post('/upload',
             uploadedBy: req.user.id
           };
 
-          const storageResult = await storageService.uploadFile(
+          storageResult = await storageService.uploadFile(
             file,
             category,
             req.user.id,
@@ -103,9 +189,12 @@ router.post('/upload',
             file_type: file.mimetype,
             file_size: file.size,
             mime_type: file.mimetype,
-            storage_path: storageResult.path,
+            storage_path: storageResult.key,
             storage_bucket: storageResult.bucket,
             storage_key: storageResult.key,
+            upload_url: storageResult.url,
+            etag: storageResult.etag,
+            metadata: storageResult.metadata,
             category: category,
             description: description,
             tags: tags ? tags.join(',') : null,
@@ -136,8 +225,19 @@ router.post('/upload',
           };
         } catch (uploadError) {
           logger.error('Individual file upload failed:', uploadError);
+          if (storageResult?.bucket && storageResult?.key) {
+            try {
+              await storageService.deleteFile(storageResult.bucket, storageResult.key);
+            } catch (cleanupError) {
+              logger.error('Failed to clean up object after metadata error', {
+                error: cleanupError.message,
+                bucket: storageResult.bucket,
+                key: storageResult.key
+              });
+            }
+          }
           return {
-            error: uploadError.message,
+            error: 'File upload failed',
             filename: file.originalname
           };
         }
@@ -154,7 +254,8 @@ router.post('/upload',
         failed: failed.length
       });
 
-      res.status(201).json({
+      const responseStatus = successful.length === 0 ? 502 : (failed.length > 0 ? 207 : 201);
+      res.status(responseStatus).json({
         message: 'File upload completed',
         results: {
           successful,
@@ -190,22 +291,53 @@ router.get('/:fileId',
       }
 
       const { fileId } = value;
+      const attachment = await FileAttachment.findById(fileId);
+      if (!attachment) return res.status(404).json({ error: 'File not found' });
 
-      // TODO: Get file info from database
-      // For now, this is a simplified version
-      // In a real implementation, you'd query the database to get bucket and key
-      
-      res.status(501).json({
-        error: 'File download not yet implemented',
-        message: 'Database integration needed for file metadata'
+      if (attachment.is_private && !isAdmin(req) && !isOwner(req, attachment)) {
+        auditLogger.info('File download denied', {
+          userId: req.user.id,
+          fileId,
+          reason: 'private-file',
+          ip: req.ip
+        });
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const { bucket, key } = resolveStorageLocation(attachment);
+      const storedFile = await storageService.getFileStream(bucket, key);
+      const contentLength = Number(storedFile.contentLength ?? attachment.file_size);
+
+      res.status(200);
+      res.setHeader('Content-Type', safeContentType(attachment.mime_type, storedFile.contentType));
+      res.setHeader('Content-Disposition', contentDisposition(attachment.file_name));
+      res.setHeader('Cache-Control', 'private, no-store, max-age=0');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      if (Number.isSafeInteger(contentLength) && contentLength >= 0) {
+        res.setHeader('Content-Length', String(contentLength));
+      }
+
+      await pipeBody(storedFile.body, res);
+      auditLogger.info('File downloaded', {
+        userId: req.user.id,
+        fileId,
+        patientId: attachment.patient_id || null,
+        recordId: attachment.medical_record_id || null,
+        ip: req.ip
       });
 
     } catch (error) {
-      logger.error('File download error:', error);
-      res.status(500).json({
-        error: 'File download failed',
-        message: error.message
-      });
+      logger.error('File download failed', { error: error.message, fileId: req.params.fileId, userId: req.user?.id });
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      if (error instanceof InvalidStorageLocationError) {
+        return res.status(409).json({ error: 'File storage metadata is invalid' });
+      }
+      if (isNotFoundError(error)) return res.status(404).json({ error: 'Stored file not found' });
+      return res.status(502).json({ error: 'File storage is unavailable' });
     }
   }
 );
@@ -291,21 +423,40 @@ router.delete('/:fileId',
       }
 
       const { fileId } = value;
+      const attachment = await FileAttachment.findById(fileId);
+      if (!attachment) return res.status(404).json({ error: 'File not found' });
 
-      // TODO: Get file info from database and delete
-      // For now, this is a simplified version
-      
-      res.status(501).json({
-        error: 'File deletion not yet implemented',
-        message: 'Database integration needed for file metadata'
+      if (!isAdmin(req) && !isOwner(req, attachment)) {
+        auditLogger.info('File deletion denied', {
+          userId: req.user.id,
+          fileId,
+          reason: 'not-owner',
+          ip: req.ip
+        });
+        return res.status(403).json({ error: 'Access denied' });
+      }
+
+      const { bucket, key } = resolveStorageLocation(attachment);
+      await storageService.deleteFile(bucket, key);
+      await attachment.delete();
+
+      auditLogger.info('File deleted', {
+        userId: req.user.id,
+        fileId,
+        patientId: attachment.patient_id || null,
+        recordId: attachment.medical_record_id || null,
+        ip: req.ip
       });
+
+      return res.json({ message: 'File deleted successfully', id: fileId });
 
     } catch (error) {
-      logger.error('File deletion error:', error);
-      res.status(500).json({
-        error: 'File deletion failed',
-        message: error.message
-      });
+      logger.error('File deletion failed', { error: error.message, fileId: req.params.fileId, userId: req.user?.id });
+      if (error instanceof InvalidStorageLocationError) {
+        return res.status(409).json({ error: 'File storage metadata is invalid' });
+      }
+      if (isNotFoundError(error)) return res.status(404).json({ error: 'Stored file not found' });
+      return res.status(502).json({ error: 'File storage is unavailable' });
     }
   }
 );
@@ -382,4 +533,4 @@ router.use((error, req, res, next) => {
   next(error);
 });
 
-module.exports = router; 
+module.exports = router;

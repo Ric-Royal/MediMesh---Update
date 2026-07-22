@@ -9,11 +9,13 @@ const ProgressStat = ({
   helperText,
   tooltip,
 }) => {
+  const clamped = Math.max(0, Math.min(100, value));
+
   const content = (
     <Box sx={{ width: '100%' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          {icon}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+          {icon && icon}
           <Typography variant="body2" color="text.secondary">
             {label}
           </Typography>
@@ -24,9 +26,9 @@ const ProgressStat = ({
       </Box>
       <LinearProgress
         variant="determinate"
-        value={Math.max(0, Math.min(100, value))}
+        value={clamped}
         color={color}
-        sx={{ height: 8, borderRadius: 999 }}
+        sx={{ height: 6, borderRadius: 999 }}
       />
       {helperText && (
         <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
@@ -40,4 +42,3 @@ const ProgressStat = ({
 };
 
 export default ProgressStat;
-

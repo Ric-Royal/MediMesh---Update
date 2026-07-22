@@ -14,6 +14,14 @@ class Patient {
     this.phone = data.phone;
     this.email = data.email;
     this.address = data.address;
+    this.emergency_contact = data.emergency_contact;
+    this.insurance = data.insurance;
+    this.uhid = data.uhid;
+    this.national_id = data.national_id;
+    this.payment_type = data.payment_type;
+    this.corporate_scheme = data.corporate_scheme;
+    this.occupation = data.occupation;
+    this.marital_status = data.marital_status;
     this.created_at = data.created_at;
     this.updated_at = data.updated_at;
     this.created_by = data.created_by;
@@ -34,7 +42,10 @@ class Patient {
           first_name ILIKE $${params.length + 1} OR 
           last_name ILIKE $${params.length + 1} OR 
           patient_id ILIKE $${params.length + 1} OR 
-          email ILIKE $${params.length + 1}
+          email ILIKE $${params.length + 1} OR
+          phone ILIKE $${params.length + 1} OR
+          uhid ILIKE $${params.length + 1} OR
+          national_id ILIKE $${params.length + 1}
         )`;
         params.push(`%${search}%`);
       }
@@ -48,6 +59,21 @@ class Patient {
       logger.error('Error finding patients:', error);
       throw error;
     }
+  }
+
+  static async count(search = '') {
+    const db = getDB();
+    const params = [];
+    let query = 'SELECT COUNT(*)::int AS total FROM patients WHERE 1=1';
+    if (search) {
+      query += ` AND (
+        first_name ILIKE $1 OR last_name ILIKE $1 OR patient_id ILIKE $1 OR
+        email ILIKE $1 OR phone ILIKE $1 OR uhid ILIKE $1 OR national_id ILIKE $1
+      )`;
+      params.push(`%${search}%`);
+    }
+    const result = await db.query(query, params);
+    return result.rows[0].total;
   }
 
   static async findById(id) {
@@ -107,8 +133,13 @@ class Patient {
       const query = `
         INSERT INTO patients (
           id, patient_id, first_name, last_name, date_of_birth, 
-          gender, phone, email, address, created_by, updated_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          gender, phone, email, address, emergency_contact, insurance,
+          emergency_contact_name, emergency_contact_phone, emergency_contact_relationship,
+          insurance_company, insurance_policy_number, created_by, updated_by
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+          $12, $13, $14, $15, $16, $17, $18
+        )
         RETURNING *
       `;
 
@@ -122,6 +153,13 @@ class Patient {
         data.phone,
         data.email,
         data.address,
+        data.emergency_contact || null,
+        data.insurance || null,
+        data.emergency_contact?.name || null,
+        data.emergency_contact?.phone || null,
+        data.emergency_contact?.relationship || null,
+        data.insurance?.provider || null,
+        data.insurance?.policy_number || null,
         createdBy,
         createdBy
       ];
@@ -154,8 +192,11 @@ class Patient {
         UPDATE patients 
         SET first_name = $1, last_name = $2, date_of_birth = $3,
             gender = $4, phone = $5, email = $6, address = $7,
-            updated_by = $8, updated_at = NOW()
-        WHERE id = $9
+            emergency_contact = $8, insurance = $9,
+            emergency_contact_name = $10, emergency_contact_phone = $11,
+            emergency_contact_relationship = $12, insurance_company = $13,
+            insurance_policy_number = $14, updated_by = $15, updated_at = NOW()
+        WHERE id = $16
         RETURNING *
       `;
 
@@ -167,6 +208,13 @@ class Patient {
         data.phone || this.phone,
         data.email || this.email,
         data.address || this.address,
+        data.emergency_contact || this.emergency_contact,
+        data.insurance || this.insurance,
+        data.emergency_contact?.name || this.emergency_contact?.name || null,
+        data.emergency_contact?.phone || this.emergency_contact?.phone || null,
+        data.emergency_contact?.relationship || this.emergency_contact?.relationship || null,
+        data.insurance?.provider || this.insurance?.provider || null,
+        data.insurance?.policy_number || this.insurance?.policy_number || null,
         updatedBy,
         this.id
       ];
@@ -262,6 +310,14 @@ class Patient {
       phone: this.phone,
       email: this.email,
       address: this.address,
+      emergency_contact: this.emergency_contact,
+      insurance: this.insurance,
+      uhid: this.uhid,
+      national_id: this.national_id,
+      payment_type: this.payment_type,
+      corporate_scheme: this.corporate_scheme,
+      occupation: this.occupation,
+      marital_status: this.marital_status,
       created_at: this.created_at,
       updated_at: this.updated_at,
       created_by: this.created_by,
@@ -270,4 +326,4 @@ class Patient {
   }
 }
 
-module.exports = Patient; 
+module.exports = Patient;

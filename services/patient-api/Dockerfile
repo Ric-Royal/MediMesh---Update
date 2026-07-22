@@ -1,4 +1,15 @@
-FROM node:18-alpine
+FROM node:22-alpine AS test
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci
+
+COPY src/ ./src/
+
+CMD ["npm", "test", "--", "--runInBand"]
+
+FROM node:22-alpine AS runtime
 
 # Create app directory
 WORKDIR /app
@@ -8,7 +19,7 @@ RUN mkdir -p logs
 
 # Install app dependencies
 COPY package*.json ./
-RUN npm install --only=production
+RUN npm ci --omit=dev
 
 # Copy source code
 COPY src/ ./src/
@@ -29,4 +40,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/health/live', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" || exit 1
 
 # Start the application
-CMD ["npm", "start"] 
+CMD ["npm", "start"]

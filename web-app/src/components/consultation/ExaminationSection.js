@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Grid,
   TextField,
   Typography,
   Box,
@@ -23,49 +22,41 @@ const ExaminationSection = ({ examination, onChange }) => {
       title: 'General Appearance',
       field: 'generalAppearance',
       placeholder: 'Alert, oriented, well-nourished, no acute distress...',
-      icon: '👤',
     },
     {
       title: 'Cardiovascular System',
       field: 'cardiovascular',
       placeholder: 'Heart sounds, rhythm, murmurs, peripheral pulses...',
-      icon: '❤️',
     },
     {
       title: 'Respiratory System',
       field: 'respiratory',
       placeholder: 'Breath sounds, chest expansion, percussion, auscultation...',
-      icon: '🫁',
     },
     {
       title: 'Abdominal Examination',
       field: 'abdominal',
       placeholder: 'Inspection, palpation, percussion, auscultation, tenderness...',
-      icon: '🫃',
     },
     {
       title: 'Neurological Examination',
       field: 'neurological',
       placeholder: 'Consciousness, cranial nerves, motor, sensory, reflexes...',
-      icon: '🧠',
     },
     {
       title: 'Musculoskeletal System',
       field: 'musculoskeletal',
       placeholder: 'Joint examination, range of motion, deformities...',
-      icon: '🦴',
     },
     {
       title: 'Skin Examination',
       field: 'skin',
       placeholder: 'Rashes, lesions, color, turgor, wounds...',
-      icon: '🩹',
     },
     {
       title: 'Other Findings',
       field: 'other',
       placeholder: 'Any additional examination findings...',
-      icon: '📋',
     },
   ];
 
@@ -83,7 +74,7 @@ const ExaminationSection = ({ examination, onChange }) => {
         <Accordion key={section.field} defaultExpanded={index === 0}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Box display="flex" alignItems="center" gap={1}>
-              <Typography variant="h6">{section.icon}</Typography>
+              <Typography variant="h6">{section.icon || ''}</Typography>
               <Typography variant="subtitle1">{section.title}</Typography>
               {examination[section.field] && (
                 <Typography 
@@ -117,7 +108,7 @@ const ExaminationSection = ({ examination, onChange }) => {
 
       <Box sx={{ mt: 4 }}>
         <Typography variant="body2" color="text.secondary">
-          💡 <strong>Tip:</strong> Document all relevant findings. Normal findings should also be documented (e.g., "No abnormalities detected").
+          <strong>Tip:</strong> Document all relevant findings. Normal findings should also be documented (e.g., "No abnormalities detected").
         </Typography>
       </Box>
     </Box>

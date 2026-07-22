@@ -2,13 +2,19 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const { completeDepartmentService } = require('../utils/workflow');
+const { authorize } = require('../middleware/auth');
+
+const RADIOLOGY_READ_ROLES = ['admin', 'doctor', 'nurse', 'radiologist', 'radiographer'];
+const RADIOLOGY_ORDER_ROLES = ['admin', 'doctor'];
+const RADIOLOGY_PROCESS_ROLES = ['admin', 'radiologist', 'radiographer'];
 
 // ============================================
 // RADIOLOGY STUDY CATALOG (For Ordering)
 // ============================================
 
 // Get radiology study catalog
-router.get('/study-catalog', async (req, res) => {
+router.get('/study-catalog', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
   try {
     const db = getDB();
     const result = await db.query(`
@@ -29,7 +35,7 @@ router.get('/study-catalog', async (req, res) => {
 // ============================================
 
 // Get all radiology tests
-router.get('/tests', async (req, res) => {
+router.get('/tests', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
   try {
     const { modality, search } = req.query;
     
@@ -66,7 +72,7 @@ router.get('/tests', async (req, res) => {
 });
 
 // Get imaging modalities
-router.get('/modalities', async (req, res) => {
+router.get('/modalities', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
   try {
     const query = 'SELECT * FROM imaging_modalities WHERE is_active = true ORDER BY modality_name';
     const result = await getDB().query(query);
@@ -82,7 +88,7 @@ router.get('/modalities', async (req, res) => {
 // ============================================
 
 // Get all radiology orders
-router.get('/orders', async (req, res) => {
+router.get('/orders', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
   try {
     const { patient_id, status, priority, page = 1, limit = 25 } = req.query;
     const offset = (page - 1) * limit;
@@ -132,7 +138,7 @@ router.get('/orders', async (req, res) => {
 });
 
 // Get radiology order by ID (with items & reports)
-router.get('/orders/:id', async (req, res) => {
+router.get('/orders/:id', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -189,8 +195,8 @@ router.get('/orders/:id', async (req, res) => {
 });
 
 // Create radiology order
-router.post('/orders', async (req, res) => {
-  const client = await pool.connect();
+router.post('/orders', authorize(RADIOLOGY_ORDER_ROLES), async (req, res) => {
+  const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     
@@ -252,8 +258,159 @@ router.post('/orders', async (req, res) => {
   }
 });
 
+// Update radiology order status (e.g., complete the order)
+router.put('/orders/:id/status', authorize(RADIOLOGY_PROCESS_ROLES), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, report_notes } = req.body;
+
+    const validStatuses = ['pending', 'scheduled', 'in-progress', 'completed', 'reported', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
+    const updateFields = ['status = $1', 'updated_at = CURRENT_TIMESTAMP'];
+    const values = [status, id];
+    let paramIdx = 3;
+
+    // no completed_at column; updated_at is already set above
+
+    const query = `
+      UPDATE radiology_orders SET ${updateFields.join(', ')}
+      WHERE id = $2
+      RETURNING *
+    `;
+    const result = await getDB().query(query, values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Radiology order not found' });
+    }
+
+    // Also update item statuses to match
+    if (status === 'completed') {
+      await getDB().query(
+        `UPDATE radiology_order_items SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE radiology_order_id = $1`,
+        [id]
+      );
+    }
+
+    logger.info(`Radiology order ${id} status updated to ${status}`);
+    res.json({ success: true, data: result.rows[0] });
+  } catch (error) {
+    logger.error('Error updating radiology order status:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Submit a structured report for every study in an order.
+router.post('/orders/:id/report', authorize(RADIOLOGY_PROCESS_ROLES), async (req, res) => {
+  const client = await getDB().connect();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { reports = [] } = req.body;
+
+    if (!Array.isArray(reports) || reports.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ success: false, error: 'At least one study report is required' });
+    }
+
+    const orderResult = await client.query(`
+      SELECT ro.*,
+             CASE WHEN EXISTS (SELECT 1 FROM staff WHERE id = $2)
+                  THEN $2::uuid ELSE ro.ordering_doctor_id END AS reporting_clinician_id
+      FROM radiology_orders ro
+      WHERE ro.id = $1
+      FOR UPDATE
+    `, [id, req.user?.id]);
+
+    if (orderResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Radiology order not found' });
+    }
+
+    const order = orderResult.rows[0];
+    for (const report of reports) {
+      if (!report.itemId || !report.findings?.trim() || !report.impression?.trim()) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          error: 'Every study requires findings and an impression'
+        });
+      }
+
+      const itemResult = await client.query(`
+        SELECT id FROM radiology_order_items
+        WHERE id = $1 AND radiology_order_id = $2
+      `, [report.itemId, id]);
+      if (itemResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ success: false, error: 'A reported study does not belong to this order' });
+      }
+
+      const existingReport = await client.query(`
+        SELECT id FROM radiology_reports
+        WHERE radiology_order_id = $1 AND radiology_order_item_id = $2
+        ORDER BY version DESC
+        LIMIT 1
+      `, [id, report.itemId]);
+
+      if (existingReport.rows.length > 0) {
+        await client.query(`
+          UPDATE radiology_reports
+          SET findings = $1, impression = $2, recommendations = $3,
+              radiologist_id = $4, status = 'final', verified_at = NOW(),
+              released_at = NOW(), updated_at = NOW()
+          WHERE id = $5
+        `, [report.findings.trim(), report.impression.trim(), report.notes || null,
+          order.reporting_clinician_id, existingReport.rows[0].id]);
+      } else {
+        await client.query(`
+          INSERT INTO radiology_reports (
+            radiology_order_id, radiology_order_item_id, findings, impression,
+            recommendations, radiologist_id, status, dictated_at, verified_at, released_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, 'final', NOW(), NOW(), NOW())
+        `, [id, report.itemId, report.findings.trim(), report.impression.trim(),
+          report.notes || null, order.reporting_clinician_id]);
+      }
+
+      await client.query(`
+        UPDATE radiology_order_items
+        SET status = 'reported', reported_at = NOW(), updated_at = NOW()
+        WHERE id = $1
+      `, [report.itemId]);
+    }
+
+    const completedOrder = await client.query(`
+      UPDATE radiology_orders
+      SET status = 'reported', reported_at = NOW(), updated_at = NOW()
+      WHERE id = $1
+      RETURNING encounter_id
+    `, [id]);
+
+    await client.query('COMMIT');
+
+    try {
+      await completeDepartmentService(completedOrder.rows[0]?.encounter_id, 'radiology');
+    } catch (workflowError) {
+      logger.error('Radiology reported but journey synchronization failed:', workflowError);
+    }
+
+    res.json({ success: true, message: 'Radiology report finalized and released' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    logger.error('Error submitting radiology report:', error);
+    res.status(500).json({ success: false, error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
 // Get radiology queue
-router.get('/queue', async (req, res) => {
+router.get('/queue', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
   try {
     const query = `
       SELECT rq.*,
@@ -277,7 +434,7 @@ router.get('/queue', async (req, res) => {
 });
 
 // Get radiology statistics
-router.get('/statistics', async (req, res) => {
+router.get('/statistics', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
   try {
     const query = `
       SELECT

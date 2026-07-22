@@ -1,6 +1,28 @@
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../utils/database');
 
+const UPDATEABLE_FIELDS = new Set([
+  'status',
+  'triage_level',
+  'department_id',
+  'clinic_id',
+  'doctor_id',
+  'waiting_location',
+  'current_location_id',
+  'triage_time',
+  'consultation_start_time',
+  'consultation_end_time',
+  'total_waiting_minutes',
+  'chief_complaint',
+  'presenting_symptoms',
+  'vital_signs',
+  'payment_status',
+  'payment_type',
+  'corporate_scheme',
+  'referred_from',
+  'notes'
+]);
+
 class Encounter {
   static async create(encounterData) {
     const id = uuidv4();
@@ -15,18 +37,18 @@ class Encounter {
     
     const values = [
       id,
-      encounterData.patientId,
-      encounterData.encounterType || 'outpatient',
+      encounterData.patientId || encounterData.patient_id,
+      encounterData.encounterType || encounterData.encounter_type || encounterData.visit_type || 'outpatient',
       encounterData.status || 'registered',
-      encounterData.triageLevel || 'routine',
-      encounterData.departmentId,
-      encounterData.clinicId,
-      encounterData.doctorId,
-      encounterData.waitingLocation || 'reception',
-      encounterData.chiefComplaint,
-      encounterData.paymentType || 'self-pay',
-      encounterData.paymentStatus || 'unpaid',
-      encounterData.createdBy
+      encounterData.triageLevel || encounterData.triage_level || 'routine',
+      encounterData.departmentId || encounterData.department_id || null,
+      encounterData.clinicId || encounterData.clinic_id || null,
+      encounterData.doctorId || encounterData.doctor_id || null,
+      encounterData.waitingLocation || encounterData.waiting_location || 'reception',
+      encounterData.chiefComplaint || encounterData.chief_complaint || null,
+      encounterData.paymentType || encounterData.payment_type || 'self-pay',
+      encounterData.paymentStatus || encounterData.payment_status || 'unpaid',
+      encounterData.createdBy || encounterData.created_by || null
     ];
     
     const result = await getDB().query(query, values);
@@ -43,7 +65,7 @@ class Encounter {
       LEFT JOIN staff s ON e.doctor_id = s.id
       WHERE e.id = $1
     `;
-    const result = await pool.query(query, [id]);
+    const result = await getDB().query(query, [id]);
     return result.rows[0];
   }
   
@@ -59,7 +81,7 @@ class Encounter {
         AND e.status IN ('waiting', 'in-consultation')
       ORDER BY e.registration_time ASC
     `;
-    const result = await pool.query(query, [clinicId]);
+    const result = await getDB().query(query, [clinicId]);
     return result.rows;
   }
   
@@ -77,18 +99,40 @@ class Encounter {
       WHERE e.registration_time BETWEEN $1 AND $2
       ORDER BY e.registration_time ASC
     `;
-    const result = await pool.query(query, [startOfDay, endOfDay]);
+    const result = await getDB().query(query, [startOfDay, endOfDay]);
     return result.rows;
   }
   
   static async update(id, updateData) {
+    if (!updateData || typeof updateData !== 'object' || Array.isArray(updateData)) {
+      const error = new Error('Encounter update must be an object');
+      error.status = 400;
+      throw error;
+    }
+
+    const entries = Object.entries(updateData).filter(([, value]) => value !== undefined);
+    const invalidFields = entries
+      .map(([key]) => key)
+      .filter(key => !UPDATEABLE_FIELDS.has(key));
+
+    if (invalidFields.length > 0) {
+      const error = new Error(`Unsupported encounter fields: ${invalidFields.join(', ')}`);
+      error.status = 400;
+      throw error;
+    }
+    if (entries.length === 0) {
+      const error = new Error('At least one encounter field is required');
+      error.status = 400;
+      throw error;
+    }
+
     const fields = [];
     const values = [];
     let paramCount = 1;
     
-    Object.keys(updateData).forEach(key => {
+    entries.forEach(([key, value]) => {
       fields.push(`${key} = $${paramCount}`);
-      values.push(updateData[key]);
+      values.push(value);
       paramCount++;
     });
     

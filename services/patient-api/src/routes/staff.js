@@ -4,8 +4,10 @@ const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
 
+const STAFF_DIRECTORY_ROLES = ['admin', 'doctor', 'nurse', 'receptionist'];
+
 // GET /api/staff - Get all staff with optional role filter
-router.get('/', async (req, res) => {
+router.get('/', authorize(STAFF_DIRECTORY_ROLES), async (req, res) => {
   try {
     const db = getDB();
     const { role, department_id, status = 'active' } = req.query;
@@ -53,7 +55,7 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/staff/:id - Get single staff member
-router.get('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
+router.get('/:id', authorize(STAFF_DIRECTORY_ROLES), async (req, res) => {
   try {
     const { id } = req.params;
     
