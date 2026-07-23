@@ -11,7 +11,7 @@ const api = axios.create({
 // Request interceptor to add auth headers
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token') || localStorage.getItem('dev_token');
+    const token = localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -28,9 +28,12 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    if (error.response?.status === 401) {
-      // Handle unauthorized access
+    const requestPath = error.config?.url || '';
+    const isCredentialCheck = requestPath.includes('/api/auth/login') ||
+      requestPath.includes('/api/auth/change-password');
+    if (error.response?.status === 401 && !isCredentialCheck) {
       localStorage.removeItem('token');
+      localStorage.removeItem('medimesh_token');
       localStorage.removeItem('dev_token');
       window.location.href = '/login';
     }
@@ -44,8 +47,11 @@ const handleResponse = (response) => {
 };
 
 const handleError = (error) => {
-  const message = error.response?.data?.message || error.message || 'An error occurred';
-  throw new Error(message);
+  const message = error.response?.data?.error || error.response?.data?.message || error.message || 'An error occurred';
+  const normalizedError = new Error(message);
+  normalizedError.response = error.response;
+  normalizedError.status = error.response?.status;
+  throw normalizedError;
 };
 
 // API service object
@@ -83,6 +89,48 @@ const apiService = {
     me: async () => {
       try {
         const response = await api.get('/api/auth/me');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    verifyMfa: async (mfaToken, code) => {
+      try {
+        const response = await api.post('/api/auth/mfa/verify', { mfaToken, code });
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    setupMfa: async () => {
+      try {
+        return handleResponse(await api.post('/api/auth/mfa/setup'));
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    enableMfa: async code => {
+      try {
+        return handleResponse(await api.post('/api/auth/mfa/enable', { code }));
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    disableMfa: async (password, code) => {
+      try {
+        return handleResponse(await api.post('/api/auth/mfa/disable', { password, code }));
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    changePassword: async (currentPassword, newPassword) => {
+      try {
+        const response = await api.post('/api/auth/change-password', { currentPassword, newPassword });
         return handleResponse(response);
       } catch (error) {
         throw handleError(error);
@@ -397,6 +445,39 @@ const apiService = {
     }
   },
 
+  // Dashboard API
+  dashboard: {
+    getStatistics: async () => {
+      try {
+        const response = await api.get('/api/dashboard/statistics');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    getSystemStatus: async () => {
+      try {
+        const response = await api.get('/api/dashboard/system-status');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+  },
+
+  // Clinics API
+  clinics: {
+    getAll: async () => {
+      try {
+        const response = await api.get('/api/clinics');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+  },
+
   // Settings Management
   settings: {
     // User Settings
@@ -437,6 +518,15 @@ const apiService = {
     },
 
     // System Settings (Admin only)
+    getOrganizationSettings: async () => {
+      try {
+        const response = await api.get('/api/settings/organization');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
     getSystemSettings: async () => {
       try {
         const response = await api.get('/api/settings/system');
@@ -553,4 +643,4 @@ const apiService = {
   }
 };
 
-export default apiService; 
+export default apiService;

@@ -6,6 +6,16 @@ import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { NotificationProvider } from './contexts/NotificationContext';
+
+// Axios errors can include request payloads and response bodies. Keep clinical
+// data out of production browser consoles until a redacting telemetry sink is
+// configured; development builds retain their normal diagnostics.
+if (process.env.NODE_ENV === 'production') {
+  ['log', 'info', 'debug', 'warn', 'error'].forEach((method) => {
+    console[method] = () => {};
+  });
+}
 
 // Error boundary component
 class ErrorBoundary extends React.Component {
@@ -45,12 +55,14 @@ root.render(
         <AuthProvider>
           <SettingsProvider>
             <ThemeProvider>
-              <CssBaseline />
-              <App />
+              <NotificationProvider>
+                <CssBaseline />
+                <App />
+              </NotificationProvider>
             </ThemeProvider>
           </SettingsProvider>
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>
   </React.StrictMode>
-); 
+);

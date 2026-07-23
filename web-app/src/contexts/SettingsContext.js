@@ -27,7 +27,17 @@ const defaultSystemSettings = {
   allowedFileTypes: ['pdf', 'jpg', 'jpeg', 'png', 'docx', 'doc', 'dicom', 'txt', 'csv'],
   emailEnabled: true,
   smsEnabled: false,
-  maintenanceMode: false
+  maintenanceMode: false,
+  facilityName: 'MediMesh Health Centre',
+  shortName: 'MediMesh',
+  facilityType: 'hospital',
+  deploymentMode: 'team',
+  patientLabel: 'Patient',
+  visitLabel: 'Visit',
+  providerLabel: 'Clinician',
+  currency: 'KES',
+  timezone: 'Africa/Nairobi',
+  primaryColor: '#1B6B93'
 };
 
 // Helper function to flatten grouped system settings for UI consumption
@@ -88,7 +98,7 @@ export const SettingsProvider = ({ children }) => {
   const { user, isAuthenticated, token, authLoading } = useAuth();
 
   // Default settings structure
-  const defaultUserSettings = {
+  const defaultUserSettings = useMemo(() => ({
     profile: {
       displayName: user?.name || '',
       email: user?.email || '',
@@ -128,7 +138,7 @@ export const SettingsProvider = ({ children }) => {
       workDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
       timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
     }
-  };
+  }), [user?.email, user?.name]);
 
   // Load user settings
   const loadUserSettings = useCallback(async () => {
@@ -153,7 +163,7 @@ export const SettingsProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated, token, authLoading]);
+  }, [isAuthenticated, token, authLoading, defaultUserSettings]);
 
   // Load system settings (admin only)
   const loadSystemSettings = useCallback(async () => {
@@ -168,13 +178,11 @@ export const SettingsProvider = ({ children }) => {
       console.log('Loading system settings for admin user...');
       
       const response = await apiService.settings.getSystemSettings();
-      console.log('System settings API response:', response);
       
       // Flatten the grouped settings for UI consumption
       const flattenedSettings = flattenSystemSettings(response.data);
-      console.log('Flattened system settings:', flattenedSettings);
       
-      setSystemSettings(flattenedSettings);
+      setSystemSettings(previous => ({ ...previous, ...flattenedSettings }));
     } catch (err) {
       console.error('Error loading system settings:', err);
       
@@ -182,20 +190,38 @@ export const SettingsProvider = ({ children }) => {
       if (err.response?.status === 401) {
         console.log('System settings load failed - authentication required');
         setError('Please log in again to access system settings.');
-        setSystemSettings(defaultSystemSettings);
+        setSystemSettings(previous => ({ ...defaultSystemSettings, ...previous }));
       } else if (err.response?.status === 403) {
         console.log('System settings load failed - insufficient permissions');
         setError('Admin privileges required to view system settings.');
-        setSystemSettings(defaultSystemSettings);
+        setSystemSettings(previous => ({ ...defaultSystemSettings, ...previous }));
       } else if (err.response?.status >= 500) {
         console.log('System settings load failed - server error');
         setError('Server error loading system settings. Using default values.');
-        setSystemSettings(defaultSystemSettings);
+        setSystemSettings(previous => ({ ...defaultSystemSettings, ...previous }));
       } else {
         console.log('System settings load failed - network or other error');
         setError('Failed to load system settings. Using default values.');
-        setSystemSettings(defaultSystemSettings);
+        setSystemSettings(previous => ({ ...defaultSystemSettings, ...previous }));
       }
+    }
+  }, [isAuthenticated, token, authLoading]);
+
+  const loadOrganizationSettings = useCallback(async () => {
+    if (!isAuthenticated || !token || authLoading) return;
+    try {
+      const response = await apiService.settings.getOrganizationSettings();
+      const organization = {};
+      (response.data || []).forEach(setting => {
+        const rawKey = setting.key?.split('.')[1];
+        if (rawKey) {
+          const uiKey = rawKey.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+          organization[uiKey] = setting.value;
+        }
+      });
+      setSystemSettings(previous => ({ ...previous, ...organization }));
+    } catch (err) {
+      console.error('Error loading facility identity:', err);
     }
   }, [isAuthenticated, token, authLoading]);
 
@@ -259,7 +285,6 @@ export const SettingsProvider = ({ children }) => {
       
       // Convert UI key to database key format
       const databaseKey = getSystemSettingKey(key);
-      console.log('Updating system setting:', databaseKey, 'to:', value);
       
       const response = await apiService.settings.updateSystemSetting(databaseKey, value);
       
@@ -344,6 +369,7 @@ export const SettingsProvider = ({ children }) => {
     if (!authLoading && isAuthenticated && token) {
       console.log('Auth state ready, loading settings...');
       loadUserSettings();
+      loadOrganizationSettings();
       
       // Only load system settings if user has admin role
       if (user?.roles?.includes('admin')) {
@@ -360,7 +386,7 @@ export const SettingsProvider = ({ children }) => {
       setLoading(false);
       setError(null);
     }
-  }, [isAuthenticated, token, authLoading, user?.roles, loadUserSettings, loadSystemSettings]);
+  }, [isAuthenticated, token, authLoading, user?.roles, loadUserSettings, loadSystemSettings, loadOrganizationSettings]);
 
   // Memoize the context value to prevent unnecessary re-renders
   const value = useMemo(() => ({
@@ -371,6 +397,7 @@ export const SettingsProvider = ({ children }) => {
     updateUserSettings,
     updateSystemSetting,
     resetUserSettings,
+    refreshOrganizationSettings: loadOrganizationSettings,
     getSetting,
     getSystemSetting,
     isMedicalFeatureEnabled,
@@ -385,6 +412,8 @@ export const SettingsProvider = ({ children }) => {
     updateUserSettings,
     updateSystemSetting,
     resetUserSettings,
+    loadOrganizationSettings,
+    defaultUserSettings,
     getSetting,
     getSystemSetting,
     isMedicalFeatureEnabled
@@ -395,4 +424,4 @@ export const SettingsProvider = ({ children }) => {
       {children}
     </SettingsContext.Provider>
   );
-}; 
+};

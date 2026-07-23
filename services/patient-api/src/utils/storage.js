@@ -1,17 +1,50 @@
-const AWS = require('aws-sdk');
+const {
+  S3Client,
+  HeadBucketCommand,
+  CreateBucketCommand,
+  PutBucketPolicyCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  DeleteObjectCommand,
+  ListObjectsV2Command
+} = require('@aws-sdk/client-s3');
+const { Upload } = require('@aws-sdk/lib-storage');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
-const mime = require('mime-types');
 const { logger } = require('./logger');
 
 // MinIO S3 configuration
-const s3 = new AWS.S3({
+const s3 = new S3Client({
   endpoint: process.env.MINIO_ENDPOINT || 'http://minio:9000',
-  accessKeyId: process.env.MINIO_ACCESS_KEY || 'medimesh-admin',
-  secretAccessKey: process.env.MINIO_SECRET_KEY || 'MediMeshMinio2024!',
-  s3ForcePathStyle: true,
-  signatureVersion: 'v4',
+  credentials: {
+    accessKeyId: process.env.MINIO_ACCESS_KEY || 'medimesh-admin',
+    secretAccessKey: process.env.MINIO_SECRET_KEY || 'MediMeshMinio2024!'
+  },
+  forcePathStyle: true,
   region: 'us-east-1'
 });
+
+const isNotFoundError = (error) => (
+  error?.$metadata?.httpStatusCode === 404 ||
+  error?.statusCode === 404 ||
+  error?.name === 'NotFound' ||
+  error?.Code === 'NoSuchBucket'
+);
+
+const bodyToBuffer = async (body) => {
+  if (body == null) return Buffer.alloc(0);
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof Uint8Array) return Buffer.from(body);
+  if (typeof body.transformToByteArray === 'function') {
+    return Buffer.from(await body.transformToByteArray());
+  }
+
+  const chunks = [];
+  for await (const chunk of body) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+};
 
 // Healthcare file types configuration
 const ALLOWED_FILE_TYPES = {
@@ -41,8 +74,16 @@ const BUCKETS = {
 };
 
 class StorageService {
-  constructor() {
-    this.initializeBuckets();
+  constructor(client = s3, options = {}) {
+    this.s3 = client;
+    this.createUpload = options.createUpload || (uploadOptions => new Upload(uploadOptions));
+    this.presign = options.getSignedUrl || getSignedUrl;
+    this.serverSideEncryption = options.serverSideEncryption !== undefined
+      ? options.serverSideEncryption
+      : String(process.env.S3_SERVER_SIDE_ENCRYPTION || '').trim();
+    if (options.initializeBuckets !== false) {
+      this.initialization = this.initializeBuckets();
+    }
   }
 
   async initializeBuckets() {
@@ -58,12 +99,12 @@ class StorageService {
 
   async createBucketIfNotExists(bucketName) {
     try {
-      await s3.headBucket({ Bucket: bucketName }).promise();
+      await this.s3.send(new HeadBucketCommand({ Bucket: bucketName }));
       logger.info(`Bucket ${bucketName} already exists`);
     } catch (error) {
-      if (error.statusCode === 404) {
+      if (isNotFoundError(error)) {
         try {
-          await s3.createBucket({ Bucket: bucketName }).promise();
+          await this.s3.send(new CreateBucketCommand({ Bucket: bucketName }));
           logger.info(`Created bucket: ${bucketName}`);
           
           // Set bucket policy for healthcare compliance
@@ -100,10 +141,10 @@ class StorageService {
     };
 
     try {
-      await s3.putBucketPolicy({
+      await this.s3.send(new PutBucketPolicyCommand({
         Bucket: bucketName,
         Policy: JSON.stringify(policy)
-      }).promise();
+      }));
       logger.info(`Set security policy for bucket: ${bucketName}`);
     } catch (error) {
       logger.error(`Failed to set bucket policy for ${bucketName}:`, error);
@@ -197,12 +238,19 @@ class StorageService {
         Body: file.buffer,
         ContentType: file.mimetype,
         ContentDisposition: `attachment; filename="${file.originalname}"`,
-        Metadata: sanitizedMetadata,
-        ServerSideEncryption: 'AES256'
+        Metadata: sanitizedMetadata
       };
+      if (this.serverSideEncryption) {
+        uploadParams.ServerSideEncryption = this.serverSideEncryption;
+      }
 
       // Upload file
-      const result = await s3.upload(uploadParams).promise();
+      const upload = this.createUpload({
+        client: this.s3,
+        params: uploadParams,
+        leavePartsOnError: false
+      });
+      const result = await upload.done();
 
       const fileInfo = {
         id: uuidv4(),
@@ -235,12 +283,8 @@ class StorageService {
 
   async downloadFile(bucketName, fileKey) {
     try {
-      const downloadParams = {
-        Bucket: bucketName,
-        Key: fileKey
-      };
-
-      const result = await s3.getObject(downloadParams).promise();
+      const result = await this.getFileStream(bucketName, fileKey);
+      const body = await bodyToBuffer(result.body);
       
       logger.info('File downloaded successfully', {
         bucket: bucketName,
@@ -248,14 +292,35 @@ class StorageService {
       });
 
       return {
+        body,
+        contentType: result.contentType,
+        contentLength: result.contentLength,
+        lastModified: result.lastModified,
+        metadata: result.metadata
+      };
+    } catch (error) {
+      logger.error('File download failed:', error);
+      throw error;
+    }
+  }
+
+  async getFileStream(bucketName, fileKey) {
+    try {
+      const result = await this.s3.send(new GetObjectCommand({
+        Bucket: bucketName,
+        Key: fileKey
+      }));
+
+      return {
         body: result.Body,
         contentType: result.ContentType,
         contentLength: result.ContentLength,
         lastModified: result.LastModified,
+        etag: result.ETag,
         metadata: result.Metadata
       };
     } catch (error) {
-      logger.error('File download failed:', error);
+      logger.error('Failed to open file stream:', error);
       throw error;
     }
   }
@@ -267,7 +332,7 @@ class StorageService {
         Key: fileKey
       };
 
-      const result = await s3.headObject(headParams).promise();
+      const result = await this.s3.send(new HeadObjectCommand(headParams));
       
       return {
         contentType: result.ContentType,
@@ -289,7 +354,7 @@ class StorageService {
         Key: fileKey
       };
 
-      await s3.deleteObject(deleteParams).promise();
+      await this.s3.send(new DeleteObjectCommand(deleteParams));
       
       logger.info('File deleted successfully', {
         bucket: bucketName,
@@ -311,7 +376,7 @@ class StorageService {
         MaxKeys: limit
       };
 
-      const result = await s3.listObjectsV2(listParams).promise();
+      const result = await this.s3.send(new ListObjectsV2Command(listParams));
       
       return {
         files: result.Contents || [],
@@ -326,13 +391,8 @@ class StorageService {
 
   async generatePresignedUrl(bucketName, fileKey, expiry = 3600) {
     try {
-      const params = {
-        Bucket: bucketName,
-        Key: fileKey,
-        Expires: expiry
-      };
-
-      const url = await s3.getSignedUrlPromise('getObject', params);
+      const command = new GetObjectCommand({ Bucket: bucketName, Key: fileKey });
+      const url = await this.presign(this.s3, command, { expiresIn: expiry });
       
       logger.info('Generated presigned URL', {
         bucket: bucketName,
@@ -377,11 +437,16 @@ class StorageService {
 }
 
 // Create singleton instance
-const storageService = new StorageService();
+const storageService = new StorageService(s3, {
+  initializeBuckets: process.env.NODE_ENV !== 'test'
+});
 
 module.exports = {
   storageService,
+  StorageService,
   BUCKETS,
   ALLOWED_FILE_TYPES,
-  MAX_FILE_SIZE
-}; 
+  MAX_FILE_SIZE,
+  bodyToBuffer,
+  isNotFoundError
+};

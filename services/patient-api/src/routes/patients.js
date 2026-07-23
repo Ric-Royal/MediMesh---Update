@@ -18,7 +18,7 @@ const { logger } = require('../utils/logger');
 
 // GET /api/patients - List all patients with search and pagination
 router.get('/',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validateQuery(patientSearchSchema),
   dlpMiddleware,
   async (req, res) => {
@@ -28,11 +28,11 @@ router.get('/',
       // Apply DLP export limits
       const actualLimit = req.exportLimit ? Math.min(limit, req.exportLimit) : limit;
       
-      const patients = await Patient.findAll(actualLimit, offset, search);
-      
-      // Get total count for pagination
-      // In a real implementation, you'd want a separate count query
-      const hasMore = patients.length === actualLimit;
+      const [patients, total] = await Promise.all([
+        Patient.findAll(actualLimit, offset, search),
+        Patient.count(search)
+      ]);
+      const hasMore = offset + patients.length < total;
       
       logger.info('Patients retrieved', {
         userId: req.user.id,
@@ -46,7 +46,8 @@ router.get('/',
         pagination: {
           limit: actualLimit,
           offset,
-          has_more: hasMore
+          has_more: hasMore,
+          total
         },
         meta: {
           total_returned: patients.length,
@@ -91,7 +92,7 @@ router.get('/statistics',
 
 // GET /api/patients/:id - Get a specific patient
 router.get('/:id',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validateParams(Joi.object({ id: uuidSchema })),
   async (req, res) => {
     try {
@@ -126,27 +127,7 @@ router.get('/:id',
 
 // POST /api/patients - Create a new patient
 router.post('/',
-  (req, res, next) => {
-    logger.info('POST /api/patients - ENTRY POINT', {
-      method: req.method,
-      url: req.url,
-      hasBody: !!req.body,
-      bodyType: typeof req.body,
-      bodyContent: JSON.stringify(req.body),
-      contentType: req.headers['content-type'],
-      userAgent: req.headers['user-agent']
-    });
-    next();
-  },
-  authorize(['doctor', 'nurse', 'admin']),
-  (req, res, next) => {
-    logger.info('POST /api/patients - AFTER AUTH', {
-      user: req.user,
-      bodyExists: !!req.body,
-      bodyContent: req.body
-    });
-    next();
-  },
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validate(patientCreateSchema),
   async (req, res) => {
     try {
@@ -195,7 +176,7 @@ router.post('/',
 
 // PUT /api/patients/:id - Update a patient
 router.put('/:id',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validateParams(Joi.object({ id: uuidSchema })),
   validate(patientUpdateSchema),
   captureDataChanges('patient'),
@@ -283,7 +264,7 @@ router.delete('/:id',
 
 // GET /api/patients/:id/records - Get medical records for a patient
 router.get('/:id/records',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validateParams(Joi.object({ id: uuidSchema })),
   validateQuery(Joi.object({
     limit: Joi.number().integer().min(1).max(100).default(50),
@@ -350,4 +331,4 @@ router.use((error, req, res, next) => {
   });
 });
 
-module.exports = router; 
+module.exports = router;

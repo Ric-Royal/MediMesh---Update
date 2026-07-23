@@ -63,7 +63,10 @@ const FileUpload = ({
   const { getSystemSetting } = useSettings();
   
   // Get settings with fallbacks
-  const systemMaxFileSize = getSystemSetting('maxFileSize', 50) * 1024 * 1024; // Convert MB to bytes
+  const configuredMaxFileSize = Number(getSystemSetting('maxFileSize', 50 * 1024 * 1024));
+  const systemMaxFileSize = configuredMaxFileSize > 1024 * 1024
+    ? configuredMaxFileSize
+    : configuredMaxFileSize * 1024 * 1024;
   const systemAllowedTypes = getSystemSetting('allowedFileTypes', ['pdf', 'jpg', 'jpeg', 'png', 'docx', 'doc', 'dicom', 'txt', 'csv']);
   
   // Use prop values if provided, otherwise use system settings
@@ -268,7 +271,7 @@ const FileUpload = ({
       formData.append('isPrivate', fileMetadata.isPrivate);
 
       // Get auth token
-      const token = localStorage.getItem('token') || localStorage.getItem('dev_token');
+      const token = localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token');
       
       const xhr = new XMLHttpRequest();
       
@@ -527,4 +530,4 @@ const FileUpload = ({
   );
 };
 
-export default FileUpload; 
+export default FileUpload;

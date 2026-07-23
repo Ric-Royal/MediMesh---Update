@@ -1,0 +1,6 @@
+.env
+secrets/*
+!secrets/README.md
+backups/*
+!backups/.gitkeep
+restore-work/*

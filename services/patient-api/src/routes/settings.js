@@ -259,6 +259,22 @@ router.get('/user/schema',
 // SYSTEM SETTINGS ROUTES (Admin Only)
 // =====================
 
+// GET /api/settings/organization - Safe shared facility identity and labels.
+// Authentication is already enforced by the route mount; these settings do
+// not contain secrets and must be visible in every role workspace.
+router.get('/organization', async (req, res) => {
+  try {
+    const settings = await SystemSettings.findByCategory('organization');
+    res.json({
+      success: true,
+      data: settings.map(setting => setting.toJSON())
+    });
+  } catch (error) {
+    logger.error('Error retrieving organization settings:', error);
+    res.status(500).json({ success: false, error: 'Failed to retrieve organization settings' });
+  }
+});
+
 // GET /api/settings/system - Get all system settings
 router.get('/system',
   authorize(['admin']),
@@ -732,4 +748,4 @@ router.post('/logs/export',
   }
 );
 
-module.exports = router; 
+module.exports = router;

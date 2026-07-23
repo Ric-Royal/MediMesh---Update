@@ -1,0 +1,186 @@
+name: ${COMPOSE_PROJECT_NAME:-medimesh-clinic}
+
+services:
+  traefik:
+    image: ${TRAEFIK_IMAGE}
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.email=${TLS_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --accesslog=true
+      - --accesslog.fields.headers.defaultmode=drop
+      - --log.level=INFO
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_certs:/letsencrypt
+    networks: [edge]
+    security_opt: [no-new-privileges:true]
+
+  web-app:
+    image: ${MEDIMESH_WEB_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      patient-api:
+        condition: service_healthy
+    networks: [edge, backend]
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, wget, -qO-, http://localhost/health]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.medimesh.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.medimesh.entrypoints=websecure
+      - traefik.http.routers.medimesh.tls=true
+      - traefik.http.routers.medimesh.tls.certresolver=letsencrypt
+      - traefik.http.services.medimesh.loadbalancer.server.port=80
+
+  patient-api:
+    image: ${MEDIMESH_API_IMAGE}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      PUBLIC_BASE_URL: https://${DOMAIN}
+      ALLOWED_ORIGINS: https://${DOMAIN}
+      DATABASE_URL_FILE: /run/secrets/database_url
+      REDIS_URL: redis://redis:6379
+      REDIS_PASSWORD_FILE: /run/secrets/redis_password
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY_FILE: /run/secrets/minio_user
+      MINIO_SECRET_KEY_FILE: /run/secrets/minio_password
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      MFA_ENCRYPTION_KEY_FILE: /run/secrets/mfa_encryption_key
+      REQUIRE_MFA: "true"
+      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-28800}
+      ALLOW_DEMO_AUTH: "false"
+      ALLOW_INSECURE_DEV_TOKENS: "false"
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
+      MPESA_ENVIRONMENT: ${MPESA_ENVIRONMENT:-sandbox}
+      MPESA_CONSUMER_KEY_FILE: /run/secrets/mpesa_consumer_key
+      MPESA_CONSUMER_SECRET_FILE: /run/secrets/mpesa_consumer_secret
+      MPESA_PASSKEY_FILE: /run/secrets/mpesa_passkey
+      MPESA_SHORTCODE_FILE: /run/secrets/mpesa_shortcode
+      MPESA_CALLBACK_TOKEN_FILE: /run/secrets/mpesa_callback_token
+      MPESA_CALLBACK_URL: https://${DOMAIN}/api/payments/mpesa/callback
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    secrets:
+      - database_url
+      - redis_password
+      - minio_user
+      - minio_password
+      - jwt_secret
+      - mfa_encryption_key
+      - bootstrap_admin_password
+      - mpesa_consumer_key
+      - mpesa_consumer_secret
+      - mpesa_passkey
+      - mpesa_shortcode
+      - mpesa_callback_token
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    networks: [backend]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, node, -e, "require('http').get('http://localhost:3000/health/live',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: medimesh
+      POSTGRES_USER: medimesh
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../init-scripts:/docker-entrypoint-initdb.d:ro
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U medimesh -d medimesh]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: ${REDIS_IMAGE}
+    restart: unless-stopped
+    command: [sh, -c, 'exec redis-server --appendonly yes --requirepass "$$(cat /run/secrets/redis_password)"']
+    secrets: [redis_password]
+    volumes: [redis_data:/data]
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD-SHELL, 'redis-cli -a "$$(cat /run/secrets/redis_password)" ping | grep PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: ${MINIO_IMAGE}
+    restart: unless-stopped
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_password
+    secrets: [minio_user, minio_password]
+    volumes: [minio_data:/data]
+    networks: [backend]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test: [CMD, curl, -f, http://localhost:9000/minio/health/live]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  edge: {}
+  backend: {}
+
+volumes:
+  postgres_data: {}
+  redis_data: {}
+  minio_data: {}
+  traefik_certs: {}
+
+secrets:
+  database_url: { file: ./secrets/database_url }
+  postgres_password: { file: ./secrets/postgres_password }
+  redis_password: { file: ./secrets/redis_password }
+  minio_user: { file: ./secrets/minio_user }
+  minio_password: { file: ./secrets/minio_password }
+  jwt_secret: { file: ./secrets/jwt_secret }
+  mfa_encryption_key: { file: ./secrets/mfa_encryption_key }
+  bootstrap_admin_password: { file: ./secrets/bootstrap_admin_password }
+  mpesa_consumer_key: { file: ./secrets/mpesa_consumer_key }
+  mpesa_consumer_secret: { file: ./secrets/mpesa_consumer_secret }
+  mpesa_passkey: { file: ./secrets/mpesa_passkey }
+  mpesa_shortcode: { file: ./secrets/mpesa_shortcode }
+  mpesa_callback_token: { file: ./secrets/mpesa_callback_token }

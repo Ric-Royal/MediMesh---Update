@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Card,
@@ -21,8 +21,7 @@ import {
   Divider,
   Alert,
   CircularProgress,
-  Tooltip,
-  Badge
+  Tooltip
 } from '@mui/material';
 import {
   Download as DownloadIcon,
@@ -30,13 +29,11 @@ import {
   Delete as DeleteIcon,
   Share as ShareIcon,
   Lock as LockIcon,
-  LockOpen as LockOpenIcon,
   InsertDriveFile as FileIcon,
   Image as ImageIcon,
   Description as DocIcon,
   TableChart as SpreadsheetIcon,
   Code as CodeIcon,
-  Close as CloseIcon,
   Info as InfoIcon,
   CalendarToday as CalendarIcon,
   Person as PersonIcon,
@@ -66,20 +63,13 @@ const FilePreview = ({
   const [fileToDelete, setFileToDelete] = useState(null);
   const { hasRole } = useAuth();
 
-  // Fetch files when component mounts or recordId changes
-  useEffect(() => {
-    if (recordId) {
-      fetchFiles();
-    }
-  }, [recordId]);
-
-  const fetchFiles = async () => {
+  const fetchFiles = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const response = await fetch(`/api/files?recordId=${recordId}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token') || localStorage.getItem('dev_token')}`
+          'Authorization': `Bearer ${localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token')}`
         }
       });
       
@@ -95,7 +85,14 @@ const FilePreview = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [recordId]);
+
+  // Fetch files when component mounts or recordId changes
+  useEffect(() => {
+    if (recordId) {
+      fetchFiles();
+    }
+  }, [recordId, fetchFiles]);
 
   const getFileIcon = (file) => {
     const mimeType = file.mimeType || file.mime_type || '';
@@ -555,4 +552,4 @@ const FilePreview = ({
   );
 };
 
-export default FilePreview; 
+export default FilePreview;

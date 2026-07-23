@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -13,17 +13,22 @@ import {
   Alert,
   Card,
   CardContent,
-  Divider
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
   Save as SaveIcon,
-  Person as PersonIcon
+  Person as PersonIcon,
+  CheckCircle as CheckCircleIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import FileUpload from '../components/common/FileUpload';
+import API_CONFIG from '../config/api';
 
 const CreatePatientPage = () => {
   const navigate = useNavigate();
@@ -41,7 +46,7 @@ const CreatePatientPage = () => {
       city: '',
       state: '',
       zip_code: '',
-      country: 'USA'
+      country: 'Kenya'
     },
     emergency_contact: {
       name: '',
@@ -58,9 +63,55 @@ const CreatePatientPage = () => {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  
+  // Encounter dialog state
+  const [showEncounterDialog, setShowEncounterDialog] = useState(false);
+  const [createdPatient, setCreatedPatient] = useState(null);
+  const [clinics, setClinics] = useState([]);
+  const [doctors, setDoctors] = useState([]);
+  const [encounterData, setEncounterData] = useState({
+    encounterType: 'outpatient',
+    clinicId: '',
+    doctorId: '',
+    chiefComplaint: '',
+    triageLevel: 'routine',
+    paymentType: 'self-pay',
+    waitingLocation: 'reception'
+  });
+  const [creatingEncounter, setCreatingEncounter] = useState(false);
+
+  // Load clinics and doctors for encounter creation
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [clinicsRes, doctorsRes] = await Promise.all([
+          fetch(`${API_CONFIG.baseURL}/api/clinics`, {
+            headers: API_CONFIG.getAuthHeaders()
+          }),
+          fetch(`${API_CONFIG.baseURL}/api/staff?role=doctor`, {
+            headers: API_CONFIG.getAuthHeaders()
+          })
+        ]);
+        
+        if (clinicsRes.ok) {
+          const clinicsData = await clinicsRes.json();
+          setClinics(clinicsData.data || []);
+        }
+        
+        if (doctorsRes.ok) {
+          const doctorsData = await doctorsRes.json();
+          setDoctors(doctorsData.data || []);
+        }
+      } catch (error) {
+        console.error('Error loading clinics/doctors:', error);
+      }
+    };
+    
+    fetchData();
+  }, []);
 
   // Check permissions
-  if (!hasRole('doctor') && !hasRole('nurse') && !hasRole('admin')) {
+  if (!hasRole('doctor') && !hasRole('nurse') && !hasRole('admin') && !hasRole('receptionist')) {
     return (
       <Box>
         <Button
@@ -126,12 +177,12 @@ const CreatePatientPage = () => {
     }
 
     // Phone validation
-    if (formData.phone && !/^\+?[\d\s\-\(\)]+$/.test(formData.phone)) {
+    if (formData.phone && !/^\+?[\d\s\-()]+$/.test(formData.phone)) {
       newErrors['phone'] = 'Please enter a valid phone number';
     }
 
     // Emergency contact phone validation
-    if (formData.emergency_contact.phone && !/^\+?[\d\s\-\(\)]+$/.test(formData.emergency_contact.phone)) {
+    if (formData.emergency_contact.phone && !/^\+?[\d\s\-()]+$/.test(formData.emergency_contact.phone)) {
       newErrors['emergency_contact.phone'] = 'Please enter a valid phone number';
     }
 
@@ -172,19 +223,14 @@ const CreatePatientPage = () => {
       }
 
       // Log the request data before sending
-      console.log('Request data:', cleanData);
       
       const response = await apiService.patients.create(cleanData);
       
-      // Navigate to the new patient's detail page
-      navigate(`/patients/${response.data.id}`, {
-        replace: true,
-        state: { message: 'Patient created successfully!' }
-      });
+      // Store the created patient and show encounter dialog
+      setCreatedPatient(response.data);
+      setShowEncounterDialog(true);
     } catch (err) {
       console.error('Error creating patient:', err);
-      console.log('Error response:', err.response?.data);
-      console.log('Error status:', err.response?.status);
       
       if (err.response?.data?.details) {
         // Handle validation errors from server
@@ -193,12 +239,85 @@ const CreatePatientPage = () => {
           serverErrors[error.field] = error.message;
         });
         setErrors(serverErrors);
+        setSubmitError('Please fix the validation errors above.');
       } else {
-        setSubmitError(err.response?.data?.error || err.response?.data?.message || 'Failed to create patient. Please try again.');
+        // Provide more specific error messages based on the error
+        let errorMessage = 'Failed to create patient. Please try again.';
+        
+        if (err.response?.status === 409) {
+          errorMessage = 'A patient with this information already exists. Please check the patient ID, email, or phone number.';
+        } else if (err.response?.status === 400) {
+          errorMessage = err.response?.data?.error || 'Invalid patient information. Please check all fields.';
+        } else if (err.response?.status === 500) {
+          errorMessage = 'Server error occurred. Please try again or contact support if the problem persists.';
+        } else if (err.response?.data?.error) {
+          errorMessage = err.response.data.error;
+        } else if (err.response?.data?.message) {
+          errorMessage = err.response.data.message;
+        } else if (!navigator.onLine) {
+          errorMessage = 'No internet connection. Please check your network and try again.';
+        }
+        
+        setSubmitError(errorMessage);
       }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleCreateEncounter = async () => {
+    try {
+      setCreatingEncounter(true);
+      
+      const encounterPayload = {
+        patientId: createdPatient.id,
+        encounterType: encounterData.encounterType,
+        clinicId: encounterData.clinicId || null,
+        doctorId: encounterData.doctorId || null,
+        chiefComplaint: encounterData.chiefComplaint || 'General consultation',
+        triageLevel: encounterData.triageLevel,
+        paymentType: encounterData.paymentType,
+        waitingLocation: encounterData.waitingLocation
+      };
+      
+      const response = await fetch(`${API_CONFIG.baseURL}/api/encounters`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...API_CONFIG.getAuthHeaders()
+        },
+        body: JSON.stringify(encounterPayload)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to create encounter');
+      }
+      
+      // Navigate to patient detail page with success message
+      navigate(`/patients/${createdPatient.id}`, {
+        replace: true,
+        state: { message: 'Patient created and added to queue successfully!' }
+      });
+    } catch (error) {
+      console.error('Error creating encounter:', error);
+      setSubmitError('Patient created but failed to add to queue. You can add them to the queue later.');
+      // Still navigate to patient page after a delay
+      setTimeout(() => {
+        navigate(`/patients/${createdPatient.id}`, {
+          replace: true
+        });
+      }, 2000);
+    } finally {
+      setCreatingEncounter(false);
+    }
+  };
+
+  const handleSkipEncounter = () => {
+    // Navigate directly to patient detail page
+    navigate(`/patients/${createdPatient.id}`, {
+      replace: true,
+      state: { message: 'Patient created successfully! (Not added to queue)' }
+    });
   };
 
   return (
@@ -301,7 +420,7 @@ const CreatePatientPage = () => {
                       onChange={(e) => handleInputChange('phone', e.target.value)}
                       error={!!errors.phone}
                       helperText={errors.phone}
-                      placeholder="+1 (555) 123-4567"
+                      placeholder="+254 712 345 678"
                     />
                   </Grid>
                   <Grid item xs={12} sm={6}>
@@ -412,7 +531,7 @@ const CreatePatientPage = () => {
                       onChange={(e) => handleInputChange('phone', e.target.value, 'emergency_contact')}
                       error={!!errors['emergency_contact.phone']}
                       helperText={errors['emergency_contact.phone']}
-                      placeholder="+1 (555) 123-4567"
+                      placeholder="+254 712 345 678"
                     />
                   </Grid>
                 </Grid>
@@ -437,7 +556,7 @@ const CreatePatientPage = () => {
                       onChange={(e) => handleInputChange('provider', e.target.value, 'insurance')}
                       error={!!errors['insurance.provider']}
                       helperText={errors['insurance.provider']}
-                      placeholder="e.g., Blue Cross, Aetna, United Healthcare"
+                      placeholder="e.g., SHIF, AAR, Jubilee"
                     />
                   </Grid>
                   <Grid item xs={12} sm={4}>
@@ -474,7 +593,6 @@ const CreatePatientPage = () => {
                   recordId={null}
                   patientId={null}
                   onUploadSuccess={(files) => {
-                    console.log('Patient documents uploaded:', files);
                     // Handle successful upload
                   }}
                   onUploadError={(error) => {
@@ -513,8 +631,179 @@ const CreatePatientPage = () => {
           </Grid>
         </Grid>
       </form>
+
+      {/* Encounter Creation Dialog */}
+      <Dialog 
+        open={showEncounterDialog} 
+        onClose={() => {}}
+        maxWidth="sm"
+        fullWidth
+        disableEscapeKeyDown
+      >
+        <DialogTitle>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <CheckCircleIcon color="success" />
+            <Typography variant="h6">Patient Created Successfully!</Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Alert severity="info" sx={{ mb: 3 }}>
+            Would you like to register this patient's visit and add them to the queue?
+          </Alert>
+          
+          {createdPatient && (
+            <Box sx={{ mb: 3, p: 2, bgcolor: 'background.default', borderRadius: 1 }}>
+              <Typography variant="subtitle2" color="text.secondary">Patient Details</Typography>
+              <Typography variant="body1" fontWeight={600}>
+                {createdPatient.first_name} {createdPatient.last_name}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                UHID: {createdPatient.uhid} | ID: {createdPatient.patient_id}
+              </Typography>
+            </Box>
+          )}
+
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Encounter Type</InputLabel>
+                <Select
+                  value={encounterData.encounterType}
+                  onChange={(e) => setEncounterData({ ...encounterData, encounterType: e.target.value })}
+                  label="Encounter Type"
+                >
+                  <MenuItem value="outpatient">Outpatient</MenuItem>
+                  <MenuItem value="emergency">Emergency</MenuItem>
+                  <MenuItem value="inpatient">Inpatient</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Clinic/Department</InputLabel>
+                <Select
+                  value={encounterData.clinicId}
+                  onChange={(e) => setEncounterData({ ...encounterData, clinicId: e.target.value })}
+                  label="Clinic/Department"
+                >
+                  <MenuItem value="">
+                    <em>None</em>
+                  </MenuItem>
+                  {clinics.map((clinic) => (
+                    <MenuItem key={clinic.id} value={clinic.id}>
+                      {clinic.clinic_name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Assigned Doctor</InputLabel>
+                <Select
+                  value={encounterData.doctorId}
+                  onChange={(e) => setEncounterData({ ...encounterData, doctorId: e.target.value })}
+                  label="Assigned Doctor"
+                >
+                  <MenuItem value="">
+                    <em>None</em>
+                  </MenuItem>
+                  {doctors.map((doctor) => (
+                    <MenuItem key={doctor.id} value={doctor.id}>
+                      Dr. {doctor.first_name} {doctor.last_name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Chief Complaint"
+                value={encounterData.chiefComplaint}
+                onChange={(e) => setEncounterData({ ...encounterData, chiefComplaint: e.target.value })}
+                placeholder="e.g., Fever, Headache, Follow-up"
+                multiline
+                rows={2}
+              />
+            </Grid>
+
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Triage Level</InputLabel>
+                <Select
+                  value={encounterData.triageLevel}
+                  onChange={(e) => setEncounterData({ ...encounterData, triageLevel: e.target.value })}
+                  label="Triage Level"
+                >
+                  <MenuItem value="routine">Routine</MenuItem>
+                  <MenuItem value="urgent">Urgent</MenuItem>
+                  <MenuItem value="emergency">Emergency</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Payment Type</InputLabel>
+                <Select
+                  value={encounterData.paymentType}
+                  onChange={(e) => setEncounterData({ ...encounterData, paymentType: e.target.value })}
+                  label="Payment Type"
+                >
+                  <MenuItem value="self-pay">Self Pay</MenuItem>
+                  <MenuItem value="insurance">Insurance</MenuItem>
+                  <MenuItem value="government">Government</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+
+            <Grid item xs={12}>
+              <FormControl fullWidth>
+                <InputLabel>Waiting Location</InputLabel>
+                <Select
+                  value={encounterData.waitingLocation}
+                  onChange={(e) => setEncounterData({ ...encounterData, waitingLocation: e.target.value })}
+                  label="Waiting Location"
+                >
+                  <MenuItem value="reception">Reception</MenuItem>
+                  <MenuItem value="waiting-room">Waiting Room</MenuItem>
+                  <MenuItem value="triage">Triage</MenuItem>
+                  <MenuItem value="emergency">Emergency Area</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+          </Grid>
+
+          {submitError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {submitError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2, gap: 1 }}>
+          <Button
+            onClick={handleSkipEncounter}
+            disabled={creatingEncounter}
+            variant="outlined"
+          >
+            Skip for Now
+          </Button>
+          <Button
+            onClick={handleCreateEncounter}
+            disabled={creatingEncounter}
+            variant="contained"
+            startIcon={creatingEncounter ? null : <CheckCircleIcon />}
+          >
+            {creatingEncounter ? 'Adding to Queue...' : 'Register Visit & Add to Queue'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
 
-export default CreatePatientPage; 
+export default CreatePatientPage;

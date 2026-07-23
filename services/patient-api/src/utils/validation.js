@@ -2,29 +2,29 @@ const Joi = require('joi');
 
 // Patient validation schemas
 const patientCreateSchema = Joi.object({
-  patient_id: Joi.string().optional().max(50),
+  patient_id: Joi.string().optional().allow(null).max(50),
   first_name: Joi.string().required().min(1).max(100).trim(),
   last_name: Joi.string().required().min(1).max(100).trim(),
   date_of_birth: Joi.date().required().max('now'),
-  gender: Joi.string().valid('M', 'F', 'Other', '').optional(),
-  phone: Joi.string().optional().allow('').max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/),
-  email: Joi.string().email().optional().allow('').max(100),
+  gender: Joi.string().valid('M', 'F', 'Other', '').optional().allow(null),
+  phone: Joi.string().optional().allow('', null).max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/),
+  email: Joi.string().email().optional().allow('', null).max(100),
   address: Joi.object({
-    street: Joi.string().optional().allow('').max(200),
-    city: Joi.string().optional().allow('').max(100),
-    state: Joi.string().optional().allow('').max(50),
-    zip_code: Joi.string().optional().allow('').max(20),
-    country: Joi.string().optional().allow('').max(50)
+    street: Joi.string().optional().allow('', null).max(200),
+    city: Joi.string().optional().allow('', null).max(100),
+    state: Joi.string().optional().allow('', null).max(50),
+    zip_code: Joi.string().optional().allow('', null).max(20),
+    country: Joi.string().optional().allow('', null).max(50)
   }).optional(),
   emergency_contact: Joi.object({
-    name: Joi.string().optional().allow('').max(100),
-    relationship: Joi.string().optional().allow('').max(50),
-    phone: Joi.string().optional().allow('').max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/)
+    name: Joi.string().optional().allow('', null).max(100),
+    relationship: Joi.string().optional().allow('', null).max(50),
+    phone: Joi.string().optional().allow('', null).max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/)
   }).optional(),
   insurance: Joi.object({
-    provider: Joi.string().optional().allow('').max(100),
-    policy_number: Joi.string().optional().allow('').max(50),
-    group_number: Joi.string().optional().allow('').max(50)
+    provider: Joi.string().optional().allow('', null).max(100),
+    policy_number: Joi.string().optional().allow('', null).max(50),
+    group_number: Joi.string().optional().allow('', null).max(50)
   }).optional()
 });
 
@@ -32,25 +32,25 @@ const patientUpdateSchema = Joi.object({
   first_name: Joi.string().optional().min(1).max(100).trim(),
   last_name: Joi.string().optional().min(1).max(100).trim(),
   date_of_birth: Joi.date().optional().max('now'),
-  gender: Joi.string().valid('M', 'F', 'Other', '').optional(),
-  phone: Joi.string().optional().allow('').max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/),
-  email: Joi.string().email().optional().allow('').max(100),
+  gender: Joi.string().valid('M', 'F', 'Other', '').optional().allow(null),
+  phone: Joi.string().optional().allow('', null).max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/),
+  email: Joi.string().email().optional().allow('', null).max(100),
   address: Joi.object({
-    street: Joi.string().optional().allow('').max(200),
-    city: Joi.string().optional().allow('').max(100),
-    state: Joi.string().optional().allow('').max(50),
-    zip_code: Joi.string().optional().allow('').max(20),
-    country: Joi.string().optional().allow('').max(50)
+    street: Joi.string().optional().allow('', null).max(200),
+    city: Joi.string().optional().allow('', null).max(100),
+    state: Joi.string().optional().allow('', null).max(50),
+    zip_code: Joi.string().optional().allow('', null).max(20),
+    country: Joi.string().optional().allow('', null).max(50)
   }).optional(),
   emergency_contact: Joi.object({
-    name: Joi.string().optional().allow('').max(100),
-    relationship: Joi.string().optional().allow('').max(50),
-    phone: Joi.string().optional().allow('').max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/)
+    name: Joi.string().optional().allow('', null).max(100),
+    relationship: Joi.string().optional().allow('', null).max(50),
+    phone: Joi.string().optional().allow('', null).max(20).pattern(/^[\+]?[\d\s\-\(\)]*$/)
   }).optional(),
   insurance: Joi.object({
-    provider: Joi.string().optional().allow('').max(100),
-    policy_number: Joi.string().optional().allow('').max(50),
-    group_number: Joi.string().optional().allow('').max(50)
+    provider: Joi.string().optional().allow('', null).max(100),
+    policy_number: Joi.string().optional().allow('', null).max(50),
+    group_number: Joi.string().optional().allow('', null).max(50)
   }).optional()
 });
 
@@ -132,7 +132,6 @@ const uuidSchema = Joi.string().uuid().required();
 // Validation middleware
 const validate = (schema) => {
   return (req, res, next) => {
-    const { logger } = require('./logger');
     
     // Helper function to convert empty strings to null for optional fields
     const convertEmptyStringsToNull = (obj) => {
@@ -156,15 +155,6 @@ const validate = (schema) => {
     // Convert empty strings to null before validation
     const processedBody = convertEmptyStringsToNull(req.body);
     
-    // Debug: Log the incoming request data
-    logger.info('=== VALIDATION DEBUG ===', {
-      originalBody: req.body,
-      processedBody: processedBody,
-      requestHeaders: req.headers,
-      url: req.url,
-      method: req.method
-    });
-    
     const { error, value } = schema.validate(processedBody, { 
       abortEarly: false,
       stripUnknown: true 
@@ -173,15 +163,8 @@ const validate = (schema) => {
     if (error) {
       const errorDetails = error.details.map(detail => ({
         field: detail.path.join('.'),
-        message: detail.message,
-        value: detail.context?.value
+        message: detail.message
       }));
-
-      logger.error('=== VALIDATION ERROR ===', {
-        errorDetails,
-        originalBody: req.body,
-        processedBody: processedBody
-      });
 
       return res.status(400).json({
         error: 'Validation failed',
@@ -204,8 +187,7 @@ const validateQuery = (schema) => {
     if (error) {
       const errorDetails = error.details.map(detail => ({
         field: detail.path.join('.'),
-        message: detail.message,
-        value: detail.context?.value
+        message: detail.message
       }));
 
       return res.status(400).json({
@@ -229,8 +211,7 @@ const validateParams = (schema) => {
     if (error) {
       const errorDetails = error.details.map(detail => ({
         field: detail.path.join('.'),
-        message: detail.message,
-        value: detail.context?.value
+        message: detail.message
       }));
 
       return res.status(400).json({
@@ -259,4 +240,4 @@ module.exports = {
   validate,
   validateQuery,
   validateParams
-}; 
+};

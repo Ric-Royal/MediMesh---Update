@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -32,7 +32,7 @@ import FilePreview from '../components/common/FilePreview';
 const EditRecordPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { hasRole, user } = useAuth();
+  const { hasRole } = useAuth();
   
   const [formData, setFormData] = useState({
     patient_id: '',
@@ -80,11 +80,7 @@ const EditRecordPage = () => {
   // Check permissions
   const hasEditPermission = hasRole('doctor') || hasRole('nurse') || hasRole('admin');
 
-  useEffect(() => {
-    fetchRecordData();
-  }, [id]);
-
-  const fetchRecordData = async () => {
+  const fetchRecordData = useCallback(async () => {
     try {
       setLoading(true);
       const recordResponse = await apiService.medicalRecords.getById(id);
@@ -130,7 +126,11 @@ const EditRecordPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    fetchRecordData();
+  }, [fetchRecordData]);
 
   const handleInputChange = (field, value, section = null) => {
     if (section) {
@@ -637,7 +637,7 @@ const EditRecordPage = () => {
               <CardContent>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                   <Typography variant="h6" color="primary">
-                    📎 File Attachments
+                    File Attachments
                   </Typography>
                   <Chip label="Upload Medical Documents" size="small" color="primary" variant="outlined" />
                 </Box>
@@ -647,7 +647,6 @@ const EditRecordPage = () => {
                   recordId={id}
                   patientId={formData.patient_id}
                   onFileDeleted={(fileId) => {
-                    console.log('File deleted:', fileId);
                     // Handle file deletion
                   }}
                 />
@@ -659,7 +658,6 @@ const EditRecordPage = () => {
                     recordId={id}
                     patientId={formData.patient_id}
                     onUploadSuccess={(files) => {
-                      console.log('Files uploaded:', files);
                       // Handle successful upload - could refresh file list
                     }}
                     onUploadError={(error) => {
@@ -668,7 +666,7 @@ const EditRecordPage = () => {
                     }}
                     maxFiles={10}
                     label="Upload Additional Files"
-                    description="📁 Drag and drop medical images, lab results, reports, and other related documents here"
+                    description="Drag and drop medical images, lab results, reports, and other related documents here"
                   />
                 </Box>
               </CardContent>
@@ -703,4 +701,4 @@ const EditRecordPage = () => {
   );
 };
 
-export default EditRecordPage; 
+export default EditRecordPage;
