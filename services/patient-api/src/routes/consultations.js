@@ -1,24 +1,83 @@
 const express = require('express');
+const Joi = require('joi');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
+const { validate } = require('../utils/validation');
+const {
+  requireConsultationAccess,
+  requireEncounterAccess,
+  requireProviderIdentity
+} = require('../security/accessControl');
 
 const CONSULTATION_READ_ROLES = ['admin', 'doctor', 'nurse'];
 const CONSULTATION_WRITE_ROLES = ['admin', 'doctor'];
 const MedicalRecord = require('../models/MedicalRecord');
+const orderId = Joi.string().uuid().required();
+const catalogId = Joi.number().integer().positive().required();
+const consultationSchema = Joi.object({
+  encounterId: orderId,
+  patientId: orderId,
+  doctorId: Joi.string().uuid(),
+  vitals: Joi.object().max(20),
+  chiefComplaint: Joi.string().allow('').max(4000),
+  historyPresentIllness: Joi.string().allow('').max(12000),
+  pastMedicalHistory: Joi.string().allow('').max(12000),
+  familyHistory: Joi.string().allow('').max(8000),
+  socialHistory: Joi.string().allow('').max(8000),
+  allergies: Joi.string().allow('').max(8000),
+  currentMedications: Joi.string().allow('').max(12000),
+  examination: Joi.object().max(20),
+  provisionalDiagnosis: Joi.string().allow('').max(8000),
+  differentialDiagnosis: Joi.string().allow('').max(8000),
+  finalDiagnosis: Joi.string().allow('').max(8000),
+  treatmentPlan: Joi.string().allow('').max(12000),
+  followUpInstructions: Joi.string().allow('').max(8000),
+  labOrders: Joi.array().max(25).items(Joi.object({
+    testId: catalogId,
+    testName: Joi.string().max(250),
+    priority: Joi.string().valid('routine', 'urgent', 'stat', 'emergency'),
+    clinicalNotes: Joi.string().allow('').max(4000),
+    price: Joi.any().strip()
+  }).unknown(false)).default([]),
+  radiologyOrders: Joi.array().max(25).items(Joi.object({
+    studyId: Joi.number().integer().positive(),
+    testId: Joi.number().integer().positive(),
+    testName: Joi.string().max(250),
+    bodyPart: Joi.string().allow('').max(250),
+    reason: Joi.string().allow('').max(4000),
+    priority: Joi.string().valid('routine', 'urgent', 'stat', 'emergency'),
+    price: Joi.any().strip()
+  }).or('studyId', 'testId').unknown(false)).default([]),
+  prescriptions: Joi.array().max(50).items(Joi.object({
+    drugId: catalogId,
+    drugName: Joi.string().max(250),
+    dosage: Joi.string().max(250).required(),
+    frequency: Joi.string().max(100).required(),
+    duration: Joi.number().integer().min(1).max(365).required(),
+    quantity: Joi.number().integer().min(1).max(10000).required(),
+    instructions: Joi.string().allow('').max(2000),
+    unitPrice: Joi.any().strip(),
+    totalPrice: Joi.any().strip()
+  }).unknown(false)).default([])
+}).unknown(false);
 
 // =====================================================
 // CREATE CONSULTATION WITH MULTIPLE ORDERS
 // =====================================================
-router.post('/', authorize(CONSULTATION_WRITE_ROLES), async (req, res) => {
+router.post('/',
+  authorize(CONSULTATION_WRITE_ROLES),
+  validate(consultationSchema),
+  requireProviderIdentity('doctor'),
+  requireEncounterAccess({ encounterId: req => req.validatedData.encounterId }),
+  async (req, res) => {
   const db = await getDB().connect();
   
   try {
     const {
       encounterId,
       patientId,
-      doctorId,
       // Vitals
       vitals,
       // Clinical Information
@@ -41,16 +100,15 @@ router.post('/', authorize(CONSULTATION_WRITE_ROLES), async (req, res) => {
       labOrders = [],
       radiologyOrders = [],
       prescriptions = []
-    } = req.body;
+    } = req.validatedData;
 
-    // Fall back to authenticated user's id when doctorId isn't supplied
-    const resolvedDoctorId = doctorId || req.user?.id || req.user?.sub;
+    const resolvedDoctorId = req.user.staffId || req.user.id;
 
     // Validate required fields
     if (!encounterId || !patientId || !resolvedDoctorId) {
       return res.status(400).json({
         success: false,
-        error: 'Missing required fields: encounterId, patientId, doctorId'
+        error: 'Missing required patient or encounter context'
       });
     }
 
@@ -62,6 +120,18 @@ router.post('/', authorize(CONSULTATION_WRITE_ROLES), async (req, res) => {
     await db.query('BEGIN');
 
     try {
+      const encounterCheck = await db.query(`
+        SELECT id
+        FROM encounters
+        WHERE id = $1 AND patient_id = $2
+        FOR UPDATE
+      `, [encounterId, patientId]);
+      if (!encounterCheck.rows.length) {
+        const error = new Error('Encounter does not belong to the supplied patient');
+        error.status = 409;
+        throw error;
+      }
+
       // 1. Create consultation record
       const consultationResult = await db.query(`
         INSERT INTO consultation_records (
@@ -166,12 +236,12 @@ router.post('/', authorize(CONSULTATION_WRITE_ROLES), async (req, res) => {
           ].filter(Boolean).join('\n') || null,
           vital_signs: vitalsJson,
           follow_up_date: null,
-        }, req.user?.id || 'system');
+        }, req.user.id, db);
 
         logger.info(`Auto-created medical record for consultation ${consultationId}`);
       } catch (mrError) {
-        // Non-fatal: log but don't fail the consultation
-        logger.error('Failed to auto-create medical record (non-fatal):', mrError);
+        logger.error('Failed to create the consultation medical record:', mrError);
+        throw mrError;
       }
 
       // 2. Create Lab Orders
@@ -193,12 +263,13 @@ router.post('/', authorize(CONSULTATION_WRITE_ROLES), async (req, res) => {
 
         // Create lab order items (look up real prices from catalog)
         for (const test of labOrders) {
-          let testPrice = test.price || 0;
-          if (!test.price) {
-            const priceResult = await db.query('SELECT price FROM lab_tests WHERE id = $1', [test.testId]);
-            if (priceResult.rows.length > 0 && priceResult.rows[0].price) {
-              testPrice = parseFloat(priceResult.rows[0].price);
-            }
+          const priceResult = await db.query(
+            'SELECT price FROM lab_tests WHERE id = $1 AND is_active = TRUE',
+            [test.testId]
+          );
+          const testPrice = Number(priceResult.rows[0]?.price);
+          if (!priceResult.rows.length || !Number.isFinite(testPrice) || testPrice < 0) {
+            throw new Error('A selected laboratory test is unavailable or has no valid catalog price');
           }
           await db.query(`
             INSERT INTO lab_order_items (
@@ -250,12 +321,13 @@ router.post('/', authorize(CONSULTATION_WRITE_ROLES), async (req, res) => {
 
         // Create radiology order items (look up real prices from catalog)
         for (const study of radiologyOrders) {
-          let studyPrice = study.price || 0;
-          if (!study.price) {
-            const priceResult = await db.query('SELECT price FROM radiology_tests WHERE id = $1', [study.studyId || study.testId]);
-            if (priceResult.rows.length > 0 && priceResult.rows[0].price) {
-              studyPrice = parseFloat(priceResult.rows[0].price);
-            }
+          const priceResult = await db.query(
+            'SELECT price FROM radiology_tests WHERE id = $1 AND is_active = TRUE',
+            [study.studyId || study.testId]
+          );
+          const studyPrice = Number(priceResult.rows[0]?.price);
+          if (!priceResult.rows.length || !Number.isFinite(studyPrice) || studyPrice < 0) {
+            throw new Error('A selected imaging study is unavailable or has no valid catalog price');
           }
           await db.query(`
             INSERT INTO radiology_order_items (
@@ -307,17 +379,15 @@ router.post('/', authorize(CONSULTATION_WRITE_ROLES), async (req, res) => {
 
         // Create prescription items (look up real prices from drug catalog)
         for (const medication of prescriptions) {
-          let unitPrice = medication.unitPrice || 0;
-          let totalPrice = medication.totalPrice || 0;
-          if (!medication.unitPrice) {
-            const priceResult = await db.query('SELECT selling_price FROM drugs WHERE id = $1', [medication.drugId]);
-            if (priceResult.rows.length > 0 && priceResult.rows[0].selling_price) {
-              unitPrice = parseFloat(priceResult.rows[0].selling_price);
-              totalPrice = unitPrice * (medication.quantity || 1);
-            }
-          } else if (!medication.totalPrice) {
-            totalPrice = unitPrice * (medication.quantity || 1);
+          const priceResult = await db.query(
+            'SELECT selling_price FROM drugs WHERE id = $1 AND is_active = TRUE',
+            [medication.drugId]
+          );
+          const unitPrice = Number(priceResult.rows[0]?.selling_price);
+          if (!priceResult.rows.length || !Number.isFinite(unitPrice) || unitPrice < 0) {
+            throw new Error('A selected medicine is unavailable or has no valid catalog price');
           }
+          const totalPrice = Math.round(unitPrice * medication.quantity * 100) / 100;
           await db.query(`
             INSERT INTO prescription_items (
               prescription_id, drug_id, dosage, frequency,
@@ -459,9 +529,9 @@ router.post('/', authorize(CONSULTATION_WRITE_ROLES), async (req, res) => {
 
   } catch (error) {
     logger.error('Error creating consultation:', error);
-    res.status(500).json({
+    res.status(error.status || 500).json({
       success: false,
-      error: error.message
+      error: error.status ? error.message : 'Unable to complete consultation'
     });
   } finally {
     db.release();
@@ -471,7 +541,7 @@ router.post('/', authorize(CONSULTATION_WRITE_ROLES), async (req, res) => {
 // =====================================================
 // GET CONSULTATION BY ID
 // =====================================================
-router.get('/:id', authorize(CONSULTATION_READ_ROLES), async (req, res) => {
+router.get('/:id', authorize(CONSULTATION_READ_ROLES), requireConsultationAccess(), async (req, res) => {
   try {
     const { id } = req.params;
     const db = getDB();
@@ -513,7 +583,11 @@ router.get('/:id', authorize(CONSULTATION_READ_ROLES), async (req, res) => {
 // =====================================================
 // GET CONSULTATIONS BY ENCOUNTER
 // =====================================================
-router.get('/encounter/:encounterId', authorize(CONSULTATION_READ_ROLES), async (req, res) => {
+router.get(
+  '/encounter/:encounterId',
+  authorize(CONSULTATION_READ_ROLES),
+  requireEncounterAccess(),
+  async (req, res) => {
   try {
     const { encounterId } = req.params;
     const db = getDB();
@@ -546,7 +620,11 @@ router.get('/encounter/:encounterId', authorize(CONSULTATION_READ_ROLES), async 
 // =====================================================
 // GET PENDING ORDERS FOR ENCOUNTER
 // =====================================================
-router.get('/encounter/:encounterId/pending-orders', authorize(CONSULTATION_READ_ROLES), async (req, res) => {
+router.get(
+  '/encounter/:encounterId/pending-orders',
+  authorize(CONSULTATION_READ_ROLES),
+  requireEncounterAccess(),
+  async (req, res) => {
   try {
     const { encounterId } = req.params;
     const db = getDB();

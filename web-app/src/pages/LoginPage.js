@@ -6,7 +6,6 @@ import {
   Button,
   Container,
   Stack,
-  Divider,
   TextField,
   Alert
 } from '@mui/material';
@@ -258,17 +257,10 @@ const LoginPage = () => {
                   Use a different account
                 </Button>}
 
-                {process.env.REACT_APP_SHOW_DEMO_LOGIN === 'true' && !mfaToken && (
-                  <>
-                    <Divider>
-                      <Typography variant="body2" color="text.secondary">
-                        Development Mode
-                      </Typography>
-                    </Divider>
-                    <Typography variant="caption" color="text.secondary" align="center">
-                      Demo access: <strong>admin</strong> / <strong>admin123</strong>
-                    </Typography>
-                  </>
+                {!mfaToken && (
+                  <Typography variant="caption" color="text.secondary" align="center">
+                    Use the account issued by your facility administrator.
+                  </Typography>
                 )}
               </Stack>
             </form>

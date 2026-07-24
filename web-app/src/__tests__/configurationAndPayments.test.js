@@ -26,13 +26,11 @@ const renderWithNotifications = component => render(
 );
 
 beforeEach(() => {
-  localStorage.setItem('dev_token', 'test-token');
   jest.clearAllMocks();
 });
 
 afterEach(() => {
   delete global.fetch;
-  localStorage.clear();
 });
 
 test('administrator adds a medication from operational settings', async () => {

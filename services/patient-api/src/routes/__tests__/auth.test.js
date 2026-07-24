@@ -14,7 +14,14 @@ jest.mock('../../models/UserAccount', () => ({
   enableMfa: jest.fn(),
   disableMfa: jest.fn(),
   verifyPassword: jest.fn(),
+  consumeMfaCounter: jest.fn().mockResolvedValue(true),
+  revokeSessions: jest.fn(),
   toSafeJSON: jest.fn(row => ({ ...row }))
+}));
+jest.mock('../../security/loginThrottle', () => ({
+  checkLoginAllowed: (req, res, next) => next(),
+  clearLoginFailures: jest.fn(),
+  recordLoginFailure: jest.fn()
 }));
 jest.mock('../../utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }
@@ -28,7 +35,7 @@ const authRouter = require('../auth');
 const { encryptSecret, generateSecret, generateTotp } = require('../../utils/totp');
 
 describe('POST /api/auth/change-password', () => {
-  const secret = 'test-password-lifecycle-secret';
+  const secret = 'test-password-lifecycle-secret-32-bytes';
   const originalSecret = process.env.JWT_SECRET;
   const app = express();
   app.use(express.json());
@@ -87,9 +94,8 @@ describe('POST /api/auth/change-password', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.user.mustChangePassword).toBe(false);
-    expect(jwt.verify(response.body.access_token, secret, {
-      algorithms: ['HS256'], audience: 'medimesh-client', issuer: 'medimesh'
-    }).token_version).toBe(7);
+    expect(response.body.access_token).toBeUndefined();
+    expect(response.headers['set-cookie'].join(';')).toContain('medimesh_session=');
   });
 
   test('requires and verifies a second factor for an enrolled account', async () => {
@@ -112,10 +118,8 @@ describe('POST /api/auth/change-password', () => {
     const secondStep = await request(app).post('/api/auth/mfa/verify')
       .send({ mfaToken: firstStep.body.mfa_token, code: generateTotp(mfaSecret) });
     expect(secondStep.status).toBe(200);
-    const claims = jwt.verify(secondStep.body.access_token, secret, {
-      algorithms: ['HS256'], audience: 'medimesh-client', issuer: 'medimesh'
-    });
-    expect(claims.mfa).toBe(true);
+    expect(secondStep.body.access_token).toBeUndefined();
+    expect(secondStep.headers['set-cookie'].join(';')).toContain('medimesh_session=');
     expect(UserAccount.markLogin).toHaveBeenCalledWith(account.id);
   });
 });

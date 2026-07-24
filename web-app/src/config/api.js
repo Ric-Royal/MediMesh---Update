@@ -95,10 +95,14 @@ export const API_CONFIG = {
   
   // Helper function to get auth headers
   getAuthHeaders: () => {
-    const token = localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token');
+    const csrfCookie = document.cookie
+      .split(';')
+      .map(value => value.trim())
+      .find(value => value.startsWith('medimesh_csrf='));
+    const csrfToken = csrfCookie?.slice('medimesh_csrf='.length);
     return {
-      'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
+      ...(csrfToken ? { 'X-CSRF-Token': decodeURIComponent(csrfToken) } : {})
     };
   },
 };

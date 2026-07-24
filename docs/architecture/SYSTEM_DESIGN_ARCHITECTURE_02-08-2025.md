@@ -1081,60 +1081,11 @@ const initKeycloak = async () => {
 };
 ```
 
-#### **Development Mode: Simplified Authentication**
-```javascript
-// Development authentication for testing
-const developmentAuth = {
-  users: [
-    {
-      username: 'admin',
-      password: 'admin123',
-      role: 'admin',
-      name: 'System Administrator',
-      email: 'admin@medimesh.local'
-    },
-    {
-      username: 'doctor',
-      password: 'doctor123',
-      role: 'doctor',
-      name: 'Dr. John Smith',
-      email: 'doctor@medimesh.local'
-    },
-    {
-      username: 'nurse',
-      password: 'nurse123',
-      role: 'nurse',
-      name: 'Nurse Jane Doe',
-      email: 'nurse@medimesh.local'
-    }
-  ]
-};
+#### **Local Authentication**
 
-const devLogin = async (username, password) => {
-  const user = developmentAuth.users.find(
-    u => u.username === username && u.password === password
-  );
-  
-  if (user) {
-    const token = jwt.sign(
-      { 
-        sub: user.username,
-        role: user.role,
-        name: user.name,
-        email: user.email
-      },
-      'dev-secret',
-      { expiresIn: '8h' }
-    );
-    
-    return { success: true, token, user };
-  }
-  
-  return { success: false, message: 'Invalid credentials' };
-};
-```
+Local deployments bootstrap only the explicitly configured administrator. Its password is generated into an ignored runtime-secret file; shared role accounts and source-controlled passwords are not supported.
 
-### **HIPAA Compliance & Security Features**
+### **Kenyan Health Data Protection Controls**
 
 #### **Audit Logging**
 ```javascript
@@ -1547,7 +1498,7 @@ healthchecks:
     retries: 5
     
   redis:
-    test: ["CMD", "redis-cli", "-a", "redis_password", "ping"]
+    test: ["CMD-SHELL", "redis-cli -a \"$$(cat /run/secrets/redis_password)\" ping"]
     interval: 30s
     timeout: 10s
     retries: 5

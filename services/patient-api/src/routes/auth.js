@@ -4,19 +4,38 @@ const UserAccount = require('../models/UserAccount');
 const { authenticateToken } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const { getPasswordPolicyError } = require('../utils/passwordPolicy');
+const { clearCsrfCookie, setCsrfCookie } = require('../security/csrf');
 const {
-  buildOtpAuthUri, decryptSecret, encryptSecret, generateSecret, verifyTotp
+  checkLoginAllowed,
+  clearLoginFailures,
+  recordLoginFailure
+} = require('../security/loginThrottle');
+const {
+  buildOtpAuthUri, decryptSecret, encryptSecret, findTotpCounter, generateSecret
 } = require('../utils/totp');
 
 const router = express.Router();
 
 const getJwtSecret = () => {
-  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  if (process.env.NODE_ENV === 'development') return 'medimesh-development-only-secret';
-  throw new Error('JWT_SECRET is required outside development');
+  const secret = String(process.env.JWT_SECRET || '');
+  if (Buffer.byteLength(secret) < 32) {
+    throw new Error('JWT_SECRET must contain at least 32 bytes');
+  }
+  return secret;
 };
 
-const getSessionTtlSeconds = () => Math.max(900, Number(process.env.SESSION_TTL_SECONDS) || 28800);
+const SESSION_COOKIE = 'medimesh_session';
+const getSessionTtlSeconds = () => Math.min(
+  1800,
+  Math.max(300, Number(process.env.SESSION_TTL_SECONDS) || 900)
+);
+const sessionCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict',
+  path: '/',
+  maxAge: getSessionTtlSeconds() * 1000
+});
 
 const publicUser = (user) => ({
   id: user.id,
@@ -54,6 +73,28 @@ const createSession = (user, { mfaAuthenticated = false } = {}) => {
   };
 };
 
+const establishSession = (res, user, options = {}) => {
+  const session = createSession(user, options);
+  res.cookie(SESSION_COOKIE, session.access_token, sessionCookieOptions());
+  const csrfToken = setCsrfCookie(res);
+  return {
+    token_type: 'Cookie',
+    expires_in: session.expires_in,
+    csrf_token: csrfToken,
+    user: session.user
+  };
+};
+
+const clearSession = res => {
+  res.clearCookie(SESSION_COOKIE, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    path: '/'
+  });
+  clearCsrfCookie(res);
+};
+
 const createMfaChallenge = user => jwt.sign({
   sub: user.id,
   preferred_username: user.username,
@@ -63,19 +104,28 @@ const createMfaChallenge = user => jwt.sign({
   aud: 'medimesh-mfa'
 }, getJwtSecret(), { expiresIn: 300, algorithm: 'HS256' });
 
-router.post('/login', async (req, res) => {
+router.post('/login', checkLoginAllowed, async (req, res) => {
   try {
     const { username, password } = req.body || {};
-    if (!username || !password) {
+    if (
+      typeof username !== 'string' ||
+      username.trim().length < 1 ||
+      username.trim().length > 80 ||
+      typeof password !== 'string' ||
+      password.length < 1 ||
+      Buffer.byteLength(password, 'utf8') > 72
+    ) {
       return res.status(400).json({ error: 'Username and password required' });
     }
 
     const user = await UserAccount.authenticate(username, password);
     if (!user) {
+      await recordLoginFailure(username, req.ip);
       logger.warn('Login failed', { username: String(username).slice(0, 80), ip: req.ip });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    await clearLoginFailures(username, req.ip);
     if (user.mfa_enabled) {
       logger.info('Password accepted; MFA challenge issued', { userId: user.id, ip: req.ip });
       return res.status(202).json({
@@ -87,7 +137,7 @@ router.post('/login', async (req, res) => {
 
     if (UserAccount.markLogin) await UserAccount.markLogin(user.id);
     logger.info('Login successful', { username: user.username, userId: user.id, roles: user.roles, ip: req.ip });
-    res.json(createSession(user));
+    res.json(establishSession(res, user));
   } catch (error) {
     logger.error('Login error:', error);
     res.status(500).json({ error: 'Login failed' });
@@ -97,16 +147,29 @@ router.post('/login', async (req, res) => {
 router.post('/mfa/verify', async (req, res) => {
   try {
     const { mfaToken, code } = req.body || {};
+    if (
+      typeof mfaToken !== 'string' ||
+      mfaToken.length > 4096 ||
+      !/^\d{6}$/.test(String(code || ''))
+    ) {
+      return res.status(400).json({ error: 'A valid MFA challenge and six-digit code are required' });
+    }
     const challenge = jwt.verify(mfaToken, getJwtSecret(), {
       algorithms: ['HS256'], audience: 'medimesh-mfa', issuer: 'medimesh'
     });
     if (challenge.purpose !== 'mfa-login') return res.status(401).json({ error: 'Invalid MFA challenge' });
 
     const account = await UserAccount.getSecurityRecord(challenge.sub);
-    if (!account || !account.mfa_enabled || Number(account.token_version || 0) !== Number(challenge.token_version)) {
+    if (
+      !account ||
+      !account.is_active ||
+      !account.mfa_enabled ||
+      Number(account.token_version || 0) !== Number(challenge.token_version)
+    ) {
       return res.status(401).json({ error: 'MFA challenge is no longer valid' });
     }
-    if (!verifyTotp(decryptSecret(account.mfa_secret_encrypted), code)) {
+    const mfaCounter = findTotpCounter(decryptSecret(account.mfa_secret_encrypted), code);
+    if (mfaCounter === null || !await UserAccount.consumeMfaCounter(account.id, mfaCounter)) {
       logger.warn('MFA verification failed', { userId: challenge.sub, ip: req.ip });
       return res.status(401).json({ error: 'Invalid or expired authenticator code' });
     }
@@ -114,7 +177,7 @@ router.post('/mfa/verify', async (req, res) => {
     const user = UserAccount.toSafeJSON(account);
     await UserAccount.markLogin(user.id);
     logger.info('MFA login completed', { userId: user.id, ip: req.ip });
-    return res.json(createSession(user, { mfaAuthenticated: true }));
+    return res.json(establishSession(res, user, { mfaAuthenticated: true }));
   } catch (error) {
     const status = ['JsonWebTokenError', 'TokenExpiredError'].includes(error.name) ? 401 : 500;
     logger.warn('MFA login challenge rejected', { error: error.message, ip: req.ip });
@@ -145,12 +208,19 @@ router.post('/mfa/enable', authenticateToken, async (req, res) => {
   try {
     const account = await UserAccount.getSecurityRecord(req.user.id);
     if (!account?.mfa_pending_secret_encrypted) return res.status(409).json({ error: 'Start MFA setup first' });
-    if (!verifyTotp(decryptSecret(account.mfa_pending_secret_encrypted), req.body?.code)) {
+    const mfaCounter = findTotpCounter(
+      decryptSecret(account.mfa_pending_secret_encrypted),
+      req.body?.code
+    );
+    if (mfaCounter === null || !await UserAccount.consumeMfaCounter(account.id, mfaCounter)) {
       return res.status(400).json({ error: 'Invalid or expired authenticator code' });
     }
     const user = await UserAccount.enableMfa(account.id);
     logger.info('MFA enabled and prior sessions revoked', { userId: account.id, ip: req.ip });
-    return res.json({ message: 'MFA enabled successfully.', ...createSession(user, { mfaAuthenticated: true }) });
+    return res.json({
+      message: 'MFA enabled successfully.',
+      ...establishSession(res, user, { mfaAuthenticated: true })
+    });
   } catch (error) {
     logger.error('MFA enable failed', { error: error.message, userId: req.user?.id });
     return res.status(500).json({ error: 'MFA could not be enabled' });
@@ -160,14 +230,23 @@ router.post('/mfa/enable', authenticateToken, async (req, res) => {
 router.post('/mfa/disable', authenticateToken, async (req, res) => {
   try {
     const { password, code } = req.body || {};
+    if (
+      typeof password !== 'string' ||
+      Buffer.byteLength(password, 'utf8') > 72 ||
+      !/^\d{6}$/.test(String(code || ''))
+    ) {
+      return res.status(400).json({ error: 'Password and a six-digit authenticator code are required' });
+    }
     const account = await UserAccount.getSecurityRecord(req.user.id);
     if (!account?.mfa_enabled) return res.status(409).json({ error: 'MFA is not enabled' });
     const passwordValid = await UserAccount.verifyPassword(account.id, password);
-    const codeValid = verifyTotp(decryptSecret(account.mfa_secret_encrypted), code);
+    const mfaCounter = findTotpCounter(decryptSecret(account.mfa_secret_encrypted), code);
+    const codeValid = mfaCounter !== null &&
+      await UserAccount.consumeMfaCounter(account.id, mfaCounter);
     if (!passwordValid || !codeValid) return res.status(401).json({ error: 'Password or authenticator code is incorrect' });
     const user = await UserAccount.disableMfa(account.id);
     logger.warn('MFA disabled and prior sessions revoked', { userId: account.id, ip: req.ip });
-    return res.json({ message: 'MFA disabled.', ...createSession(user) });
+    return res.json({ message: 'MFA disabled.', ...establishSession(res, user) });
   } catch (error) {
     logger.error('MFA disable failed', { error: error.message, userId: req.user?.id });
     return res.status(500).json({ error: 'MFA could not be disabled' });
@@ -212,7 +291,7 @@ router.post('/change-password', authenticateToken, async (req, res) => {
     logger.info('Password changed and prior sessions revoked', { userId: req.user.id, ip: req.ip });
     return res.json({
       message: 'Password changed successfully. Other sessions have been signed out.',
-      ...createSession(result.user, { mfaAuthenticated: req.user.mfa === true })
+      ...establishSession(res, result.user, { mfaAuthenticated: req.user.mfa === true })
     });
   } catch (error) {
     logger.error('Password change failed', { error: error.message, userId: req.user?.id, ip: req.ip });
@@ -220,8 +299,10 @@ router.post('/change-password', authenticateToken, async (req, res) => {
   }
 });
 
-router.post('/logout', authenticateToken, (req, res) => {
-  logger.info('User logged out', { userId: req.user.id, ip: req.ip });
+router.post('/logout', authenticateToken, async (req, res) => {
+  await UserAccount.revokeSessions(req.user.id);
+  clearSession(res);
+  logger.info('User logged out and session revoked', { userId: req.user.id, ip: req.ip });
   res.json({ message: 'Logged out successfully' });
 });
 

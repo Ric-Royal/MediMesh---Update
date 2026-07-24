@@ -68,9 +68,7 @@ const FilePreview = ({
       setLoading(true);
       setError(null);
       const response = await fetch(`/api/files?recordId=${recordId}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token')}`
-        }
+        credentials: 'same-origin'
       });
       
       if (response.ok) {

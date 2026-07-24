@@ -16,6 +16,12 @@ const {
   uuidSchema
 } = require('../utils/validation');
 const { logger } = require('../utils/logger');
+const { csvRow } = require('../utils/csv');
+const {
+  requirePatientAccess,
+  requireProviderIdentity,
+  requireRecordAccess
+} = require('../security/accessControl');
 
 // GET /api/records - List all medical records with filtering
 router.get('/',
@@ -37,7 +43,7 @@ router.get('/',
         search
       };
 
-      const records = await MedicalRecord.findAll(actualLimit, offset, filters);
+      const records = await MedicalRecord.findAll(actualLimit, offset, filters, req.user);
       
       logger.info('Medical records retrieved', {
         userId: req.user.id,
@@ -75,7 +81,7 @@ router.get('/statistics',
   authorize(['doctor', 'admin']),
   async (req, res) => {
     try {
-      const stats = await MedicalRecord.getStatistics();
+      const stats = await MedicalRecord.getStatistics(req.user);
       
       logger.info('Medical record statistics retrieved', {
         userId: req.user.id
@@ -100,7 +106,7 @@ router.get('/types',
   authorize(['doctor', 'nurse', 'admin']),
   async (req, res) => {
     try {
-      const recordTypes = await MedicalRecord.getRecordTypes();
+      const recordTypes = await MedicalRecord.getRecordTypes(req.user);
       
       logger.info('Record types retrieved', {
         userId: req.user.id
@@ -121,9 +127,10 @@ router.get('/types',
 );
 
 // GET /api/records/:id - Get a specific medical record
-router.get('/:id',
+router.get('/:id([0-9a-fA-F-]{36})',
   authorize(['doctor', 'nurse', 'admin']),
   validateParams(Joi.object({ id: uuidSchema })),
+  requireRecordAccess(),
   async (req, res) => {
     try {
       const { id } = req.validatedParams;
@@ -160,9 +167,18 @@ router.get('/:id',
 router.post('/',
   authorize(['doctor', 'nurse', 'admin']),
   validate(medicalRecordCreateSchema),
+  requireProviderIdentity('doctor', 'nurse'),
+  requirePatientAccess({
+    patientId: req => req.validatedData.patient_id,
+    resourceType: 'medical_record',
+    resourceId: () => null
+  }),
   async (req, res) => {
     try {
-      const recordData = req.validatedData;
+      const recordData = {
+        ...req.validatedData,
+        provider_name: req.user.providerIdentifier || req.user.username
+      };
       
       // Verify patient exists
       const patient = await Patient.findById(recordData.patient_id);
@@ -198,10 +214,12 @@ router.post('/',
 );
 
 // PUT /api/records/:id - Update a medical record
-router.put('/:id',
+router.put('/:id([0-9a-fA-F-]{36})',
   authorize(['doctor', 'nurse', 'admin']),
   validateParams(Joi.object({ id: uuidSchema })),
   validate(medicalRecordUpdateSchema),
+  requireProviderIdentity('doctor', 'nurse'),
+  requireRecordAccess(),
   captureDataChanges('medical_record'),
   async (req, res) => {
     try {
@@ -241,12 +259,19 @@ router.put('/:id',
 );
 
 // DELETE /api/records/:id - Delete a medical record
-router.delete('/:id',
-  authorize(['doctor', 'admin']), // Only doctors and admins can delete records
+router.delete('/:id([0-9a-fA-F-]{36})',
+  authorize(['admin']),
   validateParams(Joi.object({ id: uuidSchema })),
+  requireRecordAccess({ breakGlass: false }),
   async (req, res) => {
     try {
       const { id } = req.validatedParams;
+      const reason = String(req.get('X-Archive-Reason') || '').trim();
+      if (reason.length < 20 || reason.length > 500) {
+        return res.status(400).json({
+          error: 'An archive reason between 20 and 500 characters is required'
+        });
+      }
       
       const record = await MedicalRecord.findById(id);
       
@@ -256,9 +281,9 @@ router.delete('/:id',
         });
       }
 
-      await record.delete();
+      await record.archive(req.user.id, reason);
 
-      logger.info('Medical record deleted successfully', {
+      logger.info('Medical record archived successfully', {
         userId: req.user.id,
         recordId: record.id,
         patientId: record.patient_id,
@@ -266,7 +291,7 @@ router.delete('/:id',
       });
 
       res.json({
-        message: 'Medical record deleted successfully'
+        message: 'Medical record archived successfully'
       });
 
     } catch (error) {
@@ -281,7 +306,7 @@ router.delete('/:id',
 
 // POST /api/records/bulk - Create multiple medical records
 router.post('/bulk',
-  authorize(['doctor', 'admin']),
+  authorize(['admin']),
   validate(Joi.object({
     records: Joi.array().items(medicalRecordCreateSchema).min(1).max(10).required()
   })),
@@ -304,7 +329,10 @@ router.post('/bulk',
             continue;
           }
 
-          const record = await MedicalRecord.create(records[i], req.user.id);
+          const record = await MedicalRecord.create({
+            ...records[i],
+            provider_name: req.user.providerIdentifier || req.user.username
+          }, req.user.id);
           createdRecords.push(record);
 
         } catch (error) {
@@ -364,7 +392,7 @@ router.get('/export',
         search
       };
 
-      const records = await MedicalRecord.findAll(actualLimit, offset, filters);
+      const records = await MedicalRecord.findAll(actualLimit, offset, filters, req.user);
       
       // Generate CSV
       const csvHeaders = [
@@ -385,8 +413,8 @@ router.get('/export',
       ]);
 
       const csvContent = [
-        csvHeaders.join(','),
-        ...csvRows.map(row => row.map(field => `"${field}"`).join(','))
+        csvRow(csvHeaders),
+        ...csvRows.map(csvRow)
       ].join('\n');
 
       logger.info('Medical records exported', {

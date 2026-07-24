@@ -1,13 +1,37 @@
 const express = require('express');
+const Joi = require('joi');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { completeDepartmentService } = require('../utils/workflow');
 const { authorize } = require('../middleware/auth');
+const { validate } = require('../utils/validation');
+const {
+  requireEncounterAccess,
+  patientScope,
+  requirePatientResourceAccess,
+  requireProviderIdentity
+} = require('../security/accessControl');
 
 const RADIOLOGY_READ_ROLES = ['admin', 'doctor', 'nurse', 'radiologist', 'radiographer'];
 const RADIOLOGY_ORDER_ROLES = ['admin', 'doctor'];
 const RADIOLOGY_PROCESS_ROLES = ['admin', 'radiologist', 'radiographer'];
+const radiologyOrderSchema = Joi.object({
+  patient_id: Joi.string().uuid().required(),
+  encounter_id: Joi.string().uuid().required(),
+  ordering_doctor_id: Joi.any().strip(),
+  clinic_id: Joi.any().strip(),
+  clinical_indication: Joi.string().max(4000).required(),
+  provisional_diagnosis: Joi.string().allow('').max(4000),
+  priority: Joi.string().valid('routine', 'urgent', 'stat', 'emergency').default('routine'),
+  tests: Joi.array().items(Joi.object({
+    test_id: Joi.number().integer().positive().required(),
+    body_part: Joi.string().allow('').max(100),
+    laterality: Joi.string().allow('').valid('', 'left', 'right', 'bilateral', 'not-applicable'),
+    views_requested: Joi.string().allow('').max(250),
+    price: Joi.any().strip()
+  }).unknown(false)).min(1).max(25).required()
+}).unknown(false);
 
 // ============================================
 // RADIOLOGY STUDY CATALOG (For Ordering)
@@ -107,6 +131,12 @@ router.get('/orders', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
     `;
     const params = [];
     let paramIndex = 1;
+    if (!req.user.roles.some(role => ['admin', 'radiologist', 'radiographer'].includes(role))) {
+      const scope = patientScope(req.user, { alias: 'p' });
+      query += ` AND (${scope.clause})`;
+      params.push(...scope.params);
+      paramIndex = params.length + 1;
+    }
     
     if (patient_id) {
       query += ` AND ro.patient_id = $${paramIndex}`;
@@ -138,7 +168,14 @@ router.get('/orders', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
 });
 
 // Get radiology order by ID (with items & reports)
-router.get('/orders/:id', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
+router.get(
+  '/orders/:id',
+  authorize(RADIOLOGY_READ_ROLES),
+  requirePatientResourceAccess({
+    table: 'radiology_orders',
+    processRoles: ['radiologist', 'radiographer']
+  }),
+  async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -195,15 +232,34 @@ router.get('/orders/:id', authorize(RADIOLOGY_READ_ROLES), async (req, res) => {
 });
 
 // Create radiology order
-router.post('/orders', authorize(RADIOLOGY_ORDER_ROLES), async (req, res) => {
+router.post(
+  '/orders',
+  authorize(RADIOLOGY_ORDER_ROLES),
+  validate(radiologyOrderSchema),
+  requireProviderIdentity('doctor'),
+  requireEncounterAccess({ encounterId: req => req.validatedData.encounter_id }),
+  async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     
     const {
-      patient_id, encounter_id, ordering_doctor_id, clinic_id,
+      patient_id, encounter_id,
       clinical_indication, provisional_diagnosis, priority, tests
-    } = req.body;
+    } = req.validatedData;
+    const ordering_doctor_id = req.user.staffId || req.user.id;
+    const encounterResult = await client.query(
+      'SELECT clinic_id FROM encounters WHERE id = $1 AND patient_id = $2 FOR UPDATE',
+      [encounter_id, patient_id]
+    );
+    if (!encounterResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        error: 'Encounter does not belong to the supplied patient'
+      });
+    }
+    const clinic_id = encounterResult.rows[0].clinic_id;
     
     // Create order
     const orderQuery = `
@@ -222,9 +278,12 @@ router.post('/orders', authorize(RADIOLOGY_ORDER_ROLES), async (req, res) => {
     
     // Add test items
     for (const test of tests) {
-      const testQuery = 'SELECT price FROM radiology_tests WHERE id = $1';
+      const testQuery = 'SELECT price FROM radiology_tests WHERE id = $1 AND is_active = TRUE';
       const testResult = await client.query(testQuery, [test.test_id]);
-      const testPrice = testResult.rows[0]?.price || 0;
+      const testPrice = Number(testResult.rows[0]?.price);
+      if (!testResult.rows.length || !Number.isFinite(testPrice) || testPrice < 0) {
+        throw new Error('A selected imaging study is unavailable or has no valid catalog price');
+      }
       
       const itemQuery = `
         INSERT INTO radiology_order_items (
@@ -259,7 +318,14 @@ router.post('/orders', authorize(RADIOLOGY_ORDER_ROLES), async (req, res) => {
 });
 
 // Update radiology order status (e.g., complete the order)
-router.put('/orders/:id/status', authorize(RADIOLOGY_PROCESS_ROLES), async (req, res) => {
+router.put(
+  '/orders/:id/status',
+  authorize(RADIOLOGY_PROCESS_ROLES),
+  requirePatientResourceAccess({
+    table: 'radiology_orders',
+    processRoles: ['radiologist', 'radiographer']
+  }),
+  async (req, res) => {
   try {
     const { id } = req.params;
     const { status, report_notes } = req.body;
@@ -306,7 +372,12 @@ router.put('/orders/:id/status', authorize(RADIOLOGY_PROCESS_ROLES), async (req,
 });
 
 // Submit a structured report for every study in an order.
-router.post('/orders/:id/report', authorize(RADIOLOGY_PROCESS_ROLES), async (req, res) => {
+router.post(
+  '/orders/:id/report',
+  authorize(['admin', 'radiologist']),
+  requireProviderIdentity('radiologist'),
+  requirePatientResourceAccess({ table: 'radiology_orders', processRoles: ['radiologist'] }),
+  async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -325,7 +396,7 @@ router.post('/orders/:id/report', authorize(RADIOLOGY_PROCESS_ROLES), async (req
       FROM radiology_orders ro
       WHERE ro.id = $1
       FOR UPDATE
-    `, [id, req.user?.id]);
+    `, [id, req.user.staffId || req.user.id]);
 
     if (orderResult.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -358,24 +429,35 @@ router.post('/orders/:id/report', authorize(RADIOLOGY_PROCESS_ROLES), async (req
         LIMIT 1
       `, [id, report.itemId]);
 
-      if (existingReport.rows.length > 0) {
-        await client.query(`
-          UPDATE radiology_reports
-          SET findings = $1, impression = $2, recommendations = $3,
-              radiologist_id = $4, status = 'final', verified_at = NOW(),
-              released_at = NOW(), updated_at = NOW()
-          WHERE id = $5
-        `, [report.findings.trim(), report.impression.trim(), report.notes || null,
-          order.reporting_clinician_id, existingReport.rows[0].id]);
-      } else {
-        await client.query(`
-          INSERT INTO radiology_reports (
-            radiology_order_id, radiology_order_item_id, findings, impression,
-            recommendations, radiologist_id, status, dictated_at, verified_at, released_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, 'final', NOW(), NOW(), NOW())
-        `, [id, report.itemId, report.findings.trim(), report.impression.trim(),
-          report.notes || null, order.reporting_clinician_id]);
+      if (existingReport.rows.length > 0 && !String(report.amendmentReason || '').trim()) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          success: false,
+          error: 'An amendment reason is required when replacing a final report'
+        });
       }
+      await client.query(`
+        INSERT INTO radiology_reports (
+          radiology_order_id, radiology_order_item_id, findings, impression,
+          recommendations, radiologist_id, status, dictated_at, verified_at,
+          released_at, version, previous_report_id, amendment_reason
+        )
+        SELECT $1, $2, $3, $4, $5, $6,
+               CASE WHEN previous.id IS NULL THEN 'final' ELSE 'amended' END,
+               NOW(), NOW(), NOW(), COALESCE(previous.version, 0) + 1,
+               previous.id, $7
+        FROM (SELECT 1) seed
+        LEFT JOIN radiology_reports previous ON previous.id = $8
+      `, [
+        id,
+        report.itemId,
+        report.findings.trim(),
+        report.impression.trim(),
+        report.notes || null,
+        order.reporting_clinician_id,
+        report.amendmentReason?.trim() || null,
+        existingReport.rows[0]?.id || null
+      ]);
 
       await client.query(`
         UPDATE radiology_order_items

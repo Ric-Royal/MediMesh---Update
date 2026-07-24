@@ -26,6 +26,9 @@ class FileAttachment {
     this.upload_date = data.upload_date;
     this.created_at = data.created_at;
     this.updated_at = data.updated_at;
+    this.detected_mime_type = data.detected_mime_type;
+    this.malware_scan_status = data.malware_scan_status;
+    this.deleted_at = data.deleted_at;
   }
 
   static async create(data) {
@@ -41,11 +44,13 @@ class FileAttachment {
         medical_record_id, patient_id, file_name, file_type, file_size,
         mime_type, storage_path, storage_bucket, storage_key, category,
         description, tags, is_private, uploaded_by, upload_date,
-        upload_url, etag, metadata, created_at, updated_at, created_by
+        upload_url, etag, metadata, detected_mime_type, malware_scan_status,
+        created_at, updated_at, created_by
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22::jsonb, $23, $24, $25
+        $20, $21, $22::jsonb, $23, $24,
+        $25, $26, $27
       )
       RETURNING *
     `;
@@ -73,6 +78,8 @@ class FileAttachment {
       data.upload_url || null,
       data.etag || null,
       JSON.stringify(data.metadata || {}),
+      data.detected_mime_type,
+      data.malware_scan_status || 'pending',
       now,
       now,
       String(data.uploaded_by)
@@ -213,17 +220,22 @@ class FileAttachment {
     }
   }
 
-  async delete() {
+  async archive(archivedBy, reason) {
     const query = `
       UPDATE file_attachments 
-      SET is_active = false, updated_at = $1 
-      WHERE id = $2 
+      SET is_active = false,
+          deleted_at = $1,
+          deleted_by = $2,
+          delete_reason = $3,
+          updated_at = $1,
+          updated_by = $2
+      WHERE id = $4
       RETURNING *
     `;
 
     try {
       const pool = getDB();
-      const result = await pool.query(query, [new Date(), this.id]);
+      const result = await pool.query(query, [new Date(), archivedBy, reason, this.id]);
       this.is_active = false;
       return result.rows[0];
     } catch (error) {
@@ -273,6 +285,11 @@ class FileAttachment {
       ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS metadata JSONB;
       ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS created_by VARCHAR(100);
       ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS updated_by VARCHAR(100);
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS detected_mime_type VARCHAR(100);
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS malware_scan_status VARCHAR(20) NOT NULL DEFAULT 'pending';
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS deleted_by UUID;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS delete_reason VARCHAR(500);
 
       UPDATE file_attachments
       SET file_key = COALESCE(file_key, storage_key),

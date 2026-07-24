@@ -2,22 +2,30 @@
 set -eu
 . "$(dirname "$0")/_common.sh"
 
-NEW_VERSION=${1:-}
-[ -n "$NEW_VERSION" ] || { echo "Usage: $0 1.0.1" >&2; exit 2; }
-case "$NEW_VERSION" in *[!0-9A-Za-z._-]*) echo "Invalid version." >&2; exit 2 ;; esac
+NEW_API_IMAGE=${1:-}
+NEW_WEB_IMAGE=${2:-}
+BACKUP_EVIDENCE=${3:-}
+[ -n "$NEW_API_IMAGE" ] && [ -n "$NEW_WEB_IMAGE" ] && [ -n "$BACKUP_EVIDENCE" ] || {
+  echo "Usage: $0 api-image@sha256:... web-image@sha256:... backups/verified.tar.age" >&2
+  exit 2
+}
+for image in "$NEW_API_IMAGE" "$NEW_WEB_IMAGE"; do
+  case "$image" in
+    *@sha256:????????????????????????????????????????????????????????????????) ;;
+    *) echo "Both images must be pinned by a full sha256 digest." >&2; exit 2 ;;
+  esac
+done
+
+"$SCRIPT_DIR/verify-backup.sh" "$BACKUP_EVIDENCE"
 
 PREVIOUS_API=$MEDIMESH_API_IMAGE
 PREVIOUS_WEB=$MEDIMESH_WEB_IMAGE
-"$SCRIPT_DIR/backup.sh"
-
-API_REPOSITORY=${MEDIMESH_API_IMAGE%:*}
-WEB_REPOSITORY=${MEDIMESH_WEB_IMAGE%:*}
-sed -i.bak "s|^MEDIMESH_API_IMAGE=.*|MEDIMESH_API_IMAGE=${API_REPOSITORY}:${NEW_VERSION}|" "$DEPLOY_DIR/.env"
-sed -i.bak "s|^MEDIMESH_WEB_IMAGE=.*|MEDIMESH_WEB_IMAGE=${WEB_REPOSITORY}:${NEW_VERSION}|" "$DEPLOY_DIR/.env"
+sed -i.bak "s|^MEDIMESH_API_IMAGE=.*|MEDIMESH_API_IMAGE=${NEW_API_IMAGE}|" "$DEPLOY_DIR/.env"
+sed -i.bak "s|^MEDIMESH_WEB_IMAGE=.*|MEDIMESH_WEB_IMAGE=${NEW_WEB_IMAGE}|" "$DEPLOY_DIR/.env"
 
 if compose pull && compose up -d --remove-orphans && "$SCRIPT_DIR/healthcheck.sh"; then
   rm -f "$DEPLOY_DIR/.env.bak"
-  echo "MediMesh updated to $NEW_VERSION"
+  echo "Application images updated successfully."
   exit 0
 fi
 

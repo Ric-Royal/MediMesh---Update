@@ -8,7 +8,7 @@ const { getDB } = require('../../utils/database');
 const { verifyAccessToken, loadPersistedIdentity } = require('../auth');
 
 describe('versioned access tokens', () => {
-  const secret = 'test-password-lifecycle-secret';
+  const secret = 'test-password-lifecycle-secret-32-bytes';
   const subject = '550e8400-e29b-41d4-a716-446655440008';
   const originalSecret = process.env.JWT_SECRET;
 

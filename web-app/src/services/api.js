@@ -5,15 +5,24 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || '';
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // Increased to 30 seconds for settings operations
+  timeout: 30000,
+  withCredentials: true,
 });
 
-// Request interceptor to add auth headers
+const readCookie = name => document.cookie
+  .split(';')
+  .map(value => value.trim())
+  .find(value => value.startsWith(`${name}=`))
+  ?.slice(name.length + 1);
+
+// Cookie sessions are HttpOnly. Mutating requests additionally carry the
+// non-sensitive double-submit token so another site cannot forge actions.
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    const method = String(config.method || 'get').toLowerCase();
+    if (!['get', 'head', 'options'].includes(method)) {
+      const csrfToken = readCookie('medimesh_csrf');
+      if (csrfToken) config.headers['X-CSRF-Token'] = decodeURIComponent(csrfToken);
     }
     return config;
   },
@@ -30,11 +39,9 @@ api.interceptors.response.use(
   (error) => {
     const requestPath = error.config?.url || '';
     const isCredentialCheck = requestPath.includes('/api/auth/login') ||
-      requestPath.includes('/api/auth/change-password');
+      requestPath.includes('/api/auth/change-password') ||
+      requestPath.includes('/api/auth/me');
     if (error.response?.status === 401 && !isCredentialCheck) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('medimesh_token');
-      localStorage.removeItem('dev_token');
       window.location.href = '/login';
     }
     return Promise.reject(error);

@@ -164,7 +164,7 @@ NOTICE: Patient ID sequence synchronized: will start from 1006
 ### 2. Test Patient Creation
 
 1. Navigate to `http://localhost:3000`
-2. Login as admin (admin/admin123)
+2. Login as `admin` using the ignored password in `secrets/bootstrap_admin_password.txt`
 3. Go to Patients → Add Patient
 4. Fill in minimal required fields:
    - First Name: Test

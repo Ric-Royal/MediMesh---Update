@@ -3,17 +3,27 @@ const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
+const Joi = require('joi');
+const { validateParams, validateQuery, uuidSchema } = require('../utils/validation');
 
 const STAFF_DIRECTORY_ROLES = ['admin', 'doctor', 'nurse', 'receptionist'];
+const staffParamsSchema = Joi.object({ id: uuidSchema });
+const staffQuerySchema = Joi.object({
+  role: Joi.string().valid('admin', 'doctor', 'nurse', 'receptionist', 'lab-tech', 'pharmacist', 'billing', 'radiologist', 'radiographer'),
+  department_id: Joi.string().uuid(),
+  status: Joi.string().valid('active', 'inactive', 'suspended').default('active')
+});
 
 // GET /api/staff - Get all staff with optional role filter
-router.get('/', authorize(STAFF_DIRECTORY_ROLES), async (req, res) => {
+router.get('/', authorize(STAFF_DIRECTORY_ROLES), validateQuery(staffQuerySchema), async (req, res) => {
   try {
     const db = getDB();
-    const { role, department_id, status = 'active' } = req.query;
+    const { role, department_id, status = 'active' } = req.validatedQuery;
     
     let query = `
-      SELECT s.*, d.department_name
+      SELECT s.id, s.staff_number, s.first_name, s.last_name, s.role,
+             s.specialization, s.department_id, s.primary_clinic_id,
+             s.status, s.is_available, d.department_name
       FROM staff s
       LEFT JOIN departments d ON s.department_id = d.id
       WHERE 1=1
@@ -55,12 +65,14 @@ router.get('/', authorize(STAFF_DIRECTORY_ROLES), async (req, res) => {
 });
 
 // GET /api/staff/:id - Get single staff member
-router.get('/:id', authorize(STAFF_DIRECTORY_ROLES), async (req, res) => {
+router.get('/:id', authorize(STAFF_DIRECTORY_ROLES), validateParams(staffParamsSchema), async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.validatedParams;
     
     const query = `
-      SELECT s.*, d.department_name
+      SELECT s.id, s.staff_number, s.first_name, s.last_name, s.role,
+             s.specialization, s.department_id, s.primary_clinic_id,
+             s.status, s.is_available, d.department_name
       FROM staff s
       LEFT JOIN departments d ON s.department_id = d.id
       WHERE s.id = $1

@@ -17,6 +17,7 @@ const { logger } = require('./utils/logger');
 const { connectDB } = require('./utils/database');
 const { connectRedis } = require('./utils/redis');
 const { initializeWebSocket } = require('./utils/websocket');
+const { storageService } = require('./utils/storage');
 const { authenticateToken } = require('./middleware/auth');
 const { auditLogger } = require('./middleware/audit');
 const { sanitizeServerErrorResponses } = require('./middleware/sanitizeErrors');
@@ -175,8 +176,7 @@ app.use((err, req, res, next) => {
   }
   
   res.status(err.status || 500).json({
-    error: 'Internal server error',
-    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+    error: 'Internal server error'
   });
 });
 
@@ -190,13 +190,29 @@ async function initialize() {
   try {
     await connectDB();
     await connectRedis();
+    await storageService.ready();
     
-    // Initialize database tables
-    await FileAttachment.createTable();
-    await UserSettings.createTable();
-    await SystemSettings.createTable();
-    await Payment.createTable();
-    await UserAccount.createTable();
+    if (process.env.RUN_RUNTIME_SCHEMA_SYNC === 'true') {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Runtime schema synchronization is prohibited in production');
+      }
+      await FileAttachment.createTable();
+      await UserSettings.createTable();
+      await SystemSettings.createTable();
+      await Payment.createTable();
+      await UserAccount.createTable();
+    } else {
+      const schemaCheck = await require('./utils/database').getDB().query(`
+        SELECT to_regclass('public.app_users') AS app_users,
+               to_regclass('public.audit_events') AS audit_events,
+               to_regclass('public.payments') AS payments
+      `);
+      if (Object.values(schemaCheck.rows[0]).some(value => value === null)) {
+        throw new Error('Required database migrations have not been applied');
+      }
+      await UserAccount.bootstrapAdministrator();
+      await SystemSettings.initializeDefaults();
+    }
     
     const server = app.listen(PORT, () => {
       logger.info(`MediMesh Patient API server running on port ${PORT}`);

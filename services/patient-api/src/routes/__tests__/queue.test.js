@@ -1,5 +1,8 @@
 jest.mock('../../middleware/auth', () => ({
-  authorize: () => (req, res, next) => next(),
+  authorize: () => (req, res, next) => {
+    req.user = { id: 'admin-id', roles: ['admin'] };
+    next();
+  },
 }));
 jest.mock('../../models/QueueEntry', () => ({
   getQueueStatistics: jest.fn(),

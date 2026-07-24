@@ -1,4 +1,4 @@
-FROM node:22-alpine AS test
+FROM node:22.17.0-alpine3.21@sha256:0d722d537f07d5e962b82733cd641cfa1fb868eab8c597ebfc87b8fa0436daa9 AS test
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ COPY src/ ./src/
 
 CMD ["npm", "test", "--", "--runInBand"]
 
-FROM node:22-alpine AS runtime
+FROM node:22.17.0-alpine3.21@sha256:0d722d537f07d5e962b82733cd641cfa1fb868eab8c597ebfc87b8fa0436daa9 AS runtime
 
 # Create app directory
 WORKDIR /app

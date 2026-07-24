@@ -14,9 +14,14 @@ describe('production runtime configuration', () => {
     MFA_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
     PUBLIC_BASE_URL: 'https://clinic.example.org',
     DATABASE_URL: 'postgresql://medimesh:secret@postgres:5432/medimesh',
+    DATABASE_SSL: 'true',
+    REDIS_URL: 'rediss://redis:6379',
     REDIS_PASSWORD: 'redis-secret',
+    MINIO_ENDPOINT: 'https://objects.example.internal',
     MINIO_ACCESS_KEY: 'storage-user',
     MINIO_SECRET_KEY: 'storage-secret',
+    FILE_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
+    ALLOWED_ORIGINS: 'https://clinic.example.org',
     BOOTSTRAP_ADMIN_PASSWORD: '',
     MPESA_ENVIRONMENT: 'sandbox',
     MPESA_CALLBACK_TOKEN: '',
@@ -114,7 +119,7 @@ describe('production runtime configuration', () => {
       MPESA_CONSUMER_SECRET: 'consumer-secret',
       MPESA_PASSKEY: 'passkey',
       MPESA_SHORTCODE: '123456',
-      MPESA_CALLBACK_URL: 'https://clinic.example.org/api/payments/mpesa/callback?token=callback-auth-secret'
+      MPESA_CALLBACK_URL: 'https://clinic.example.org/api/payments/mpesa/callback'
     })).validated).toBe(true);
   });
 

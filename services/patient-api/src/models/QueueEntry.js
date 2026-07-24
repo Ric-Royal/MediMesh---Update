@@ -2,7 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../utils/database');
 
 class QueueEntry {
-  static async create(queueData) {
+  static async create(queueData, executor = getDB()) {
     const id = uuidv4();
     const query = `
       INSERT INTO queue_entries (
@@ -24,7 +24,7 @@ class QueueEntry {
       queueData.priorityLevel || 5
     ];
     
-    const result = await getDB().query(query, values);
+    const result = await executor.query(query, values);
     return result.rows[0];
   }
   

@@ -1,14 +1,32 @@
 const express = require('express');
+const Joi = require('joi');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { emitQueueUpdate } = require('../utils/websocket');
 const { completeDepartmentService } = require('../utils/workflow');
 const { authorize } = require('../middleware/auth');
+const { validate } = require('../utils/validation');
+const {
+  requireEncounterAccess,
+  patientScope,
+  requirePatientResourceAccess,
+  requireProviderIdentity
+} = require('../security/accessControl');
 
 const LAB_READ_ROLES = ['admin', 'doctor', 'nurse', 'lab-tech'];
 const LAB_ORDER_ROLES = ['admin', 'doctor'];
 const LAB_PROCESS_ROLES = ['admin', 'lab-tech'];
+const labOrderSchema = Joi.object({
+  patient_id: Joi.string().uuid().required(),
+  encounter_id: Joi.string().uuid().required(),
+  ordering_doctor_id: Joi.any().strip(),
+  clinic_id: Joi.any().strip(),
+  priority: Joi.string().valid('routine', 'urgent', 'stat', 'emergency').default('routine'),
+  clinical_notes: Joi.string().allow('').max(4000),
+  diagnosis: Joi.string().allow('').max(4000),
+  tests: Joi.array().items(Joi.number().integer().positive()).min(1).max(25).unique().required()
+}).unknown(false);
 
 // ============================================
 // LAB TEST CATALOG (For Ordering)
@@ -114,6 +132,12 @@ router.get('/orders', authorize(LAB_READ_ROLES), async (req, res) => {
     `;
     const params = [];
     let paramIndex = 1;
+    if (!req.user.roles.some(role => ['admin', 'lab-tech'].includes(role))) {
+      const scope = patientScope(req.user, { alias: 'p' });
+      query += ` AND (${scope.clause})`;
+      params.push(...scope.params);
+      paramIndex = params.length + 1;
+    }
     
     if (patient_id) {
       query += ` AND lo.patient_id = $${paramIndex}`;
@@ -163,7 +187,11 @@ router.get('/orders', authorize(LAB_READ_ROLES), async (req, res) => {
 });
 
 // Get lab order by ID (with items)
-router.get('/orders/:id', authorize(LAB_READ_ROLES), async (req, res) => {
+router.get(
+  '/orders/:id',
+  authorize(LAB_READ_ROLES),
+  requirePatientResourceAccess({ table: 'lab_orders', processRoles: ['lab-tech'] }),
+  async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -209,15 +237,34 @@ router.get('/orders/:id', authorize(LAB_READ_ROLES), async (req, res) => {
 });
 
 // Create lab order
-router.post('/orders', authorize(LAB_ORDER_ROLES), async (req, res) => {
+router.post(
+  '/orders',
+  authorize(LAB_ORDER_ROLES),
+  validate(labOrderSchema),
+  requireProviderIdentity('doctor'),
+  requireEncounterAccess({ encounterId: req => req.validatedData.encounter_id }),
+  async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     
     const {
-      patient_id, encounter_id, ordering_doctor_id, clinic_id,
+      patient_id, encounter_id,
       priority, clinical_notes, diagnosis, tests // array of test IDs
-    } = req.body;
+    } = req.validatedData;
+    const ordering_doctor_id = req.user.staffId || req.user.id;
+    const encounterResult = await client.query(
+      'SELECT clinic_id FROM encounters WHERE id = $1 AND patient_id = $2 FOR UPDATE',
+      [encounter_id, patient_id]
+    );
+    if (!encounterResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        error: 'Encounter does not belong to the supplied patient'
+      });
+    }
+    const clinic_id = encounterResult.rows[0].clinic_id;
     
     // Create order
     const orderQuery = `
@@ -237,9 +284,12 @@ router.post('/orders', authorize(LAB_ORDER_ROLES), async (req, res) => {
     // Add test items
     for (const testId of tests) {
       // Get test details for pricing
-      const testQuery = 'SELECT price FROM lab_tests WHERE id = $1';
+      const testQuery = 'SELECT price FROM lab_tests WHERE id = $1 AND is_active = TRUE';
       const testResult = await client.query(testQuery, [testId]);
-      const testPrice = testResult.rows[0]?.price || 0;
+      const testPrice = Number(testResult.rows[0]?.price);
+      if (!testResult.rows.length || !Number.isFinite(testPrice) || testPrice < 0) {
+        throw new Error('A selected laboratory test is unavailable or has no valid catalog price');
+      }
       
       const itemQuery = `
         INSERT INTO lab_order_items (
@@ -270,7 +320,11 @@ router.post('/orders', authorize(LAB_ORDER_ROLES), async (req, res) => {
 });
 
 // Update lab order status
-router.put('/orders/:id/status', authorize(LAB_PROCESS_ROLES), async (req, res) => {
+router.put(
+  '/orders/:id/status',
+  authorize(LAB_PROCESS_ROLES),
+  requirePatientResourceAccess({ table: 'lab_orders', processRoles: ['lab-tech'] }),
+  async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
@@ -305,7 +359,11 @@ router.put('/orders/:id/status', authorize(LAB_PROCESS_ROLES), async (req, res) 
 // ============================================
 
 // Collect sample (generate barcode)
-router.post('/orders/:id/collect', authorize(LAB_PROCESS_ROLES), async (req, res) => {
+router.post(
+  '/orders/:id/collect',
+  authorize(LAB_PROCESS_ROLES),
+  requirePatientResourceAccess({ table: 'lab_orders', processRoles: ['lab-tech'] }),
+  async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
@@ -340,7 +398,12 @@ router.post('/orders/:id/collect', authorize(LAB_PROCESS_ROLES), async (req, res
           WHERE loi.id = $2
           RETURNING *
         `;
-        await client.query(sampleQuery, [id, itemId, req.user?.userId, collection_site]);
+        await client.query(sampleQuery, [
+          id,
+          itemId,
+          req.user.staffId || req.user.id,
+          collection_site
+        ]);
       }
     }
     
@@ -405,7 +468,11 @@ router.get('/samples/:barcode', authorize(LAB_PROCESS_ROLES), async (req, res) =
 // ============================================
 
 // Enter test result
-router.post('/orders/:id/items/:itemId/result', authorize(LAB_PROCESS_ROLES), async (req, res) => {
+router.post(
+  '/orders/:id/items/:itemId/result',
+  authorize(LAB_PROCESS_ROLES),
+  requirePatientResourceAccess({ table: 'lab_orders', processRoles: ['lab-tech'] }),
+  async (req, res) => {
   try {
     const { id, itemId } = req.params;
     const { result_value, result_unit, result_notes, reference_min, reference_max } = req.body;

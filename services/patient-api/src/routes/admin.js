@@ -436,6 +436,8 @@ const userSchema = Joi.object({
   email: Joi.string().email().max(200).required(),
   roles: Joi.array().items(Joi.string().valid(...UserAccount.ALLOWED_ROLES)).min(1).required(),
   department_id: Joi.string().uuid().allow('', null),
+  license_number: Joi.string().max(100).allow('', null),
+  license_expiry: Joi.date().iso().allow(null),
   is_active: boolean.default(true)
 });
 
@@ -444,13 +446,31 @@ router.post('/users', async (req, res) => {
   if (!values) return;
   const passwordError = getPasswordPolicyError(values.password);
   if (passwordError) return res.status(400).json({ success: false, error: passwordError });
+  if (
+    values.roles.some(role => ['doctor', 'radiologist'].includes(role)) &&
+    (!values.license_number || !values.license_expiry || new Date(values.license_expiry) <= new Date())
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: 'A current professional licence is required for this role'
+    });
+  }
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     const id = uuidv4();
     const primaryRole = values.roles.find(role => role !== 'user') || 'user';
     await UserAccount.ensureStaffIdentity({ ...values, id, primary_role: primaryRole }, client);
-    await client.query('UPDATE staff SET department_id = $2 WHERE id = $1', [id, values.department_id || null]);
+    await client.query(`
+      UPDATE staff
+      SET department_id = $2, license_number = $3, license_expiry = $4
+      WHERE id = $1
+    `, [
+      id,
+      values.department_id || null,
+      values.license_number || null,
+      values.license_expiry || null
+    ]);
     const user = await UserAccount.create({ ...values, id, must_change_password: true }, client);
     await client.query('COMMIT');
     res.status(201).json({ success: true, data: user });
@@ -466,6 +486,8 @@ const userUpdateSchema = Joi.object({
   email: Joi.string().email().max(200),
   roles: Joi.array().items(Joi.string().valid(...UserAccount.ALLOWED_ROLES)).min(1),
   department_id: Joi.string().uuid().allow('', null),
+  license_number: Joi.string().max(100).allow('', null),
+  license_expiry: Joi.date().iso().allow(null),
   is_active: boolean
 }).min(1);
 
@@ -478,15 +500,53 @@ router.put('/users/:id', async (req, res) => {
   if (req.params.id === req.user.id && values.roles && !values.roles.includes('admin')) {
     return res.status(409).json({ success: false, error: 'You cannot remove your own administrator access' });
   }
-  const user = await UserAccount.update(req.params.id, values);
-  if (!user) return res.status(404).json({ success: false, error: 'User not found' });
-  await getDB().query(`UPDATE staff SET role = $2, department_id = $3, status = $4 WHERE id = $1`, [
-    req.params.id,
-    UserAccount.toStaffRole(user.roles.find(role => role !== 'user') || 'user'),
-    user.department_id || null,
-    user.is_active ? 'active' : 'suspended'
-  ]);
-  res.json({ success: true, data: user });
+  const securityRecord = await UserAccount.getSecurityRecord(req.params.id);
+  if (!securityRecord) return res.status(404).json({ success: false, error: 'User not found' });
+  const prospectiveRoles = values.roles || securityRecord.roles;
+  const requestedProfessionalRole = prospectiveRoles.some(
+    role => ['doctor', 'radiologist'].includes(role)
+  );
+  const licenceNumber = Object.prototype.hasOwnProperty.call(values, 'license_number')
+    ? values.license_number
+    : securityRecord?.license_number;
+  const licenceExpiry = Object.prototype.hasOwnProperty.call(values, 'license_expiry')
+    ? values.license_expiry
+    : securityRecord?.license_expiry;
+  if (
+    requestedProfessionalRole &&
+    (!licenceNumber || !licenceExpiry || new Date(licenceExpiry) <= new Date())
+  ) {
+    return res.status(400).json({
+      success: false,
+      error: 'A current professional licence is required for this role'
+    });
+  }
+  const client = await getDB().connect();
+  try {
+    await client.query('BEGIN');
+    const user = await UserAccount.update(req.params.id, values, client);
+    await client.query(`
+      UPDATE staff
+      SET role = $2, department_id = $3, status = $4,
+          license_number = $5, license_expiry = $6
+      WHERE id = $1
+    `, [
+      req.params.id,
+      UserAccount.toStaffRole(user.roles.find(role => role !== 'user') || 'user'),
+      user.department_id || null,
+      user.is_active ? 'active' : 'suspended',
+      licenceNumber || null,
+      licenceExpiry || null
+    ]);
+    await client.query('COMMIT');
+    res.json({ success: true, data: user });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    logger.error('User update failed:', error);
+    res.status(500).json({ success: false, error: 'Failed to update user' });
+  } finally {
+    client.release();
+  }
 });
 
 router.post('/users/:id/reset-password', async (req, res) => {

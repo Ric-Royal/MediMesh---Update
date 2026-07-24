@@ -2,7 +2,7 @@ name: Security Scan
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ '**' ]
   pull_request:
     branches: [ main ]
   schedule:
@@ -63,9 +63,7 @@ jobs:
       uses: trufflesecurity/trufflehog@17456f8c7d042d8c82c9a8ca9e937231f9f42e26 # v3.95.2
       with:
         path: ./
-        base: main
-        head: HEAD
-        extra_args: --debug --only-verified
+        extra_args: --no-update --results=verified,unknown
 
   docker-security:
     name: Docker Security Scan

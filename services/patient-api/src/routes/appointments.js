@@ -3,6 +3,122 @@ const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
+const Joi = require('joi');
+const { validate, validateParams, validateQuery, uuidSchema } = require('../utils/validation');
+const {
+  findPatientAccess,
+  hasAnyRole,
+  hasRole,
+  isAdmin,
+  patientScope,
+  requirePatientResourceAccess,
+  requireProviderIdentity
+} = require('../security/accessControl');
+
+const dateSchema = Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/);
+const timeSchema = Joi.string().pattern(/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/);
+const appointmentTypeSchema = Joi.string().valid(
+  'consultation', 'follow-up', 'procedure', 'checkup',
+  'vaccination', 'screening', 'therapy', 'diagnostic'
+);
+const appointmentStatusSchema = Joi.string().valid(
+  'scheduled', 'confirmed', 'checked-in', 'in-progress',
+  'completed', 'cancelled', 'no-show', 'rescheduled'
+);
+const appointmentParamsSchema = Joi.object({ id: uuidSchema });
+const appointmentListSchema = Joi.object({
+  patient_id: Joi.string().uuid(),
+  doctor_id: Joi.string().uuid(),
+  clinic_id: Joi.string().uuid(),
+  status: appointmentStatusSchema,
+  date_from: dateSchema,
+  date_to: dateSchema,
+  appointment_type: appointmentTypeSchema,
+  page: Joi.number().integer().min(1).max(100000).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(50)
+});
+const appointmentCreateSchema = Joi.object({
+  patient_id: Joi.string().uuid().required(),
+  appointment_type: appointmentTypeSchema.required(),
+  scheduled_date: dateSchema.required(),
+  scheduled_time: timeSchema.required(),
+  duration_minutes: Joi.number().integer().min(1).max(480).default(30),
+  doctor_id: Joi.string().uuid().allow(null),
+  clinic_id: Joi.string().uuid().allow(null),
+  department_id: Joi.string().uuid().allow(null),
+  location_id: Joi.string().uuid().allow(null),
+  reason_for_visit: Joi.string().trim().max(1000).allow('', null),
+  notes: Joi.string().trim().max(2000).allow('', null),
+  payment_type: Joi.string().valid('self-pay', 'corporate', 'insurance', 'government').default('self-pay'),
+  corporate_scheme: Joi.string().trim().max(200).allow('', null)
+});
+const appointmentUpdateSchema = Joi.object({
+  scheduled_date: dateSchema,
+  scheduled_time: timeSchema,
+  duration_minutes: Joi.number().integer().min(1).max(480),
+  status: appointmentStatusSchema,
+  doctor_id: Joi.string().uuid().allow(null),
+  clinic_id: Joi.string().uuid().allow(null),
+  reason_for_visit: Joi.string().trim().max(1000).allow('', null),
+  notes: Joi.string().trim().max(2000).allow('', null),
+  cancellation_reason: Joi.string().trim().min(10).max(500).allow(null)
+}).min(1);
+const cancelSchema = Joi.object({
+  cancellation_reason: Joi.string().trim().min(10).max(500).required()
+});
+const availableSlotParamsSchema = Joi.object({ doctor_id: uuidSchema });
+const availableSlotQuerySchema = Joi.object({ date: dateSchema.required() });
+const appointmentAccess = requirePatientResourceAccess({
+  table: 'appointments',
+  processRoles: ['receptionist']
+});
+
+const requireClinicalProviderWhenApplicable = (req, res, next) => {
+  if (isAdmin(req.user) || hasRole(req.user, 'receptionist')) return next();
+  return requireProviderIdentity('doctor', 'nurse')(req, res, next);
+};
+
+const requireAppointmentCreateAccess = async (req, res, next) => {
+  try {
+    if (isAdmin(req.user) || hasRole(req.user, 'receptionist')) return next();
+    if (
+      hasRole(req.user, 'doctor') &&
+      req.user.staffId &&
+      req.validatedData.doctor_id === req.user.staffId
+    ) return next();
+    if (await findPatientAccess(req.user, req.validatedData.patient_id, 'clinical')) return next();
+    return res.status(403).json({ success: false, error: 'Patient access denied' });
+  } catch (error) {
+    logger.error('Appointment creation authorization failed', {
+      error: error.message,
+      userId: req.user?.id
+    });
+    return res.status(503).json({ success: false, error: 'Unable to verify patient access' });
+  }
+};
+
+const limitReceptionUpdate = (req, res, next) => {
+  if (
+    hasRole(req.user, 'receptionist') &&
+    !isAdmin(req.user) &&
+    (Object.hasOwn(req.validatedData, 'notes') || Object.hasOwn(req.validatedData, 'reason_for_visit'))
+  ) {
+    return res.status(403).json({ success: false, error: 'Clinical appointment notes require clinical access' });
+  }
+  next();
+};
+
+const minimizeAppointment = (row, user) => {
+  if (!hasRole(user, 'receptionist') || isAdmin(user)) return row;
+  const {
+    notes,
+    reason_for_visit,
+    patient_email,
+    patient_dob,
+    ...operational
+  } = row;
+  return operational;
+};
 
 // Helper: resolve req.user.id to a valid staff UUID (or null if not found)
 async function resolveStaffId(userId) {
@@ -21,7 +137,7 @@ async function resolveStaffId(userId) {
 // ============================================
 // GET /api/appointments - List all appointments with filters
 // ============================================
-router.get('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
+router.get('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), validateQuery(appointmentListSchema), async (req, res) => {
   try {
     const {
       patient_id,
@@ -33,7 +149,7 @@ router.get('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (
       appointment_type,
       page = 1,
       limit = 50
-    } = req.query;
+    } = req.validatedQuery;
 
     let query = `
       SELECT 
@@ -95,6 +211,15 @@ router.get('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (
       values.push(date_to);
     }
 
+    const scope = patientScope(req.user, {
+      alias: 'p',
+      access: hasRole(req.user, 'receptionist') ? 'demographics' : 'clinical',
+      parameterOffset: values.length
+    });
+    query += ` AND (${scope.clause})`;
+    values.push(...scope.params);
+    paramCount += scope.params.length;
+
     query += ` ORDER BY a.scheduled_date DESC, a.scheduled_time DESC`;
     query += ` LIMIT $${paramCount++} OFFSET $${paramCount++}`;
     values.push(limit, (page - 1) * limit);
@@ -134,13 +259,24 @@ router.get('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (
       countQuery += ` AND a.scheduled_date <= $${countParamCount++}`;
       countValues.push(date_to);
     }
+    const countScope = patientScope(req.user, {
+      alias: 'a_patient',
+      access: hasRole(req.user, 'receptionist') ? 'demographics' : 'clinical',
+      parameterOffset: countValues.length
+    });
+    countQuery = countQuery.replace(
+      'FROM appointments a WHERE 1=1',
+      'FROM appointments a JOIN patients a_patient ON a_patient.id = a.patient_id WHERE 1=1'
+    );
+    countQuery += ` AND (${countScope.clause})`;
+    countValues.push(...countScope.params);
 
     const countResult = await getDB().query(countQuery, countValues);
     const total = parseInt(countResult.rows[0].count);
 
     res.json({
       success: true,
-      data: result.rows,
+      data: result.rows.map(row => minimizeAppointment(row, req.user)),
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -157,9 +293,14 @@ router.get('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (
 // ============================================
 // GET /api/appointments/:id - Get single appointment
 // ============================================
-router.get('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
+router.get(
+  '/:id',
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
+  validateParams(appointmentParamsSchema),
+  appointmentAccess,
+  async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.validatedParams;
 
     const query = `
       SELECT 
@@ -191,7 +332,7 @@ router.get('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), asyn
       return res.status(404).json({ success: false, error: 'Appointment not found' });
     }
 
-    res.json({ success: true, data: result.rows[0] });
+    res.json({ success: true, data: minimizeAppointment(result.rows[0], req.user) });
   } catch (error) {
     logger.error('Error fetching appointment:', error);
     res.status(500).json({ success: false, error: error.message });
@@ -201,7 +342,13 @@ router.get('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), asyn
 // ============================================
 // POST /api/appointments - Create new appointment
 // ============================================
-router.post('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
+router.post(
+  '/',
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
+  requireClinicalProviderWhenApplicable,
+  validate(appointmentCreateSchema),
+  requireAppointmentCreateAccess,
+  async (req, res) => {
   try {
     const {
       patient_id,
@@ -217,15 +364,7 @@ router.post('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async 
       notes,
       payment_type = 'self-pay',
       corporate_scheme
-    } = req.body;
-
-    // Validate required fields
-    if (!patient_id || !scheduled_date || !scheduled_time || !appointment_type) {
-      return res.status(400).json({
-        success: false,
-        error: 'Missing required fields: patient_id, scheduled_date, scheduled_time, appointment_type'
-      });
-    }
+    } = req.validatedData;
 
     // Check for conflicts
     if (doctor_id) {
@@ -303,9 +442,17 @@ router.post('/', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async 
 // ============================================
 // PUT /api/appointments/:id - Update appointment
 // ============================================
-router.put('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
+router.put(
+  '/:id',
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
+  requireClinicalProviderWhenApplicable,
+  validateParams(appointmentParamsSchema),
+  validate(appointmentUpdateSchema),
+  appointmentAccess,
+  limitReceptionUpdate,
+  async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.validatedParams;
     const {
       scheduled_date,
       scheduled_time,
@@ -316,7 +463,7 @@ router.put('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), asyn
       reason_for_visit,
       notes,
       cancellation_reason
-    } = req.body;
+    } = req.validatedData;
 
     // Check if appointment exists
     const checkQuery = 'SELECT * FROM appointments WHERE id = $1';
@@ -400,9 +547,14 @@ router.put('/:id', authorize(['doctor', 'nurse', 'admin', 'receptionist']), asyn
 // ============================================
 // POST /api/appointments/:id/check-in - Check in patient
 // ============================================
-router.post('/:id/check-in', authorize(['nurse', 'admin', 'receptionist']), async (req, res) => {
+router.post(
+  '/:id/check-in',
+  authorize(['nurse', 'admin', 'receptionist']),
+  validateParams(appointmentParamsSchema),
+  appointmentAccess,
+  async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.validatedParams;
     const staffId = await resolveStaffId(req.user?.id);
 
     const query = `
@@ -411,14 +563,14 @@ router.post('/:id/check-in', authorize(['nurse', 'admin', 'receptionist']), asyn
         status = 'checked-in',
         checked_in_at = NOW(),
         checked_in_by = $2
-      WHERE id = $1
+      WHERE id = $1 AND status IN ('scheduled', 'confirmed')
       RETURNING *
     `;
 
     const result = await getDB().query(query, [id, staffId]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Appointment not found' });
+      return res.status(409).json({ success: false, error: 'Appointment is not in a check-in eligible state' });
     }
 
     logger.info(`Patient checked in for appointment: ${result.rows[0].appointment_number}`);
@@ -433,9 +585,14 @@ router.post('/:id/check-in', authorize(['nurse', 'admin', 'receptionist']), asyn
 // ============================================
 // POST /api/appointments/:id/confirm - Confirm appointment
 // ============================================
-router.post('/:id/confirm', authorize(['nurse', 'admin', 'receptionist']), async (req, res) => {
+router.post(
+  '/:id/confirm',
+  authorize(['nurse', 'admin', 'receptionist']),
+  validateParams(appointmentParamsSchema),
+  appointmentAccess,
+  async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.validatedParams;
     const staffId = await resolveStaffId(req.user?.id);
 
     const query = `
@@ -444,14 +601,14 @@ router.post('/:id/confirm', authorize(['nurse', 'admin', 'receptionist']), async
         status = 'confirmed',
         confirmed_at = NOW(),
         confirmed_by = $2
-      WHERE id = $1
+      WHERE id = $1 AND status = 'scheduled'
       RETURNING *
     `;
 
     const result = await getDB().query(query, [id, staffId]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Appointment not found' });
+      return res.status(409).json({ success: false, error: 'Appointment is not in a confirmable state' });
     }
 
     logger.info(`Appointment confirmed: ${result.rows[0].appointment_number}`);
@@ -466,10 +623,17 @@ router.post('/:id/confirm', authorize(['nurse', 'admin', 'receptionist']), async
 // ============================================
 // POST /api/appointments/:id/cancel - Cancel appointment
 // ============================================
-router.post('/:id/cancel', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
+router.post(
+  '/:id/cancel',
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
+  requireClinicalProviderWhenApplicable,
+  validateParams(appointmentParamsSchema),
+  validate(cancelSchema),
+  appointmentAccess,
+  async (req, res) => {
   try {
-    const { id } = req.params;
-    const { cancellation_reason } = req.body;
+    const { id } = req.validatedParams;
+    const { cancellation_reason } = req.validatedData;
 
     const query = `
       UPDATE appointments
@@ -477,7 +641,7 @@ router.post('/:id/cancel', authorize(['doctor', 'nurse', 'admin', 'receptionist'
         status = 'cancelled',
         cancellation_reason = $2,
         updated_by = $3
-      WHERE id = $1
+      WHERE id = $1 AND status NOT IN ('completed', 'cancelled')
       RETURNING *
     `;
 
@@ -485,7 +649,7 @@ router.post('/:id/cancel', authorize(['doctor', 'nurse', 'admin', 'receptionist'
     const result = await getDB().query(query, [id, cancellation_reason, staffId]);
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Appointment not found' });
+      return res.status(409).json({ success: false, error: 'Appointment cannot be cancelled in its current state' });
     }
 
     logger.info(`Appointment cancelled: ${result.rows[0].appointment_number}`);
@@ -500,14 +664,15 @@ router.post('/:id/cancel', authorize(['doctor', 'nurse', 'admin', 'receptionist'
 // ============================================
 // GET /api/appointments/available-slots - Get available time slots
 // ============================================
-router.get('/doctor/:doctor_id/available-slots', authorize(['doctor', 'nurse', 'admin', 'receptionist']), async (req, res) => {
+router.get(
+  '/doctor/:doctor_id/available-slots',
+  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
+  validateParams(availableSlotParamsSchema),
+  validateQuery(availableSlotQuerySchema),
+  async (req, res) => {
   try {
-    const { doctor_id } = req.params;
-    const { date } = req.query;
-
-    if (!date) {
-      return res.status(400).json({ success: false, error: 'Date parameter is required' });
-    }
+    const { doctor_id } = req.validatedParams;
+    const { date } = req.validatedQuery;
 
     const query = `SELECT * FROM get_available_time_slots($1, $2)`;
     const result = await getDB().query(query, [doctor_id, date]);
@@ -535,4 +700,3 @@ router.get('/conflicts/list', authorize(['admin']), async (req, res) => {
 });
 
 module.exports = router;
-

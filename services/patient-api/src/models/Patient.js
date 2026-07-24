@@ -2,6 +2,7 @@ const { getDB } = require('../utils/database');
 const { v4: uuidv4 } = require('uuid');
 const { logger } = require('../utils/logger');
 const { cache } = require('../utils/redis');
+const { patientScope } = require('../security/accessControl');
 
 class Patient {
   constructor(data) {
@@ -28,29 +29,39 @@ class Patient {
     this.updated_by = data.updated_by;
   }
 
-  static async findAll(limit = 50, offset = 0, search = '') {
+  static async findAll(limit = 50, offset = 0, search = '', user = null, access = 'clinical') {
     try {
       const db = getDB();
       let query = `
-        SELECT * FROM patients 
-        WHERE 1=1
+        SELECT p.* FROM patients p
+        WHERE p.deleted_at IS NULL
       `;
       const params = [];
+
+      if (user) {
+        const scope = patientScope(user, {
+          alias: 'p',
+          access,
+          parameterOffset: params.length
+        });
+        query += ` AND (${scope.clause})`;
+        params.push(...scope.params);
+      }
       
       if (search) {
         query += ` AND (
-          first_name ILIKE $${params.length + 1} OR 
-          last_name ILIKE $${params.length + 1} OR 
-          patient_id ILIKE $${params.length + 1} OR 
-          email ILIKE $${params.length + 1} OR
-          phone ILIKE $${params.length + 1} OR
-          uhid ILIKE $${params.length + 1} OR
-          national_id ILIKE $${params.length + 1}
+          p.first_name ILIKE $${params.length + 1} OR
+          p.last_name ILIKE $${params.length + 1} OR
+          p.patient_id ILIKE $${params.length + 1} OR
+          p.email ILIKE $${params.length + 1} OR
+          p.phone ILIKE $${params.length + 1} OR
+          p.uhid ILIKE $${params.length + 1} OR
+          p.national_id ILIKE $${params.length + 1}
         )`;
         params.push(`%${search}%`);
       }
       
-      query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+      query += ` ORDER BY p.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
       params.push(limit, offset);
 
       const result = await db.query(query, params);
@@ -61,14 +72,28 @@ class Patient {
     }
   }
 
-  static async count(search = '') {
+  static async count(search = '', user = null, access = 'clinical') {
     const db = getDB();
     const params = [];
-    let query = 'SELECT COUNT(*)::int AS total FROM patients WHERE 1=1';
+    let query = 'SELECT COUNT(*)::int AS total FROM patients p WHERE p.deleted_at IS NULL';
+    if (user) {
+      const scope = patientScope(user, {
+        alias: 'p',
+        access,
+        parameterOffset: params.length
+      });
+      query += ` AND (${scope.clause})`;
+      params.push(...scope.params);
+    }
     if (search) {
       query += ` AND (
-        first_name ILIKE $1 OR last_name ILIKE $1 OR patient_id ILIKE $1 OR
-        email ILIKE $1 OR phone ILIKE $1 OR uhid ILIKE $1 OR national_id ILIKE $1
+        p.first_name ILIKE $${params.length + 1} OR
+        p.last_name ILIKE $${params.length + 1} OR
+        p.patient_id ILIKE $${params.length + 1} OR
+        p.email ILIKE $${params.length + 1} OR
+        p.phone ILIKE $${params.length + 1} OR
+        p.uhid ILIKE $${params.length + 1} OR
+        p.national_id ILIKE $${params.length + 1}
       )`;
       params.push(`%${search}%`);
     }
@@ -88,7 +113,10 @@ class Patient {
       }
 
       const db = getDB();
-      const result = await db.query('SELECT * FROM patients WHERE id = $1', [id]);
+      const result = await db.query(
+        'SELECT * FROM patients WHERE id = $1 AND deleted_at IS NULL',
+        [id]
+      );
       
       if (result.rows.length === 0) {
         return null;
@@ -243,23 +271,19 @@ class Patient {
     }
   }
 
-  async delete() {
+  async archive(archivedBy, reason) {
     try {
       const db = getDB();
       
-      // Check if patient has medical records
-      const recordsResult = await db.query(
-        'SELECT COUNT(*) FROM medical_records WHERE patient_id = $1', 
-        [this.id]
-      );
-      
-      const recordCount = parseInt(recordsResult.rows[0].count);
-      
-      if (recordCount > 0) {
-        throw new Error('Cannot delete patient with existing medical records');
-      }
-
-      const result = await db.query('DELETE FROM patients WHERE id = $1', [this.id]);
+      const result = await db.query(`
+        UPDATE patients
+        SET deleted_at = NOW(),
+            deleted_by = $2,
+            delete_reason = $3,
+            updated_at = NOW(),
+            updated_by = $2
+        WHERE id = $1 AND deleted_at IS NULL
+      `, [this.id, archivedBy, reason]);
       
       if (result.rowCount === 0) {
         throw new Error('Patient not found');
@@ -268,7 +292,7 @@ class Patient {
       // Clear cache
       await cache.del(`patient:${this.id}`);
       
-      logger.info('Patient deleted', { patientId: this.id });
+      logger.info('Patient archived', { patientId: this.id, archivedBy });
       
       return true;
     } catch (error) {

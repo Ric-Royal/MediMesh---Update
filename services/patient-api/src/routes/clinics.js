@@ -3,8 +3,11 @@ const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
+const Joi = require('joi');
+const { validateParams, uuidSchema } = require('../utils/validation');
 
 const CLINIC_DIRECTORY_ROLES = ['admin', 'doctor', 'nurse', 'receptionist', 'lab-tech', 'pharmacist', 'billing', 'radiologist', 'radiographer'];
+const clinicParamsSchema = Joi.object({ id: uuidSchema });
 
 // GET /api/clinics - Get all clinics
 router.get('/', authorize(CLINIC_DIRECTORY_ROLES), async (req, res) => {
@@ -34,9 +37,9 @@ router.get('/', authorize(CLINIC_DIRECTORY_ROLES), async (req, res) => {
 });
 
 // GET /api/clinics/:id - Get single clinic
-router.get('/:id', authorize(CLINIC_DIRECTORY_ROLES), async (req, res) => {
+router.get('/:id', authorize(CLINIC_DIRECTORY_ROLES), validateParams(clinicParamsSchema), async (req, res) => {
   try {
-    const { id } = req.params;
+    const { id } = req.validatedParams;
     
     const query = `
       SELECT c.*, d.department_name

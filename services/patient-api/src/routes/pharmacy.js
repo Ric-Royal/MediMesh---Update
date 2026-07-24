@@ -1,13 +1,40 @@
 const express = require('express');
+const Joi = require('joi');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { completeDepartmentService } = require('../utils/workflow');
 const { authorize } = require('../middleware/auth');
+const { validate } = require('../utils/validation');
+const {
+  requireEncounterAccess,
+  patientScope,
+  requirePatientResourceAccess,
+  requireProviderIdentity
+} = require('../security/accessControl');
 
 const PHARMACY_READ_ROLES = ['admin', 'doctor', 'nurse', 'pharmacist'];
 const PRESCRIBE_ROLES = ['admin', 'doctor'];
 const PHARMACY_MANAGE_ROLES = ['admin', 'pharmacist'];
+const prescriptionSchema = Joi.object({
+  patient_id: Joi.string().uuid().required(),
+  encounter_id: Joi.string().uuid().required(),
+  doctor_id: Joi.any().strip(),
+  clinic_id: Joi.any().strip(),
+  diagnosis: Joi.string().allow('').max(4000),
+  notes: Joi.string().allow('').max(4000),
+  special_instructions: Joi.string().allow('').max(4000),
+  items: Joi.array().items(Joi.object({
+    drug_id: Joi.number().integer().positive().required(),
+    quantity: Joi.number().integer().min(1).max(10000).required(),
+    dosage: Joi.string().max(250).required(),
+    duration_days: Joi.number().integer().min(1).max(365).required(),
+    frequency: Joi.string().max(100).required(),
+    route: Joi.string().allow('').max(100),
+    unit_price: Joi.any().strip(),
+    notes: Joi.string().allow('').max(2000)
+  }).unknown(false)).min(1).max(50).required()
+}).unknown(false);
 
 // ============================================
 // DRUGS MANAGEMENT
@@ -147,7 +174,7 @@ router.post('/drugs/:id/stock', authorize(PHARMACY_MANAGE_ROLES), async (req, re
     
     const result = await getDB().query(query, [
       id, movement_type, quantity, unit_cost, batch_number,
-      expiry_date, reference_number, notes, req.user?.userId
+      expiry_date, reference_number, notes, req.user.staffId || req.user.id
     ]);
     
     logger.info(`Stock movement recorded for drug ${id}: ${movement_type} ${quantity}`);
@@ -201,6 +228,12 @@ router.get('/prescriptions', authorize(PHARMACY_READ_ROLES), async (req, res) =>
     `;
     const params = [];
     let paramIndex = 1;
+    if (!req.user.roles.some(role => ['admin', 'pharmacist'].includes(role))) {
+      const scope = patientScope(req.user, { alias: 'pat' });
+      query += ` AND (${scope.clause})`;
+      params.push(...scope.params);
+      paramIndex = params.length + 1;
+    }
     
     if (patient_id) {
       query += ` AND p.patient_id = $${paramIndex}`;
@@ -244,7 +277,11 @@ router.get('/prescriptions', authorize(PHARMACY_READ_ROLES), async (req, res) =>
 });
 
 // Get prescription by ID (with items)
-router.get('/prescriptions/:id', authorize(PHARMACY_READ_ROLES), async (req, res) => {
+router.get(
+  '/prescriptions/:id',
+  authorize(PHARMACY_READ_ROLES),
+  requirePatientResourceAccess({ table: 'prescriptions', processRoles: ['pharmacist'] }),
+  async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -292,15 +329,34 @@ router.get('/prescriptions/:id', authorize(PHARMACY_READ_ROLES), async (req, res
 });
 
 // Create prescription
-router.post('/prescriptions', authorize(PRESCRIBE_ROLES), async (req, res) => {
+router.post(
+  '/prescriptions',
+  authorize(PRESCRIBE_ROLES),
+  validate(prescriptionSchema),
+  requireProviderIdentity('doctor'),
+  requireEncounterAccess({ encounterId: req => req.validatedData.encounter_id }),
+  async (req, res) => {
   const client = await getDB().connect();
   try {
     await client.query('BEGIN');
     
     const {
-      patient_id, encounter_id, doctor_id, clinic_id,
+      patient_id, encounter_id,
       diagnosis, notes, special_instructions, items
-    } = req.body;
+    } = req.validatedData;
+    const doctor_id = req.user.staffId || req.user.id;
+    const encounterResult = await client.query(
+      'SELECT clinic_id FROM encounters WHERE id = $1 AND patient_id = $2 FOR UPDATE',
+      [encounter_id, patient_id]
+    );
+    if (!encounterResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        error: 'Encounter does not belong to the supplied patient'
+      });
+    }
+    const clinic_id = encounterResult.rows[0].clinic_id;
     
     // Create prescription
     const prescriptionQuery = `
@@ -318,7 +374,15 @@ router.post('/prescriptions', authorize(PRESCRIBE_ROLES), async (req, res) => {
     const prescription = prescriptionResult.rows[0];
     
     // Add items
-    const itemPromises = items.map(item => {
+    for (const item of items) {
+      const catalogResult = await client.query(
+        'SELECT selling_price FROM drugs WHERE id = $1 AND is_active = TRUE',
+        [item.drug_id]
+      );
+      const unitPrice = Number(catalogResult.rows[0]?.selling_price);
+      if (!catalogResult.rows.length || !Number.isFinite(unitPrice) || unitPrice < 0) {
+        throw new Error('A selected medicine is unavailable or has no valid catalog price');
+      }
       const itemQuery = `
         INSERT INTO prescription_items (
           prescription_id, drug_id, quantity, dosage, duration_days,
@@ -326,13 +390,11 @@ router.post('/prescriptions', authorize(PRESCRIBE_ROLES), async (req, res) => {
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING *
       `;
-      return client.query(itemQuery, [
+      await client.query(itemQuery, [
         prescription.id, item.drug_id, item.quantity, item.dosage,
-        item.duration_days, item.frequency, item.route, item.unit_price, item.notes
+        item.duration_days, item.frequency, item.route, unitPrice, item.notes
       ]);
-    });
-    
-    await Promise.all(itemPromises);
+    }
     await client.query('COMMIT');
     
     logger.info(`Prescription created: ${prescription.prescription_number}`);
@@ -347,7 +409,11 @@ router.post('/prescriptions', authorize(PRESCRIBE_ROLES), async (req, res) => {
 });
 
 // Dispense prescription item
-router.post('/prescriptions/:id/items/:itemId/dispense', authorize(PHARMACY_MANAGE_ROLES), async (req, res) => {
+router.post(
+  '/prescriptions/:id/items/:itemId/dispense',
+  authorize(PHARMACY_MANAGE_ROLES),
+  requirePatientResourceAccess({ table: 'prescriptions', processRoles: ['pharmacist'] }),
+  async (req, res) => {
   const client = await getDB().connect();
   let completedEncounterId = null;
   let prescriptionStatus = 'partially-dispensed';
@@ -415,7 +481,7 @@ router.post('/prescriptions/:id/items/:itemId/dispense', authorize(PHARMACY_MANA
     `;
     
     const result = await client.query(query, [
-      qty, req.user?.id, batch_number || null, notes || null, itemId, id
+      qty, req.user.staffId || req.user.id, batch_number || null, notes || null, itemId, id
     ]);
 
     await client.query(`

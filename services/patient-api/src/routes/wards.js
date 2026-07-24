@@ -3,9 +3,31 @@ const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
+const Joi = require('joi');
+const { validateParams, uuidSchema } = require('../utils/validation');
+const { isAdmin } = require('../security/accessControl');
 
 const WARD_DIRECTORY_ROLES = ['admin', 'doctor', 'nurse', 'receptionist'];
 const WARD_CLINICAL_ROLES = ['admin', 'doctor', 'nurse'];
+const wardParamsSchema = Joi.object({ wardId: uuidSchema });
+
+const requireWardDepartmentAccess = async (req, res, next) => {
+  if (isAdmin(req.user)) return next();
+  try {
+    const result = await getDB().query(
+      'SELECT department_id FROM wards WHERE id = $1 AND is_active = true',
+      [req.validatedParams.wardId]
+    );
+    if (!result.rows.length) return res.status(404).json({ success: false, error: 'Ward not found' });
+    if (!req.user.departmentId || result.rows[0].department_id !== req.user.departmentId) {
+      return res.status(403).json({ success: false, error: 'Ward access denied' });
+    }
+    next();
+  } catch (error) {
+    logger.error('Ward authorization failed', { error: error.message, userId: req.user?.id });
+    res.status(503).json({ success: false, error: 'Unable to verify ward access' });
+  }
+};
 
 // Get all wards
 router.get('/', authorize(WARD_DIRECTORY_ROLES), async (req, res) => {
@@ -28,9 +50,14 @@ router.get('/', authorize(WARD_DIRECTORY_ROLES), async (req, res) => {
 });
 
 // Get ward occupancy details
-router.get('/:wardId/occupancy', authorize(WARD_CLINICAL_ROLES), async (req, res) => {
+router.get(
+  '/:wardId/occupancy',
+  authorize(WARD_CLINICAL_ROLES),
+  validateParams(wardParamsSchema),
+  requireWardDepartmentAccess,
+  async (req, res) => {
   try {
-    const { wardId } = req.params;
+    const { wardId } = req.validatedParams;
     
     const query = `
       SELECT 
@@ -41,7 +68,6 @@ router.get('/:wardId/occupancy', authorize(WARD_CLINICAL_ROLES), async (req, res
         p.first_name,
         p.last_name,
         p.uhid,
-        p.payment_type,
         s.first_name as doctor_first_name,
         s.last_name as doctor_last_name
       FROM beds b
@@ -60,9 +86,14 @@ router.get('/:wardId/occupancy', authorize(WARD_CLINICAL_ROLES), async (req, res
 });
 
 // Get occupancy statistics
-router.get('/:wardId/statistics', authorize(WARD_CLINICAL_ROLES), async (req, res) => {
+router.get(
+  '/:wardId/statistics',
+  authorize(WARD_CLINICAL_ROLES),
+  validateParams(wardParamsSchema),
+  requireWardDepartmentAccess,
+  async (req, res) => {
   try {
-    const { wardId } = req.params;
+    const { wardId } = req.validatedParams;
     
     const query = `
       SELECT 

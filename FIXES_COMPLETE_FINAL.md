@@ -85,7 +85,7 @@ docker-compose up -d
 timeout /t 30 /nobreak
 
 # 3. Visit http://localhost:3000
-# 4. Login (admin/admin123)
+# 4. Login as admin using the ignored generated local password
 # 5. Create a patient
 # 6. Create a medical record
 # 7. Check all modules load

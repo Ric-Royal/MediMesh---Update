@@ -16,13 +16,19 @@ const { authorize } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const { auditLogger } = require('../utils/logger');
 const FileAttachment = require('../models/FileAttachment');
+const { getDB } = require('../utils/database');
+const {
+  findPatientAccess,
+  requirePatientResourceAccess
+} = require('../security/accessControl');
+const { inspectFile } = require('../security/fileInspection');
 
 // Configure multer for file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: MAX_FILE_SIZE,
-    files: 10 // Maximum 10 files per upload
+    files: 3
   },
   fileFilter: (req, file, cb) => {
     // Check file type
@@ -159,18 +165,50 @@ router.post('/upload',
       }
 
       const { category, recordId, patientId, description, tags, isPrivate } = value;
+      if (category === 'system-files' && !isAdmin(req)) {
+        return res.status(403).json({ error: 'System files require administrator access' });
+      }
+
+      let resolvedPatientId = patientId || null;
+      if (recordId) {
+        const recordResult = await getDB().query(
+          'SELECT patient_id FROM medical_records WHERE id = $1 AND deleted_at IS NULL',
+          [recordId]
+        );
+        if (!recordResult.rows.length) {
+          return res.status(404).json({ error: 'Medical record not found' });
+        }
+        if (resolvedPatientId && resolvedPatientId !== recordResult.rows[0].patient_id) {
+          return res.status(409).json({ error: 'Record and patient context do not match' });
+        }
+        resolvedPatientId = recordResult.rows[0].patient_id;
+      }
+      if (category !== 'system-files' && !resolvedPatientId) {
+        return res.status(400).json({ error: 'Patient context is required for health files' });
+      }
+      if (resolvedPatientId && !await findPatientAccess(req.user, resolvedPatientId, 'clinical')) {
+        return res.status(403).json({ error: 'Patient file access denied' });
+      }
+
+      let inspections;
+      try {
+        inspections = await Promise.all(req.files.map(inspectFile));
+      } catch (inspectionError) {
+        logger.warn('File inspection rejected an upload', {
+          error: inspectionError.message,
+          userId: req.user.id,
+          patientId: resolvedPatientId
+        });
+        return res.status(422).json({ error: inspectionError.message });
+      }
 
       // Upload files
-      const uploadPromises = req.files.map(async (file) => {
+      const uploadPromises = req.files.map(async (file, index) => {
         let storageResult;
         try {
           const metadata = {
             category,
-            recordId,
-            patientId,
-            description,
-            tags: tags ? tags.join(',') : '',
-            isPrivate: isPrivate.toString(),
+            isPrivate: 'true',
             uploadedBy: req.user.id
           };
 
@@ -184,7 +222,7 @@ router.post('/upload',
           // Save file metadata to database
           const fileAttachment = await FileAttachment.create({
             medical_record_id: recordId,
-            patient_id: patientId,
+            patient_id: resolvedPatientId,
             file_name: file.originalname,
             file_type: file.mimetype,
             file_size: file.size,
@@ -198,7 +236,9 @@ router.post('/upload',
             category: category,
             description: description,
             tags: tags ? tags.join(',') : null,
-            is_private: isPrivate,
+            is_private: true,
+            detected_mime_type: inspections[index].detectedMimeType,
+            malware_scan_status: inspections[index].malwareScanStatus,
             uploaded_by: req.user.id
           });
 
@@ -206,11 +246,10 @@ router.post('/upload',
           auditLogger.info('File uploaded', {
             userId: req.user.id,
             fileId: fileAttachment.id,
-            fileName: file.originalname,
             fileSize: file.size,
             category,
             recordId,
-            patientId,
+            patientId: resolvedPatientId,
             timestamp: new Date().toISOString(),
             ip: req.ip
           });
@@ -279,8 +318,12 @@ router.post('/upload',
 );
 
 // GET /api/files/:fileId - Download file
-router.get('/:fileId',
+router.get('/:fileId([0-9a-fA-F-]{36})',
   authorize(['doctor', 'nurse', 'admin']),
+  requirePatientResourceAccess({
+    table: 'file_attachments',
+    id: req => req.params.fileId
+  }),
   async (req, res) => {
     try {
       const { error, value } = fileParamsSchema.validate(req.params);
@@ -293,6 +336,9 @@ router.get('/:fileId',
       const { fileId } = value;
       const attachment = await FileAttachment.findById(fileId);
       if (!attachment) return res.status(404).json({ error: 'File not found' });
+      if (attachment.malware_scan_status !== 'clean') {
+        return res.status(423).json({ error: 'File is quarantined pending security review' });
+      }
 
       if (attachment.is_private && !isAdmin(req) && !isOwner(req, attachment)) {
         auditLogger.info('File download denied', {
@@ -358,6 +404,21 @@ router.get('/',
       }
 
       let files = [];
+      let resolvedPatientId = patientId || null;
+      if (recordId) {
+        const recordResult = await getDB().query(
+          'SELECT patient_id FROM medical_records WHERE id = $1 AND deleted_at IS NULL',
+          [recordId]
+        );
+        if (!recordResult.rows.length) return res.status(404).json({ error: 'Medical record not found' });
+        resolvedPatientId = recordResult.rows[0].patient_id;
+      }
+      if (!isAdmin(req) && !resolvedPatientId) {
+        return res.status(400).json({ error: 'Patient or medical record context is required' });
+      }
+      if (resolvedPatientId && !await findPatientAccess(req.user, resolvedPatientId, 'clinical')) {
+        return res.status(403).json({ error: 'Patient file access denied' });
+      }
 
       // Get files from database based on filters
       if (recordId) {
@@ -411,8 +472,12 @@ router.get('/',
 );
 
 // DELETE /api/files/:fileId - Delete file
-router.delete('/:fileId',
-  authorize(['doctor', 'admin']),
+router.delete('/:fileId([0-9a-fA-F-]{36})',
+  authorize(['admin']),
+  requirePatientResourceAccess({
+    table: 'file_attachments',
+    id: req => req.params.fileId
+  }),
   async (req, res) => {
     try {
       const { error, value } = fileParamsSchema.validate(req.params);
@@ -423,6 +488,12 @@ router.delete('/:fileId',
       }
 
       const { fileId } = value;
+      const reason = String(req.get('X-Archive-Reason') || '').trim();
+      if (reason.length < 20 || reason.length > 500) {
+        return res.status(400).json({
+          error: 'An archive reason between 20 and 500 characters is required'
+        });
+      }
       const attachment = await FileAttachment.findById(fileId);
       if (!attachment) return res.status(404).json({ error: 'File not found' });
 
@@ -436,11 +507,10 @@ router.delete('/:fileId',
         return res.status(403).json({ error: 'Access denied' });
       }
 
-      const { bucket, key } = resolveStorageLocation(attachment);
-      await storageService.deleteFile(bucket, key);
-      await attachment.delete();
+      resolveStorageLocation(attachment);
+      await attachment.archive(req.user.id, reason);
 
-      auditLogger.info('File deleted', {
+      auditLogger.info('File archived', {
         userId: req.user.id,
         fileId,
         patientId: attachment.patient_id || null,
@@ -448,7 +518,7 @@ router.delete('/:fileId',
         ip: req.ip
       });
 
-      return res.json({ message: 'File deleted successfully', id: fileId });
+      return res.json({ message: 'File archived successfully', id: fileId });
 
     } catch (error) {
       logger.error('File deletion failed', { error: error.message, fileId: req.params.fileId, userId: req.user?.id });
@@ -469,7 +539,8 @@ router.get('/info/allowed-types',
       data: {
         allowedTypes: ALLOWED_FILE_TYPES,
         maxFileSize: MAX_FILE_SIZE,
-        maxFileSizeMB: MAX_FILE_SIZE / (1024 * 1024)
+        maxFileSizeMB: MAX_FILE_SIZE / (1024 * 1024),
+        maxFilesPerUpload: 3
       }
     });
   }
@@ -518,7 +589,7 @@ router.use((error, req, res, next) => {
     if (error.code === 'LIMIT_FILE_COUNT') {
       return res.status(400).json({
         error: 'Too many files',
-        message: 'Maximum 10 files per upload'
+        message: 'Maximum 3 files per upload'
       });
     }
   }

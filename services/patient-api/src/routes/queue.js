@@ -6,10 +6,29 @@ const Patient = require('../models/Patient');
 const { logger } = require('../utils/logger');
 const { emitQueueUpdate } = require('../utils/websocket');
 const { authorize } = require('../middleware/auth');
+const { requireEncounterAccess } = require('../security/accessControl');
 
 const QUEUE_READ_ROLES = ['admin', 'doctor', 'nurse', 'receptionist', 'lab-tech', 'pharmacist', 'billing', 'radiologist', 'radiographer'];
 const QUEUE_REGISTER_ROLES = ['admin', 'doctor', 'nurse', 'receptionist'];
 const QUEUE_PROCESS_ROLES = ['admin', 'doctor', 'nurse', 'receptionist', 'lab-tech', 'pharmacist', 'billing', 'radiologist', 'radiographer'];
+const ROLE_QUEUE_TYPES = Object.freeze({
+  doctor: ['consultation'],
+  nurse: ['triage', 'consultation'],
+  receptionist: ['triage', 'consultation'],
+  'lab-tech': ['lab'],
+  pharmacist: ['pharmacy'],
+  billing: ['billing'],
+  radiologist: ['radiology'],
+  radiographer: ['radiology']
+});
+const canUseQueueType = (user, queueType) =>
+  user.roles.includes('admin') ||
+  user.roles.some(role => (ROLE_QUEUE_TYPES[role] || []).includes(queueType));
+const rejectQueueType = (req, res, queueType) => {
+  if (canUseQueueType(req.user, queueType)) return false;
+  res.status(403).json({ success: false, error: 'Queue access denied' });
+  return true;
+};
 
 const serializeQueueStatistics = (stats = {}) => ({
   totalWaiting: Number(stats.total_waiting) || 0,
@@ -24,6 +43,7 @@ const serializeQueueStatistics = (stats = {}) => ({
 router.get('/', authorize(QUEUE_READ_ROLES), async (req, res) => {
   try {
     const { queueType = 'consultation', status } = req.query;
+    if (rejectQueueType(req, res, queueType)) return;
     
     const queue = await QueueEntry.getAll({ queueType, status });
     
@@ -42,6 +62,7 @@ router.get('/', authorize(QUEUE_READ_ROLES), async (req, res) => {
 router.get('/statistics', authorize(QUEUE_READ_ROLES), async (req, res) => {
   try {
     const { queueType = 'consultation' } = req.query;
+    if (rejectQueueType(req, res, queueType)) return;
     const stats = await QueueEntry.getQueueStatistics(null, queueType);
 
     res.json({
@@ -60,6 +81,7 @@ router.get('/clinic/:clinicId', authorize(QUEUE_READ_ROLES), async (req, res) =>
     const { clinicId } = req.params;
     const { queueType = 'consultation' } = req.query;
     
+    if (rejectQueueType(req, res, queueType)) return;
     const queue = await QueueEntry.getClinicQueue(clinicId, queueType);
     
     res.json({
@@ -78,6 +100,7 @@ router.get('/clinic/:clinicId/statistics', authorize(QUEUE_READ_ROLES), async (r
   try {
     const { clinicId } = req.params;
     const { queueType = 'consultation' } = req.query;
+    if (rejectQueueType(req, res, queueType)) return;
     const stats = await QueueEntry.getQueueStatistics(clinicId, queueType);
     
     res.json({
@@ -94,6 +117,12 @@ router.get('/clinic/:clinicId/statistics', authorize(QUEUE_READ_ROLES), async (r
 router.get('/doctor/:doctorId', authorize(QUEUE_READ_ROLES), async (req, res) => {
   try {
     const { doctorId } = req.params;
+    if (
+      !req.user.roles.some(role => ['admin', 'receptionist'].includes(role)) &&
+      doctorId !== req.user.staffId
+    ) {
+      return res.status(403).json({ success: false, error: 'Doctor queue access denied' });
+    }
     const queue = await QueueEntry.getDoctorQueue(doctorId);
     
     res.json({
@@ -108,9 +137,20 @@ router.get('/doctor/:doctorId', authorize(QUEUE_READ_ROLES), async (req, res) =>
 });
 
 // Add patient to queue
-router.post('/', authorize(QUEUE_REGISTER_ROLES), async (req, res) => {
+router.post(
+  '/',
+  authorize(QUEUE_REGISTER_ROLES),
+  requireEncounterAccess({
+    access: 'operational',
+    encounterId: req => req.body.encounterId
+  }),
+  async (req, res) => {
   try {
     const { encounterId, patientId, clinicId, doctorId, queueType, isEmergency, waitingLocation } = req.body;
+    if (patientId !== req.accessContext.patientId) {
+      return res.status(409).json({ success: false, error: 'Encounter and patient do not match' });
+    }
+    if (rejectQueueType(req, res, queueType || 'consultation')) return;
     
     const queueEntry = await QueueEntry.create({
       encounterId,
@@ -147,6 +187,7 @@ router.put('/:id/status', authorize(QUEUE_PROCESS_ROLES), async (req, res) => {
     
     const db = require('../utils/database').getDB();
     const currentQueueType = queueEntry.queue_type;
+    if (rejectQueueType(req, res, currentQueueType)) return;
     
     // Update timestamps based on status
     const updates = { status };
@@ -300,6 +341,7 @@ router.put('/:id/move', authorize(QUEUE_PROCESS_ROLES), async (req, res) => {
     if (!queueEntry) {
       return res.status(404).json({ success: false, error: 'Queue entry not found' });
     }
+    if (rejectQueueType(req, res, queueEntry.queue_type)) return;
     
     const updates = {};
     if (newPosition) updates.queuePosition = newPosition;

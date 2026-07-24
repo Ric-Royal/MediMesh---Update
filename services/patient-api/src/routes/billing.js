@@ -4,7 +4,7 @@ const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
 
-router.use(authorize(['admin', 'billing', 'doctor']));
+router.use(authorize(['admin', 'billing']));
 
 class BillingRequestError extends Error {
   constructor(message, status = 400) {
@@ -196,59 +196,13 @@ router.get('/invoices/:id', async (req, res) => {
   }
 });
 
-// Create invoice
-router.post('/invoices', async (req, res) => {
-  const client = await getDB().connect();
-  try {
-    await client.query('BEGIN');
-    
-    const {
-      patient_id, encounter_id, invoice_type, payment_method,
-      payment_terms, notes, items
-    } = req.body;
-    
-    // Create invoice
-    const invoiceQuery = `
-      INSERT INTO invoices (
-        patient_id, encounter_id, invoice_type, payment_method,
-        payment_terms, notes, billed_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *
-    `;
-    const invoiceResult = await client.query(invoiceQuery, [
-      patient_id, encounter_id, invoice_type, payment_method,
-      payment_terms, notes, req.user?.userId
-    ]);
-    
-    const invoice = invoiceResult.rows[0];
-    
-    // Add items
-    for (const item of items) {
-      const itemQuery = `
-        INSERT INTO invoice_items (
-          invoice_id, item_type, item_description, quantity, unit_price,
-          discount_amount, tax_amount, provider_id, department_id, service_date
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      `;
-      await client.query(itemQuery, [
-        invoice.id, item.item_type, item.item_description,
-        item.quantity || 1, item.unit_price,
-        item.discount_amount || 0, item.tax_amount || 0,
-        item.provider_id, item.department_id, item.service_date
-      ]);
-    }
-    
-    await client.query('COMMIT');
-    
-    logger.info(`Invoice created: ${invoice.invoice_number}`);
-    res.status(201).json({ success: true, data: invoice });
-  } catch (error) {
-    await client.query('ROLLBACK');
-    logger.error('Error creating invoice:', error);
-    res.status(500).json({ success: false, error: error.message });
-  } finally {
-    client.release();
-  }
+// Prices and providers are derived from completed clinical services by the
+// automatic invoicing triggers. Arbitrary client-authored invoices are blocked.
+router.post('/invoices', (req, res) => {
+  res.status(405).json({
+    success: false,
+    error: 'Invoices are generated from verified service catalog entries'
+  });
 });
 
 // Update invoice status

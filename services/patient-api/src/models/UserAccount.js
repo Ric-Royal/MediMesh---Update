@@ -37,12 +37,13 @@ class UserAccount {
       ALTER TABLE app_users ADD COLUMN IF NOT EXISTS mfa_secret_encrypted TEXT;
       ALTER TABLE app_users ADD COLUMN IF NOT EXISTS mfa_pending_secret_encrypted TEXT;
       ALTER TABLE app_users ADD COLUMN IF NOT EXISTS mfa_enabled_at TIMESTAMP;
+      ALTER TABLE app_users ADD COLUMN IF NOT EXISTS mfa_last_counter BIGINT;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_app_users_username_lower
         ON app_users (LOWER(username));
       CREATE INDEX IF NOT EXISTS idx_app_users_active ON app_users(is_active);
     `);
 
-    await this.bootstrapDevelopmentAccounts();
+    await this.bootstrapAdministrator();
   }
 
   static normalizeRoles(roles = []) {
@@ -50,10 +51,9 @@ class UserAccount {
     return normalized.length ? normalized : ['user'];
   }
 
-  static async bootstrapDevelopmentAccounts() {
+  static async bootstrapAdministrator() {
     const bootstrapPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD;
-    const allowDemo = process.env.NODE_ENV === 'development' && process.env.ALLOW_DEMO_AUTH === 'true';
-    if (!bootstrapPassword && !allowDemo) {
+    if (!bootstrapPassword) {
       const countResult = await getDB().query('SELECT COUNT(*)::int AS count FROM app_users');
       if (countResult.rows[0].count === 0) {
         logger.warn('No application users exist. Set BOOTSTRAP_ADMIN_PASSWORD to create the first administrator.');
@@ -64,24 +64,12 @@ class UserAccount {
     const accounts = [{
       id: '550e8400-e29b-41d4-a716-446655440000',
       username: process.env.BOOTSTRAP_ADMIN_USERNAME || 'admin',
-      password: bootstrapPassword || 'admin123',
+      password: bootstrapPassword,
       display_name: 'System Administrator',
       email: 'admin@medimesh.local',
-      roles: ['admin', 'doctor', 'nurse', 'user'],
+      roles: ['admin', 'user'],
       primary_role: 'admin'
     }];
-
-    if (allowDemo) {
-      accounts.push(
-        { id: '550e8400-e29b-41d4-a716-446655440001', username: 'doctor', password: 'doctor123', display_name: 'Dr. John Smith', email: 'doctor@medimesh.local', roles: ['doctor', 'user'], primary_role: 'doctor' },
-        { id: '550e8400-e29b-41d4-a716-446655440002', username: 'nurse', password: 'nurse123', display_name: 'Nurse Jane Doe', email: 'nurse@medimesh.local', roles: ['nurse', 'user'], primary_role: 'nurse' },
-        { id: '550e8400-e29b-41d4-a716-446655440004', username: 'receptionist', password: 'reception123', display_name: 'Front Desk', email: 'reception@medimesh.local', roles: ['receptionist', 'user'], primary_role: 'receptionist' },
-        { id: '550e8400-e29b-41d4-a716-446655440005', username: 'labtech', password: 'lab123', display_name: 'Laboratory Technologist', email: 'lab@medimesh.local', roles: ['lab-tech', 'user'], primary_role: 'lab-tech' },
-        { id: '550e8400-e29b-41d4-a716-446655440006', username: 'pharmacist', password: 'pharmacy123', display_name: 'Pharmacy Officer', email: 'pharmacy@medimesh.local', roles: ['pharmacist', 'user'], primary_role: 'pharmacist' },
-        { id: '550e8400-e29b-41d4-a716-446655440007', username: 'radiologist', password: 'radiology123', display_name: 'Radiology Officer', email: 'radiology@medimesh.local', roles: ['radiologist', 'radiographer', 'user'], primary_role: 'radiologist' },
-        { id: '550e8400-e29b-41d4-a716-446655440008', username: 'billing', password: 'billing123', display_name: 'Cashier', email: 'billing@medimesh.local', roles: ['billing', 'user'], primary_role: 'billing' }
-      );
-    }
 
     for (const account of accounts) {
       const existing = await getDB().query('SELECT id FROM app_users WHERE LOWER(username) = LOWER($1)', [account.username]);
@@ -89,7 +77,7 @@ class UserAccount {
       await this.ensureStaffIdentity(account);
       await this.create(account);
     }
-    logger.info(`Bootstrapped ${accounts.length} application account(s)`);
+    logger.info('Bootstrapped the initial administrator account');
   }
 
   static async ensureStaffIdentity(account, executor = getDB()) {
@@ -151,8 +139,22 @@ class UserAccount {
     await getDB().query('UPDATE app_users SET last_login_at = NOW() WHERE id = $1', [id]);
   }
 
+  static async revokeSessions(id) {
+    await getDB().query(`
+      UPDATE app_users
+      SET token_version = token_version + 1, updated_at = NOW()
+      WHERE id = $1
+    `, [id]);
+  }
+
   static async getSecurityRecord(id) {
-    const result = await getDB().query('SELECT * FROM app_users WHERE id = $1 AND is_active = TRUE', [id]);
+    const result = await getDB().query(`
+      SELECT u.*, s.license_number, s.license_expiry,
+             s.staff_number, s.role AS staff_role, s.status AS staff_status
+      FROM app_users u
+      LEFT JOIN staff s ON s.id = u.id
+      WHERE u.id = $1
+    `, [id]);
     return result.rows[0] || null;
   }
 
@@ -164,11 +166,24 @@ class UserAccount {
   static async stageMfaSecret(id, encryptedSecret) {
     const result = await getDB().query(`
       UPDATE app_users
-      SET mfa_pending_secret_encrypted = $2, updated_at = NOW()
+      SET mfa_pending_secret_encrypted = $2,
+          mfa_last_counter = NULL,
+          updated_at = NOW()
       WHERE id = $1 AND is_active = TRUE
       RETURNING *
     `, [id, encryptedSecret]);
     return result.rows[0] ? this.toSafeJSON(result.rows[0]) : null;
+  }
+
+  static async consumeMfaCounter(id, counter) {
+    const result = await getDB().query(`
+      UPDATE app_users
+      SET mfa_last_counter = $2, updated_at = NOW()
+      WHERE id = $1
+        AND (mfa_last_counter IS NULL OR mfa_last_counter < $2)
+      RETURNING id
+    `, [id, counter]);
+    return result.rows.length === 1;
   }
 
   static async enableMfa(id) {
@@ -195,6 +210,7 @@ class UserAccount {
           mfa_secret_encrypted = NULL,
           mfa_pending_secret_encrypted = NULL,
           mfa_enabled_at = NULL,
+          mfa_last_counter = NULL,
           token_version = token_version + 1,
           updated_at = NOW()
       WHERE id = $1 RETURNING *
@@ -212,31 +228,37 @@ class UserAccount {
     return result.rows.map(this.toSafeJSON);
   }
 
-  static async findById(id) {
-    const result = await getDB().query('SELECT * FROM app_users WHERE id = $1', [id]);
+  static async findById(id, executor = getDB()) {
+    const result = await executor.query('SELECT * FROM app_users WHERE id = $1', [id]);
     return result.rows[0] ? this.toSafeJSON(result.rows[0]) : null;
   }
 
-  static async update(id, changes) {
-    const current = await this.findById(id);
+  static async update(id, changes, executor = getDB()) {
+    const current = await this.findById(id, executor);
     if (!current) return null;
     const roles = changes.roles ? this.normalizeRoles(changes.roles) : current.roles;
     const departmentId = Object.prototype.hasOwnProperty.call(changes, 'department_id')
       ? changes.department_id || null
       : current.department_id;
-    const result = await getDB().query(`
+    const active = changes.is_active === undefined ? current.is_active : changes.is_active;
+    const securityChanged = JSON.stringify([...roles].sort()) !== JSON.stringify([...current.roles].sort()) ||
+      departmentId !== current.department_id ||
+      active !== current.is_active;
+    const result = await executor.query(`
       UPDATE app_users SET
         display_name = COALESCE($2, display_name),
         email = COALESCE($3, email),
         roles = $4::jsonb,
         department_id = $5,
         is_active = COALESCE($6, is_active),
+        token_version = token_version + CASE WHEN $7::boolean THEN 1 ELSE 0 END,
         updated_at = NOW()
       WHERE id = $1 RETURNING *
     `, [
       id, changes.display_name || null, changes.email || null,
       JSON.stringify(roles), departmentId,
-      changes.is_active === undefined ? null : changes.is_active
+      changes.is_active === undefined ? null : changes.is_active,
+      securityChanged
     ]);
     return this.toSafeJSON(result.rows[0]);
   }

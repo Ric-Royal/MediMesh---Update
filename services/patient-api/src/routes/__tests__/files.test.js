@@ -30,6 +30,19 @@ jest.mock('../../utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   auditLogger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 }));
+jest.mock('../../utils/database', () => ({
+  getDB: () => ({ query: jest.fn().mockResolvedValue({ rows: [] }) })
+}));
+jest.mock('../../security/accessControl', () => ({
+  findPatientAccess: jest.fn().mockResolvedValue(true),
+  requirePatientResourceAccess: () => (req, res, next) => next()
+}));
+jest.mock('../../security/fileInspection', () => ({
+  inspectFile: jest.fn().mockResolvedValue({
+    detectedMimeType: 'text/plain',
+    malwareScanStatus: 'clean'
+  })
+}));
 
 const express = require('express');
 const { Readable } = require('stream');
@@ -67,7 +80,8 @@ describe('file routes', () => {
     is_private: false,
     patient_id: 'a276d8a6-9ed4-4439-b0c7-1d24aa825fcc',
     medical_record_id: null,
-    delete: jest.fn().mockResolvedValue({}),
+    malware_scan_status: 'clean',
+    archive: jest.fn().mockResolvedValue({}),
     ...overrides
   });
 
@@ -142,17 +156,15 @@ describe('file routes', () => {
     expect(FileAttachment.findById).not.toHaveBeenCalled();
   });
 
-  test('allows an owning doctor to remove storage then soft-delete metadata', async () => {
+  test('prevents a clinician from archiving retained attachments', async () => {
     const record = attachment();
     FileAttachment.findById.mockResolvedValue(record);
 
     const response = await request(app).delete(`/api/files/${fileId}`);
 
-    expect(response.status).toBe(200);
-    expect(storageService.deleteFile).toHaveBeenCalledWith('medimesh-system-files', objectKey);
-    expect(record.delete).toHaveBeenCalledTimes(1);
-    expect(storageService.deleteFile.mock.invocationCallOrder[0]).toBeLessThan(record.delete.mock.invocationCallOrder[0]);
-    expect(auditLogger.info).toHaveBeenCalledWith('File deleted', expect.objectContaining({ fileId, userId: ownerId }));
+    expect(response.status).toBe(403);
+    expect(storageService.deleteFile).not.toHaveBeenCalled();
+    expect(record.archive).not.toHaveBeenCalled();
   });
 
   test('blocks a non-owner doctor from deleting the attachment', async () => {
@@ -165,26 +177,31 @@ describe('file routes', () => {
 
     expect(response.status).toBe(403);
     expect(storageService.deleteFile).not.toHaveBeenCalled();
-    expect(record.delete).not.toHaveBeenCalled();
+    expect(record.archive).not.toHaveBeenCalled();
   });
 
-  test('allows an administrator to delete another user attachment', async () => {
+  test('allows an administrator to archive another user attachment without deleting storage', async () => {
     const record = attachment();
     FileAttachment.findById.mockResolvedValue(record);
 
     const response = await request(app)
       .delete(`/api/files/${fileId}`)
       .set('x-user-id', otherId)
-      .set('x-role', 'admin');
+      .set('x-role', 'admin')
+      .set('X-Archive-Reason', 'Patient record retention request reviewed');
 
     expect(response.status).toBe(200);
-    expect(storageService.deleteFile).toHaveBeenCalledTimes(1);
-    expect(record.delete).toHaveBeenCalledTimes(1);
+    expect(storageService.deleteFile).not.toHaveBeenCalled();
+    expect(record.archive).toHaveBeenCalledWith(
+      otherId,
+      'Patient record retention request reviewed'
+    );
   });
 
   test('accepts a valid multipart upload through Multer 2', async () => {
     const response = await request(app)
       .post('/api/files/upload')
+      .set('x-role', 'admin')
       .field('category', 'system-files')
       .attach('files', Buffer.from('MediMesh!'), {
         filename: 'clinical-note.txt',
@@ -205,6 +222,7 @@ describe('file routes', () => {
   test('rejects a disallowed multipart type before storage', async () => {
     const response = await request(app)
       .post('/api/files/upload')
+      .set('x-role', 'admin')
       .field('category', 'system-files')
       .attach('files', Buffer.from('binary'), {
         filename: 'payload.exe',
@@ -220,6 +238,7 @@ describe('file routes', () => {
 
     const response = await request(app)
       .post('/api/files/upload')
+      .set('x-role', 'admin')
       .field('category', 'system-files')
       .attach('files', Buffer.from('MediMesh!'), {
         filename: 'clinical-note.txt',

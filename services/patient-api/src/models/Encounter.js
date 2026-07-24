@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../utils/database');
+const { patientScope } = require('../security/accessControl');
 
 const UPDATEABLE_FIELDS = new Set([
   'status',
@@ -24,7 +25,7 @@ const UPDATEABLE_FIELDS = new Set([
 ]);
 
 class Encounter {
-  static async create(encounterData) {
+  static async create(encounterData, executor = getDB()) {
     const id = uuidv4();
     const query = `
       INSERT INTO encounters (
@@ -51,7 +52,7 @@ class Encounter {
       encounterData.createdBy || encounterData.created_by || null
     ];
     
-    const result = await getDB().query(query, values);
+    const result = await executor.query(query, values);
     return result.rows[0];
   }
   
@@ -69,8 +70,8 @@ class Encounter {
     return result.rows[0];
   }
   
-  static async getActiveEncounters(clinicId) {
-    const query = `
+  static async getActiveEncounters(clinicId, user = null) {
+    let query = `
       SELECT e.*, 
              p.first_name, p.last_name, p.uhid,
              s.first_name as doctor_first_name, s.last_name as doctor_last_name
@@ -81,17 +82,30 @@ class Encounter {
         AND e.status IN ('waiting', 'in-consultation')
       ORDER BY e.registration_time ASC
     `;
-    const result = await getDB().query(query, [clinicId]);
+    const params = [clinicId];
+    if (user) {
+      const scope = patientScope(user, {
+        alias: 'p',
+        access: 'demographics',
+        parameterOffset: params.length
+      });
+      query = query.replace(
+        'ORDER BY e.registration_time ASC',
+        `AND (${scope.clause}) ORDER BY e.registration_time ASC`
+      );
+      params.push(...scope.params);
+    }
+    const result = await getDB().query(query, params);
     return result.rows;
   }
   
-  static async getEncountersByDate(date) {
+  static async getEncountersByDate(date, user = null) {
     const startOfDay = new Date(date);
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
     
-    const query = `
+    let query = `
       SELECT e.*, 
              p.first_name, p.last_name, p.uhid
       FROM encounters e
@@ -99,7 +113,20 @@ class Encounter {
       WHERE e.registration_time BETWEEN $1 AND $2
       ORDER BY e.registration_time ASC
     `;
-    const result = await getDB().query(query, [startOfDay, endOfDay]);
+    const params = [startOfDay, endOfDay];
+    if (user) {
+      const scope = patientScope(user, {
+        alias: 'p',
+        access: 'demographics',
+        parameterOffset: params.length
+      });
+      query = query.replace(
+        'ORDER BY e.registration_time ASC',
+        `AND (${scope.clause}) ORDER BY e.registration_time ASC`
+      );
+      params.push(...scope.params);
+    }
+    const result = await getDB().query(query, params);
     return result.rows;
   }
   

@@ -6,8 +6,8 @@ let redisClient;
 const connectRedis = async () => {
   try {
     redisClient = createClient({
-      url: process.env.REDIS_URL || 'redis://localhost:6379',
-      password: process.env.REDIS_PASSWORD || 'redis_password'
+      url: process.env.REDIS_URL,
+      password: process.env.REDIS_PASSWORD
     });
 
     redisClient.on('error', (err) => {
@@ -134,4 +134,4 @@ module.exports = {
   closeRedis,
   cache,
   eventStream
-}; 
+};

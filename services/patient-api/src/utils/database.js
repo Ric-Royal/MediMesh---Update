@@ -6,16 +6,20 @@ let pool;
 
 const connectDB = async () => {
   try {
-    const connectionString = process.env.DATABASE_URL || (
-      process.env.NODE_ENV === 'development'
-        ? 'postgresql://medimesh_user:MediMeshDB2024!@localhost:5432/medimesh'
-        : undefined
-    );
-    if (!connectionString) throw new Error('DATABASE_URL is required');
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString && !process.env.DATABASE_HOST) {
+      throw new Error('Database connection settings are required');
+    }
     const sslEnabled = process.env.DATABASE_SSL === 'true';
     const caPath = process.env.DATABASE_SSL_CA_FILE;
     pool = new Pool({
-      connectionString,
+      ...(connectionString ? { connectionString } : {
+        host: process.env.DATABASE_HOST,
+        port: Number(process.env.DATABASE_PORT) || 5432,
+        database: process.env.DATABASE_NAME,
+        user: process.env.DATABASE_USER,
+        password: process.env.DATABASE_PASSWORD
+      }),
       ssl: sslEnabled ? {
         rejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false',
         ...(caPath ? { ca: fs.readFileSync(caPath, 'utf8') } : {})

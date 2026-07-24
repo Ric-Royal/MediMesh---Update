@@ -1,56 +1,30 @@
 name: ${COMPOSE_PROJECT_NAME:-medimesh-clinic}
 
+# Production expects approved, TLS-enabled PostgreSQL, Redis and S3-compatible
+# services. Terminate public TLS at the facility ingress in front of web-app.
 services:
-  traefik:
-    image: ${TRAEFIK_IMAGE}
-    restart: unless-stopped
-    command:
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
-      - --entrypoints.web.address=:80
-      - --entrypoints.websecure.address=:443
-      - --entrypoints.web.http.redirections.entrypoint.to=websecure
-      - --entrypoints.web.http.redirections.entrypoint.scheme=https
-      - --certificatesresolvers.letsencrypt.acme.email=${TLS_EMAIL}
-      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
-      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
-      - --accesslog=true
-      - --accesslog.fields.headers.defaultmode=drop
-      - --log.level=INFO
-    ports:
-      - 80:80
-      - 443:443
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - traefik_certs:/letsencrypt
-    networks: [edge]
-    security_opt: [no-new-privileges:true]
-
   web-app:
     image: ${MEDIMESH_WEB_IMAGE}
     restart: unless-stopped
     depends_on:
       patient-api:
         condition: service_healthy
-    networks: [edge, backend]
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+    networks: [edge, application]
     read_only: true
     tmpfs:
-      - /var/cache/nginx
-      - /var/run
       - /tmp
     security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 100
+    mem_limit: 256m
+    cpus: 0.5
     healthcheck:
-      test: [CMD, wget, -qO-, http://localhost/health]
+      test: [CMD, wget, -qO-, http://localhost:8080/health]
       interval: 30s
       timeout: 5s
       retries: 5
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.medimesh.rule=Host(`${DOMAIN}`)
-      - traefik.http.routers.medimesh.entrypoints=websecure
-      - traefik.http.routers.medimesh.tls=true
-      - traefik.http.routers.medimesh.tls.certresolver=letsencrypt
-      - traefik.http.services.medimesh.loadbalancer.server.port=80
 
   patient-api:
     image: ${MEDIMESH_API_IMAGE}
@@ -61,17 +35,22 @@ services:
       PUBLIC_BASE_URL: https://${DOMAIN}
       ALLOWED_ORIGINS: https://${DOMAIN}
       DATABASE_URL_FILE: /run/secrets/database_url
-      REDIS_URL: redis://redis:6379
+      DATABASE_SSL: "true"
+      DATABASE_SSL_REJECT_UNAUTHORIZED: "true"
+      DATABASE_SSL_CA_FILE: /run/secrets/database_ca
+      REDIS_URL: ${REDIS_URL}
       REDIS_PASSWORD_FILE: /run/secrets/redis_password
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY_FILE: /run/secrets/minio_user
-      MINIO_SECRET_KEY_FILE: /run/secrets/minio_password
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY_FILE: /run/secrets/minio_app_user
+      MINIO_SECRET_KEY_FILE: /run/secrets/minio_app_password
       JWT_SECRET_FILE: /run/secrets/jwt_secret
       MFA_ENCRYPTION_KEY_FILE: /run/secrets/mfa_encryption_key
+      FILE_ENCRYPTION_KEY_FILE: /run/secrets/file_encryption_key
       REQUIRE_MFA: "true"
-      SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-28800}
-      ALLOW_DEMO_AUTH: "false"
-      ALLOW_INSECURE_DEV_TOKENS: "false"
+      SESSION_TTL_SECONDS: 900
+      AUDIT_FAIL_CLOSED: "true"
+      DLP_EXPORT_LIMIT: 20
+      RUN_RUNTIME_SCHEMA_SYNC: "false"
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
       BOOTSTRAP_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_admin_password
       MPESA_ENVIRONMENT: ${MPESA_ENVIRONMENT:-sandbox}
@@ -81,14 +60,18 @@ services:
       MPESA_SHORTCODE_FILE: /run/secrets/mpesa_shortcode
       MPESA_CALLBACK_TOKEN_FILE: /run/secrets/mpesa_callback_token
       MPESA_CALLBACK_URL: https://${DOMAIN}/api/payments/mpesa/callback
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: 3310
       LOG_LEVEL: ${LOG_LEVEL:-info}
     secrets:
       - database_url
+      - database_ca
       - redis_password
-      - minio_user
-      - minio_password
+      - minio_app_user
+      - minio_app_password
       - jwt_secret
       - mfa_encryption_key
+      - file_encryption_key
       - bootstrap_admin_password
       - mpesa_consumer_key
       - mpesa_consumer_secret
@@ -96,13 +79,16 @@ services:
       - mpesa_shortcode
       - mpesa_callback_token
     depends_on:
-      postgres: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      minio: { condition: service_healthy }
-    networks: [backend]
+      clamav:
+        condition: service_healthy
+    networks: [application, scanning, egress]
     read_only: true
     tmpfs: [/tmp]
     security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    pids_limit: 200
+    mem_limit: 768m
+    cpus: 1.0
     healthcheck:
       test: [CMD, node, -e, "require('http').get('http://localhost:3000/health/live',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 30s
@@ -110,74 +96,43 @@ services:
       start_period: 20s
       retries: 5
 
-  postgres:
-    image: ${POSTGRES_IMAGE}
+  clamav:
+    image: ${CLAMAV_IMAGE}
     restart: unless-stopped
-    environment:
-      POSTGRES_DB: medimesh
-      POSTGRES_USER: medimesh
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-    secrets: [postgres_password]
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ../init-scripts:/docker-entrypoint-initdb.d:ro
-    networks: [backend]
+      - clamav_data:/var/lib/clamav
+    networks: [scanning]
     security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: 1536m
+    cpus: 1.0
     healthcheck:
-      test: [CMD-SHELL, pg_isready -U medimesh -d medimesh]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  redis:
-    image: ${REDIS_IMAGE}
-    restart: unless-stopped
-    command: [sh, -c, 'exec redis-server --appendonly yes --requirepass "$$(cat /run/secrets/redis_password)"']
-    secrets: [redis_password]
-    volumes: [redis_data:/data]
-    networks: [backend]
-    security_opt: [no-new-privileges:true]
-    healthcheck:
-      test: [CMD-SHELL, 'redis-cli -a "$$(cat /run/secrets/redis_password)" ping | grep PONG']
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  minio:
-    image: ${MINIO_IMAGE}
-    restart: unless-stopped
-    command: server /data --console-address :9001
-    environment:
-      MINIO_ROOT_USER_FILE: /run/secrets/minio_user
-      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_password
-    secrets: [minio_user, minio_password]
-    volumes: [minio_data:/data]
-    networks: [backend]
-    security_opt: [no-new-privileges:true]
-    healthcheck:
-      test: [CMD, curl, -f, http://localhost:9000/minio/health/live]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      test: [CMD-SHELL, "echo PING | nc 127.0.0.1 3310 | grep PONG"]
+      interval: 30s
+      timeout: 10s
+      start_period: 120s
+      retries: 20
 
 networks:
   edge: {}
-  backend: {}
+  application:
+    internal: true
+  scanning:
+    internal: true
+  egress: {}
 
 volumes:
-  postgres_data: {}
-  redis_data: {}
-  minio_data: {}
-  traefik_certs: {}
+  clamav_data: {}
 
 secrets:
   database_url: { file: ./secrets/database_url }
-  postgres_password: { file: ./secrets/postgres_password }
+  database_ca: { file: ./secrets/database_ca }
   redis_password: { file: ./secrets/redis_password }
-  minio_user: { file: ./secrets/minio_user }
-  minio_password: { file: ./secrets/minio_password }
+  minio_app_user: { file: ./secrets/minio_app_user }
+  minio_app_password: { file: ./secrets/minio_app_password }
   jwt_secret: { file: ./secrets/jwt_secret }
   mfa_encryption_key: { file: ./secrets/mfa_encryption_key }
+  file_encryption_key: { file: ./secrets/file_encryption_key }
   bootstrap_admin_password: { file: ./secrets/bootstrap_admin_password }
   mpesa_consumer_key: { file: ./secrets/mpesa_consumer_key }
   mpesa_consumer_secret: { file: ./secrets/mpesa_consumer_secret }

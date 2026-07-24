@@ -308,7 +308,7 @@ const API_CONFIG = {
 
 ### 1. Test Patient Registration → Queue Flow:
 1. Navigate to http://localhost:3000
-2. Login (admin/admin123)
+2. Login as `admin` using the ignored password in `secrets/bootstrap_admin_password.txt`
 3. Click "Quick Admit" or "Add New Patient"
 4. Fill patient details and submit
 5. **Encounter dialog should appear**

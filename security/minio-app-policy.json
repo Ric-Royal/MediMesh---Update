@@ -1,0 +1,31 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::medimesh-medical-records",
+        "arn:aws:s3:::medimesh-patient-documents",
+        "arn:aws:s3:::medimesh-system-files"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
+      "Resource": [
+        "arn:aws:s3:::medimesh-medical-records/*",
+        "arn:aws:s3:::medimesh-patient-documents/*",
+        "arn:aws:s3:::medimesh-system-files/*"
+      ]
+    }
+  ]
+}

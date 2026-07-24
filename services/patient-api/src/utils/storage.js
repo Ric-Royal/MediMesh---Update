@@ -1,8 +1,7 @@
 const {
   S3Client,
   HeadBucketCommand,
-  CreateBucketCommand,
-  PutBucketPolicyCommand,
+  PutObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
   DeleteObjectCommand,
@@ -11,14 +10,16 @@ const {
 const { Upload } = require('@aws-sdk/lib-storage');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
+const { Readable } = require('stream');
 const { logger } = require('./logger');
 
 // MinIO S3 configuration
 const s3 = new S3Client({
-  endpoint: process.env.MINIO_ENDPOINT || 'http://minio:9000',
+  endpoint: process.env.MINIO_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.MINIO_ACCESS_KEY || 'medimesh-admin',
-    secretAccessKey: process.env.MINIO_SECRET_KEY || 'MediMeshMinio2024!'
+    accessKeyId: process.env.MINIO_ACCESS_KEY,
+    secretAccessKey: process.env.MINIO_SECRET_KEY
   },
   forcePathStyle: true,
   region: 'us-east-1'
@@ -46,6 +47,52 @@ const bodyToBuffer = async (body) => {
   return Buffer.concat(chunks);
 };
 
+const fileEncryptionKey = () => {
+  const configured = String(process.env.FILE_ENCRYPTION_KEY || '').trim();
+  if (!configured) {
+    throw new Error('FILE_ENCRYPTION_KEY is required');
+  }
+  const key = /^[a-f0-9]{64}$/i.test(configured)
+    ? Buffer.from(configured, 'hex')
+    : Buffer.from(configured, 'base64');
+  if (key.length !== 32) throw new Error('FILE_ENCRYPTION_KEY must decode to 32 bytes');
+  return key;
+};
+
+const encryptFileBody = (body) => {
+  const key = fileEncryptionKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const encrypted = Buffer.concat([cipher.update(body), cipher.final()]);
+  return {
+    body: encrypted,
+    metadata: {
+      'encryption-version': 'v1',
+      'encryption-iv': iv.toString('base64'),
+      'encryption-tag': cipher.getAuthTag().toString('base64'),
+      'original-size': String(body.length)
+    }
+  };
+};
+
+const decryptFileBody = async (body, metadata = {}) => {
+  if (metadata['encryption-version'] !== 'v1') {
+    throw new Error('Stored object is not encrypted');
+  }
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    fileEncryptionKey(),
+    Buffer.from(metadata['encryption-iv'], 'base64')
+  );
+  decipher.setAuthTag(Buffer.from(metadata['encryption-tag'], 'base64'));
+  if (body && typeof body.pipe === 'function') return body.pipe(decipher);
+  const plain = Buffer.concat([
+    decipher.update(await bodyToBuffer(body)),
+    decipher.final()
+  ]);
+  return Readable.from([plain]);
+};
+
 // Healthcare file types configuration
 const ALLOWED_FILE_TYPES = {
   images: ['image/jpeg', 'image/png', 'image/gif', 'image/bmp', 'image/tiff'],
@@ -64,7 +111,7 @@ const ALL_ALLOWED_TYPES = [
 ];
 
 // Maximum file size (50MB)
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
 // Bucket names
 const BUCKETS = {
@@ -81,74 +128,60 @@ class StorageService {
     this.serverSideEncryption = options.serverSideEncryption !== undefined
       ? options.serverSideEncryption
       : String(process.env.S3_SERVER_SIDE_ENCRYPTION || '').trim();
-    if (options.initializeBuckets !== false) {
-      this.initialization = this.initializeBuckets();
-    }
+    this.initializeOnReady = options.initializeBuckets !== false;
+    this.initialization = null;
+    this.readinessKey = '.service-health/encrypted-readiness-v1';
   }
 
   async initializeBuckets() {
-    try {
-      for (const [name, bucket] of Object.entries(BUCKETS)) {
-        await this.createBucketIfNotExists(bucket);
-      }
-      logger.info('MinIO buckets initialized successfully');
-    } catch (error) {
-      logger.error('Failed to initialize MinIO buckets:', error);
+    for (const bucket of Object.values(BUCKETS)) {
+      await this.s3.send(new HeadBucketCommand({ Bucket: bucket }));
+    }
+    logger.info('Required object-storage buckets are available');
+  }
+
+  async verifyEncryptedRoundTrip() {
+    const plaintext = Buffer.from('medimesh-storage-readiness-v1', 'utf8');
+    const encrypted = encryptFileBody(plaintext);
+    await this.s3.send(new PutObjectCommand({
+      Bucket: BUCKETS.system_files,
+      Key: this.readinessKey,
+      Body: encrypted.body,
+      ContentType: 'application/octet-stream',
+      Metadata: encrypted.metadata,
+      ...(this.serverSideEncryption
+        ? { ServerSideEncryption: this.serverSideEncryption }
+        : {})
+    }));
+    const stored = await this.s3.send(new GetObjectCommand({
+      Bucket: BUCKETS.system_files,
+      Key: this.readinessKey
+    }));
+    const decrypted = await decryptFileBody(stored.Body, stored.Metadata || {});
+    const result = await bodyToBuffer(decrypted);
+    if (
+      result.length !== plaintext.length ||
+      !crypto.timingSafeEqual(result, plaintext)
+    ) {
+      throw new Error('Object-storage encryption readiness verification failed');
     }
   }
 
-  async createBucketIfNotExists(bucketName) {
-    try {
-      await this.s3.send(new HeadBucketCommand({ Bucket: bucketName }));
-      logger.info(`Bucket ${bucketName} already exists`);
-    } catch (error) {
-      if (isNotFoundError(error)) {
-        try {
-          await this.s3.send(new CreateBucketCommand({ Bucket: bucketName }));
-          logger.info(`Created bucket: ${bucketName}`);
-          
-          // Set bucket policy for healthcare compliance
-          await this.setBucketPolicy(bucketName);
-        } catch (createError) {
-          logger.error(`Failed to create bucket ${bucketName}:`, createError);
-        }
-      } else {
-        logger.error(`Error checking bucket ${bucketName}:`, error);
-      }
+  async ready() {
+    if (!this.initializeOnReady) return;
+    if (!this.initialization) {
+      this.initialization = (async () => {
+        await this.initializeBuckets();
+        await this.verifyEncryptedRoundTrip();
+        logger.info('Encrypted object-storage readiness verification passed');
+      })();
     }
+    return this.initialization;
   }
 
-  async setBucketPolicy(bucketName) {
-    // Private bucket policy for healthcare data
-    const policy = {
-      Version: '2012-10-17',
-      Statement: [
-        {
-          Effect: 'Deny',
-          Principal: '*',
-          Action: 's3:*',
-          Resource: [
-            `arn:aws:s3:::${bucketName}/*`,
-            `arn:aws:s3:::${bucketName}`
-          ],
-          Condition: {
-            Bool: {
-              'aws:SecureTransport': 'false'
-            }
-          }
-        }
-      ]
-    };
-
-    try {
-      await this.s3.send(new PutBucketPolicyCommand({
-        Bucket: bucketName,
-        Policy: JSON.stringify(policy)
-      }));
-      logger.info(`Set security policy for bucket: ${bucketName}`);
-    } catch (error) {
-      logger.error(`Failed to set bucket policy for ${bucketName}:`, error);
-    }
+  async checkReadiness() {
+    await this.ready();
+    await this.verifyEncryptedRoundTrip();
   }
 
   validateFile(file) {
@@ -173,12 +206,13 @@ class StorageService {
   }
 
   generateFileKey(folder, originalName, userId) {
-    const ext = originalName.split('.').pop();
-    const sanitizedName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const extension = String(originalName).includes('.')
+      ? String(originalName).split('.').pop().replace(/[^a-zA-Z0-9]/g, '').slice(0, 10)
+      : '';
     const timestamp = Date.now();
     const uuid = uuidv4();
     
-    return `${folder}/${userId}/${timestamp}-${uuid}-${sanitizedName}`;
+    return `${folder}/${userId}/${timestamp}-${uuid}${extension ? `.${extension}` : ''}`;
   }
 
   // Sanitize metadata values for S3 headers
@@ -224,20 +258,22 @@ class StorageService {
       const fileKey = this.generateFileKey(folder, file.originalname, userId);
 
       // Sanitize metadata for S3 headers
+      const encrypted = encryptFileBody(file.buffer);
       const sanitizedMetadata = this.sanitizeMetadata({
         'uploaded-by': userId,
-        'original-name': file.originalname,
         'upload-date': new Date().toISOString(),
-        ...metadata
+        'original-content-type': file.mimetype,
+        ...metadata,
+        ...encrypted.metadata
       });
 
       // Prepare upload parameters
       const uploadParams = {
         Bucket: bucketName,
         Key: fileKey,
-        Body: file.buffer,
-        ContentType: file.mimetype,
-        ContentDisposition: `attachment; filename="${file.originalname}"`,
+        Body: encrypted.body,
+        ContentType: 'application/octet-stream',
+        ContentDisposition: 'attachment',
         Metadata: sanitizedMetadata
       };
       if (this.serverSideEncryption) {
@@ -310,11 +346,13 @@ class StorageService {
         Bucket: bucketName,
         Key: fileKey
       }));
+      const metadata = result.Metadata || {};
+      const body = await decryptFileBody(result.Body, metadata);
 
       return {
-        body: result.Body,
-        contentType: result.ContentType,
-        contentLength: result.ContentLength,
+        body,
+        contentType: metadata['original-content-type'] || result.ContentType,
+        contentLength: Number(metadata['original-size'] || result.ContentLength),
         lastModified: result.LastModified,
         etag: result.ETag,
         metadata: result.Metadata
@@ -448,5 +486,8 @@ module.exports = {
   ALLOWED_FILE_TYPES,
   MAX_FILE_SIZE,
   bodyToBuffer,
-  isNotFoundError
+  isNotFoundError,
+  decryptFileBody,
+  encryptFileBody,
+  fileEncryptionKey
 };

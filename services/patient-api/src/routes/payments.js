@@ -687,7 +687,9 @@ router.post('/mpesa/stk-push',
 
       // Initiate STK Push
       const accountReference = `INV-${paymentData.invoice_id.substring(0, 8)}`;
-      const transactionDesc = paymentData.description || `Payment for ${paymentData.transaction_type}`;
+      // Do not send diagnoses, service names, or other health context to the
+      // payment processor. The invoice reference is sufficient to reconcile.
+      const transactionDesc = 'Healthcare invoice payment';
 
       const mpesaResponse = await mpesaService.stkPush({
         phoneNumber: paymentData.phone_number,
@@ -766,8 +768,8 @@ router.post('/mpesa/callback',
   async (req, res) => {
     try {
       const requiredToken = process.env.MPESA_CALLBACK_TOKEN;
-      const suppliedToken = req.query.token || req.get('x-mpesa-callback-token');
-      if (process.env.NODE_ENV !== 'development' && !requiredToken) {
+      const suppliedToken = req.get('x-mpesa-callback-token');
+      if (!requiredToken) {
         logger.error('Rejected M-Pesa callback because callback authentication is not configured');
         return res.status(503).json({ ResultCode: 1, ResultDesc: 'Callback authentication unavailable' });
       }
@@ -796,21 +798,18 @@ router.post('/mpesa/callback',
         logger.info('Payment completed successfully', {
           paymentId: result.paymentId,
           receiptNumber: maskIdentifier(callbackData.receiptNumber),
-          amount: callbackData.amount,
-          unallocatedAmount: result.unallocatedAmount || 0
+          hasUnallocatedCredit: result.unallocatedAmount > 0
         });
         if (result.unallocatedAmount > 0) {
           logger.warn('Confirmed M-Pesa payment has unapplied patient credit', {
             paymentId: result.paymentId,
-            receiptNumber: maskIdentifier(callbackData.receiptNumber),
-            unallocatedAmount: result.unallocatedAmount
+            receiptNumber: maskIdentifier(callbackData.receiptNumber)
           });
         }
       } else {
         logger.warn('Payment failed', {
           paymentId: result.paymentId,
-          resultCode: callbackData.resultCode,
-          resultDesc: callbackData.resultDesc
+          resultCode: callbackData.resultCode
         });
       }
 

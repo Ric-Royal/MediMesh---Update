@@ -80,9 +80,7 @@ const QueueManagementPage = () => {
     // Initialize WebSocket connection
     const socket = io(API_CONFIG.wsURL, {
       transports: ['websocket', 'polling'],
-      auth: {
-        token: localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token')
-      }
+      withCredentials: true
     });
 
     socket.on('connect', () => {

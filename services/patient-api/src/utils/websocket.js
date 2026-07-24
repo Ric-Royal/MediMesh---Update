@@ -2,6 +2,7 @@ const { Server } = require('socket.io');
 const { logger } = require('./logger');
 const { getDB } = require('./database');
 const { verifyAccessToken, loadPersistedIdentity } = require('../middleware/auth');
+const { parseCookies } = require('../security/csrf');
 
 let io;
 
@@ -15,6 +16,8 @@ const configuredOrigins = () => {
 };
 
 const getHandshakeToken = (socket) => {
+  const cookieToken = parseCookies(socket.handshake.headers?.cookie).medimesh_session;
+  if (cookieToken) return cookieToken;
   const authToken = socket.handshake.auth?.token;
   if (typeof authToken === 'string' && authToken.trim()) return authToken.trim();
 
@@ -54,7 +57,8 @@ const initializeWebSocket = (server) => {
   io = new Server(server, {
     cors: {
       origin: allowedOrigins,
-      methods: ['GET', 'POST']
+      methods: ['GET', 'POST'],
+      credentials: true
     },
     allowRequest: (request, callback) => {
       const origin = request.headers.origin;

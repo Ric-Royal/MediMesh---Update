@@ -123,7 +123,7 @@ services:
     image: grafana/grafana:latest  
     ports: ["3003:3000"]
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin123
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/grafana_admin_password
     volumes: ["./monitoring/dashboards:/var/lib/grafana/dashboards"]
 ```
 

@@ -12,7 +12,7 @@ const { authorize } = require('../middleware/auth');
  *         7-day trends (patients, encounters, payments).
  */
 router.get('/statistics',
-  authorize(['doctor', 'admin', 'nurse', 'receptionist', 'pharmacist', 'lab-tech', 'radiologist', 'radiographer', 'billing']),
+  authorize(['admin', 'billing']),
   async (req, res) => {
     try {
       const db = getDB();
@@ -164,7 +164,7 @@ router.get('/statistics',
  * Returns live system health — DB, Redis, API uptime.
  */
 router.get('/system-status',
-  authorize(['doctor', 'admin', 'nurse', 'receptionist', 'pharmacist', 'lab-tech', 'radiologist', 'radiographer', 'billing']),
+  authorize(['admin']),
   async (req, res) => {
     const checks = {
       api: { status: 'online', latency: 0 },

@@ -17,13 +17,11 @@ const renderWorkspace = (component) => render(
 );
 
 beforeEach(() => {
-  localStorage.setItem('dev_token', 'dev-token');
   jest.clearAllMocks();
 });
 
 afterEach(() => {
   delete global.fetch;
-  localStorage.clear();
 });
 
 test('laboratory starts an order through the deployed status route', async () => {

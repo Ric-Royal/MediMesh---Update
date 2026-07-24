@@ -2,9 +2,25 @@ const winston = require('winston');
 
 const production = process.env.NODE_ENV === 'production';
 const fileLogging = process.env.LOG_TO_FILES === 'true';
+const sensitiveKey = /password|secret|token|authorization|cookie|phone|email|national|address|diagnosis|notes|patient|userId|providerIdentifier/i;
+const redactObject = value => {
+  if (Array.isArray(value)) return value.map(redactObject);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
+    key,
+    sensitiveKey.test(key) ? '[REDACTED]' : redactObject(entry)
+  ]));
+};
+const redactSensitiveFields = winston.format(info => {
+  const redacted = redactObject(info);
+  Object.keys(info).forEach(key => delete info[key]);
+  Object.assign(info, redacted);
+  return info;
+});
 const jsonFormat = winston.format.combine(
   winston.format.timestamp(),
-  winston.format.errors({ stack: true }),
+  winston.format.errors({ stack: !production }),
+  redactSensitiveFields(),
   winston.format.json()
 );
 

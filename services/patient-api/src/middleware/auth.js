@@ -1,64 +1,20 @@
 const jwt = require('jsonwebtoken');
 const { logger } = require('../utils/logger');
-const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../utils/database');
+const { csrfProtection, parseCookies } = require('../security/csrf');
 
 const getJwtSecret = () => {
-  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
-  if (process.env.NODE_ENV === 'development') return 'medimesh-development-only-secret';
-  throw new Error('JWT authentication is not configured');
-};
-
-const developmentUserFromToken = (token) => {
-  if (
-    process.env.NODE_ENV !== 'development' ||
-    process.env.ALLOW_INSECURE_DEV_TOKENS !== 'true' ||
-    !token.startsWith('dev_token_')
-  ) {
-    return null;
+  const secret = String(process.env.JWT_SECRET || '');
+  if (Buffer.byteLength(secret) < 32) {
+    throw new Error('JWT_SECRET must contain at least 32 bytes');
   }
-
-  const parts = token.split('_');
-  const role = parts[2] || 'user';
-  const staffId = parts.length > 3 ? parts.slice(3).join('_') : null;
-  const devUserIds = {
-    admin: '550e8400-e29b-41d4-a716-446655440000',
-    doctor: '550e8400-e29b-41d4-a716-446655440001',
-    nurse: '550e8400-e29b-41d4-a716-446655440002',
-    receptionist: '550e8400-e29b-41d4-a716-446655440004',
-    'lab-tech': '550e8400-e29b-41d4-a716-446655440005',
-    pharmacist: '550e8400-e29b-41d4-a716-446655440006',
-    radiologist: '550e8400-e29b-41d4-a716-446655440007',
-    radiographer: '550e8400-e29b-41d4-a716-446655440007',
-    billing: '550e8400-e29b-41d4-a716-446655440008',
-    user: '550e8400-e29b-41d4-a716-446655440003'
-  };
-  const roleAliases = {
-    labtech: 'lab-tech',
-    lab: 'lab-tech',
-    pharma: 'pharmacist',
-    rad: 'radiologist',
-    reception: 'receptionist'
-  };
-  const resolvedRole = roleAliases[role] || role;
-
-  return {
-    id: staffId || devUserIds[resolvedRole] || uuidv4(),
-    username: resolvedRole,
-    email: `${resolvedRole}@medimesh.dev`,
-    roles: [resolvedRole, 'user'],
-    scope: 'read write',
-    authenticationType: 'development'
-  };
+  return secret;
 };
 
 const verifyAccessToken = (token) => {
   if (!token || typeof token !== 'string') {
     throw new Error('Access token is required');
   }
-
-  const developmentUser = developmentUserFromToken(token);
-  if (developmentUser) return developmentUser;
 
   const decoded = jwt.verify(token, getJwtSecret(), {
     algorithms: ['HS256'],
@@ -80,14 +36,28 @@ const verifyAccessToken = (token) => {
 
 const loadPersistedIdentity = async (tokenUser) => {
   const result = await getDB().query(
-    'SELECT roles, department_id, is_active, must_change_password, token_version, mfa_enabled FROM app_users WHERE id = $1 LIMIT 1',
+    `SELECT
+       u.roles,
+       COALESCE(u.department_id, s.department_id) AS department_id,
+       u.is_active,
+       u.must_change_password,
+       u.token_version,
+       u.mfa_enabled,
+       s.id AS staff_id,
+       s.staff_number AS provider_identifier,
+       s.role AS staff_role,
+       s.status AS staff_status,
+       s.license_number,
+       s.license_expiry,
+       s.primary_clinic_id
+     FROM app_users u
+     LEFT JOIN staff s ON s.id = u.id
+     WHERE u.id = $1
+     LIMIT 1`,
     [tokenUser.id]
   );
 
   if (result.rows.length === 0) {
-    if (tokenUser.authenticationType === 'development') {
-      return { ...tokenUser, departmentId: null, mustChangePassword: false };
-    }
     throw new Error('Account is not active');
   }
 
@@ -106,33 +76,63 @@ const loadPersistedIdentity = async (tokenUser) => {
     ...tokenUser,
     roles: Array.isArray(account.roles) ? account.roles : [],
     departmentId: account.department_id || null,
+    staffId: account.staff_id || null,
+    providerIdentifier: account.provider_identifier || null,
+    staffRole: account.staff_role || null,
+    staffStatus: account.staff_status || null,
+    licenseNumber: account.license_number || null,
+    licenseExpiry: account.license_expiry || null,
+    primaryClinicId: account.primary_clinic_id || null,
     mustChangePassword: account.must_change_password === true,
     mfaEnabled: account.mfa_enabled === true,
-    mfa: tokenUser.authenticationType === 'development' ? true : tokenUser.mfa === true,
+    mfa: tokenUser.mfa === true,
     tokenVersion: Number(account.token_version) || 0
   };
 };
 
-const authenticateToken = async (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-  if (!token) {
-    logger.warn('Access denied: No token provided', {
-      ip: req.ip,
-      userAgent: req.get('User-Agent')
-    });
-    return res.status(401).json({ error: 'Access denied. No token provided.' });
+const extractAccessToken = req => {
+  const authHeader = String(req.headers.authorization || '').trim();
+  if (authHeader) {
+    const match = authHeader.match(/^Bearer ([^\s]+)$/);
+    if (!match) throw new Error('Authorization header must use the Bearer scheme');
+    req.authenticationSource = 'bearer';
+    return match[1];
   }
 
+  const token = parseCookies(req.headers.cookie).medimesh_session;
+  if (token) req.authenticationSource = 'cookie';
+  return token;
+};
+
+const authenticateToken = async (req, res, next) => {
   try {
+    const token = extractAccessToken(req);
+    if (!token) {
+      logger.warn('Access denied: No session provided', {
+        ip: req.ip,
+        userAgent: req.get('User-Agent')
+      });
+      return res.status(401).json({ error: 'Authentication is required.' });
+    }
+
     req.user = await loadPersistedIdentity(verifyAccessToken(token));
 
-    const mfaRequired = process.env.REQUIRE_MFA === 'true';
-    const enrollmentPath = String(req.originalUrl || '').startsWith('/api/auth/mfa/') ||
-      String(req.originalUrl || '').startsWith('/api/auth/me') ||
-      String(req.originalUrl || '').startsWith('/api/auth/change-password') ||
-      String(req.originalUrl || '').startsWith('/api/auth/logout');
+    const originalUrl = String(req.originalUrl || '');
+    const passwordChangePath = originalUrl.startsWith('/api/auth/change-password') ||
+      originalUrl.startsWith('/api/auth/logout') ||
+      originalUrl.startsWith('/api/auth/me');
+    if (req.user.mustChangePassword && !passwordChangePath) {
+      return res.status(428).json({
+        error: 'Password change is required before continuing.',
+        code: 'PASSWORD_CHANGE_REQUIRED'
+      });
+    }
+
+    const mfaRequired = process.env.REQUIRE_MFA !== 'false';
+    const enrollmentPath = originalUrl.startsWith('/api/auth/mfa/') ||
+      originalUrl.startsWith('/api/auth/me') ||
+      originalUrl.startsWith('/api/auth/change-password') ||
+      originalUrl.startsWith('/api/auth/logout');
     if (mfaRequired && !enrollmentPath && (!req.user.mfaEnabled || !req.user.mfa)) {
       return res.status(428).json({
         error: 'Multi-factor authentication enrollment is required.',
@@ -147,7 +147,7 @@ const authenticateToken = async (req, res, next) => {
       ip: req.ip
     });
 
-    next();
+    return csrfProtection(req, res, next);
   } catch (error) {
     logger.warn('Invalid token', {
       error: error.message,
@@ -188,9 +188,19 @@ const authorize = (requiredRoles = []) => {
 // Data Loss Prevention middleware - limits export records
 const dlpMiddleware = (req, res, next) => {
   const exportLimit = parseInt(process.env.DLP_EXPORT_LIMIT) || 20;
-  
-  if (req.query.export === 'true' || req.headers['accept'] === 'text/csv') {
+  const isExport = req.query.export === 'true' ||
+    String(req.headers.accept || '').includes('text/csv') ||
+    /\/export(?:\/|$)/.test(req.path);
+
+  if (isExport) {
+    const purpose = String(req.get('X-Export-Purpose') || '').trim();
+    if (purpose.length < 20 || purpose.length > 500) {
+      return res.status(400).json({
+        error: 'An export purpose between 20 and 500 characters is required'
+      });
+    }
     req.exportLimit = exportLimit;
+    req.accessContext = { ...(req.accessContext || {}), purpose };
     logger.info('DLP: Export request detected', {
       userId: req.user?.id,
       limit: exportLimit,
@@ -198,11 +208,12 @@ const dlpMiddleware = (req, res, next) => {
     });
   }
   
-  next();
+  return next();
 };
 
 module.exports = {
   authenticateToken,
+  extractAccessToken,
   verifyAccessToken,
   loadPersistedIdentity,
   authorize,

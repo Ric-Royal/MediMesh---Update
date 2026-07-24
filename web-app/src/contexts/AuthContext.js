@@ -21,9 +21,7 @@ export const AuthProvider = ({ children }) => {
   const [developmentMode, setDevelopmentMode] = useState(false);
 
   const applyLocalSession = useCallback((session) => {
-    localStorage.setItem('medimesh_token', session.access_token);
-    localStorage.removeItem('dev_token');
-    setToken(session.access_token);
+    setToken('cookie-session');
     setUser({
       ...session.user,
       fullName: session.user.fullName || session.user.name || session.user.username,
@@ -61,17 +59,14 @@ export const AuthProvider = ({ children }) => {
 
   const initLocalAuth = useCallback(async () => {
     setDevelopmentMode(true);
-    const storedToken = localStorage.getItem('medimesh_token') || localStorage.getItem('dev_token');
-    if (storedToken) {
-      try {
-        const response = await apiService.auth.me();
-        setUser({ ...response, fullName: response.fullName || response.name || response.username });
-        setIsAuthenticated(true);
-        setToken(storedToken);
-      } catch (error) {
-        localStorage.removeItem('medimesh_token');
-        localStorage.removeItem('dev_token');
-      }
+    try {
+      const response = await apiService.auth.me();
+      setUser({ ...response, fullName: response.fullName || response.name || response.username });
+      setIsAuthenticated(true);
+      setToken('cookie-session');
+    } catch (error) {
+      setUser(null);
+      setIsAuthenticated(false);
     }
     setLoading(false);
   }, []);
@@ -167,8 +162,6 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     if (developmentMode) {
       try { await apiService.auth.logout(); } catch (error) { console.error('Logout error:', error); }
-      localStorage.removeItem('medimesh_token');
-      localStorage.removeItem('dev_token');
       setUser(null);
       setIsAuthenticated(false);
       setToken(null);
@@ -179,7 +172,7 @@ export const AuthProvider = ({ children }) => {
 
   const hasRole = role => user?.roles?.includes(role) || false;
   const hasAnyRole = roles => roles.some(role => hasRole(role));
-  const getAuthHeaders = () => token
+  const getAuthHeaders = () => authMode !== 'local' && token
     ? { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
     : { 'Content-Type': 'application/json' };
 

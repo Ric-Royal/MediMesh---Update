@@ -176,6 +176,7 @@ const defaultCatalogValue = resource => Object.fromEntries(
 const authFetch = async (url, options = {}) => {
   const response = await fetch(url, {
     ...options,
+    credentials: 'same-origin',
     headers: { ...API_CONFIG.getAuthHeaders(), ...(options.headers || {}) },
   });
   const body = await response.json().catch(() => ({}));

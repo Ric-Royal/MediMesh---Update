@@ -15,6 +15,7 @@ const {
   uuidSchema
 } = require('../utils/validation');
 const { logger } = require('../utils/logger');
+const { requirePatientAccess } = require('../security/accessControl');
 
 // GET /api/patients - List all patients with search and pagination
 router.get('/',
@@ -29,8 +30,8 @@ router.get('/',
       const actualLimit = req.exportLimit ? Math.min(limit, req.exportLimit) : limit;
       
       const [patients, total] = await Promise.all([
-        Patient.findAll(actualLimit, offset, search),
-        Patient.count(search)
+        Patient.findAll(actualLimit, offset, search, req.user, 'demographics'),
+        Patient.count(search, req.user, 'demographics')
       ]);
       const hasMore = offset + patients.length < total;
       
@@ -94,6 +95,7 @@ router.get('/statistics',
 router.get('/:id',
   authorize(['doctor', 'nurse', 'admin', 'receptionist']),
   validateParams(Joi.object({ id: uuidSchema })),
+  requirePatientAccess({ access: 'demographics', breakGlass: false }),
   async (req, res) => {
     try {
       const { id } = req.validatedParams;
@@ -127,7 +129,7 @@ router.get('/:id',
 
 // POST /api/patients - Create a new patient
 router.post('/',
-  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
+  authorize(['admin', 'receptionist']),
   validate(patientCreateSchema),
   async (req, res) => {
     try {
@@ -176,8 +178,9 @@ router.post('/',
 
 // PUT /api/patients/:id - Update a patient
 router.put('/:id',
-  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
+  authorize(['admin', 'receptionist']),
   validateParams(Joi.object({ id: uuidSchema })),
+  requirePatientAccess({ access: 'demographics', breakGlass: false }),
   validate(patientUpdateSchema),
   captureDataChanges('patient'),
   async (req, res) => {
@@ -218,11 +221,17 @@ router.put('/:id',
 
 // DELETE /api/patients/:id - Delete a patient
 router.delete('/:id',
-  authorize(['admin']), // Only admins can delete patients
+  authorize(['admin']),
   validateParams(Joi.object({ id: uuidSchema })),
   async (req, res) => {
     try {
       const { id } = req.validatedParams;
+      const reason = String(req.get('X-Archive-Reason') || '').trim();
+      if (reason.length < 20 || reason.length > 500) {
+        return res.status(400).json({
+          error: 'An archive reason between 20 and 500 characters is required'
+        });
+      }
       
       const patient = await Patient.findById(id);
       
@@ -232,28 +241,21 @@ router.delete('/:id',
         });
       }
 
-      await patient.delete();
+      await patient.archive(req.user.id, reason);
 
-      logger.info('Patient deleted successfully', {
+      logger.info('Patient archived successfully', {
         userId: req.user.id,
         patientId: patient.id,
         patientNumber: patient.patient_id
       });
 
       res.json({
-        message: 'Patient deleted successfully'
+        message: 'Patient archived successfully'
       });
 
     } catch (error) {
       logger.error('Error deleting patient:', error);
       
-      if (error.message.includes('existing medical records')) {
-        return res.status(409).json({
-          error: 'Cannot delete patient with existing medical records',
-          message: 'Please remove all medical records first'
-        });
-      }
-
       res.status(500).json({
         error: 'Failed to delete patient',
         message: error.message
@@ -264,8 +266,9 @@ router.delete('/:id',
 
 // GET /api/patients/:id/records - Get medical records for a patient
 router.get('/:id/records',
-  authorize(['doctor', 'nurse', 'admin', 'receptionist']),
+  authorize(['doctor', 'nurse', 'admin']),
   validateParams(Joi.object({ id: uuidSchema })),
+  requirePatientAccess({ access: 'clinical' }),
   validateQuery(Joi.object({
     limit: Joi.number().integer().min(1).max(100).default(50),
     offset: Joi.number().integer().min(0).default(0)

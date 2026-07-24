@@ -43,16 +43,21 @@ const generateTotp = (secret, at = Date.now()) => {
   return String(binary % 1000000).padStart(6, '0');
 };
 
-const verifyTotp = (secret, suppliedCode, at = Date.now(), window = 1) => {
+const findTotpCounter = (secret, suppliedCode, at = Date.now(), window = 1) => {
   const code = String(suppliedCode || '').trim();
-  if (!/^\d{6}$/.test(code)) return false;
+  if (!/^\d{6}$/.test(code)) return null;
   const supplied = Buffer.from(code);
+  const baseCounter = Math.floor(Number(at) / 1000 / PERIOD_SECONDS);
   for (let offset = -window; offset <= window; offset += 1) {
     const expected = Buffer.from(generateTotp(secret, Number(at) + offset * PERIOD_SECONDS * 1000));
-    if (expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied)) return true;
+    if (expected.length === supplied.length && crypto.timingSafeEqual(expected, supplied)) {
+      return baseCounter + offset;
+    }
   }
-  return false;
+  return null;
 };
+
+const verifyTotp = (...args) => findTotpCounter(...args) !== null;
 
 const encryptionKey = () => {
   const configured = String(process.env.MFA_ENCRYPTION_KEY || '').trim();
@@ -62,9 +67,6 @@ const encryptionKey = () => {
       : Buffer.from(configured, 'base64');
     if (key.length !== 32) throw new Error('MFA_ENCRYPTION_KEY must decode to exactly 32 bytes');
     return key;
-  }
-  if (process.env.NODE_ENV !== 'production') {
-    return crypto.createHash('sha256').update(process.env.JWT_SECRET || 'medimesh-development-mfa-key').digest();
   }
   throw new Error('MFA_ENCRYPTION_KEY is required');
 };
@@ -98,6 +100,7 @@ module.exports = {
   buildOtpAuthUri,
   decryptSecret,
   encryptSecret,
+  findTotpCounter,
   generateSecret,
   generateTotp,
   verifyTotp,

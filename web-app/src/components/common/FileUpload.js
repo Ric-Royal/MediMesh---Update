@@ -270,9 +270,6 @@ const FileUpload = ({
       if (fileMetadata.tags.length > 0) formData.append('tags', JSON.stringify(fileMetadata.tags));
       formData.append('isPrivate', fileMetadata.isPrivate);
 
-      // Get auth token
-      const token = localStorage.getItem('medimesh_token') || localStorage.getItem('token') || localStorage.getItem('dev_token');
-      
       const xhr = new XMLHttpRequest();
       
       // Track upload progress
@@ -309,7 +306,17 @@ const FileUpload = ({
 
       // Send request
       xhr.open('POST', `${process.env.REACT_APP_API_URL || ''}/api/files/upload`);
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      xhr.withCredentials = true;
+      const csrfCookie = document.cookie
+        .split(';')
+        .map(value => value.trim())
+        .find(value => value.startsWith('medimesh_csrf='));
+      if (csrfCookie) {
+        xhr.setRequestHeader(
+          'X-CSRF-Token',
+          decodeURIComponent(csrfCookie.slice('medimesh_csrf='.length))
+        );
+      }
       xhr.send(formData);
 
     } catch (error) {

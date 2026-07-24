@@ -6,7 +6,7 @@
   "registrationAllowed": false,
   "registrationEmailAsUsername": false,
   "rememberMe": true,
-  "verifyEmail": false,
+  "verifyEmail": true,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
   "resetPasswordAllowed": true,
@@ -28,7 +28,6 @@
       "description": "React frontend application for MediMesh medical data management",
       "enabled": true,
       "clientAuthenticatorType": "client-secret",
-      "secret": "medimesh-client-secret-2024",
       "redirectUris": [
         "http://localhost:3000/*",
         "http://localhost/*",
@@ -43,7 +42,7 @@
       "publicClient": true,
       "standardFlowEnabled": true,
       "implicitFlowEnabled": false,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "frontchannelLogout": true,
       "fullScopeAllowed": true,
@@ -72,12 +71,12 @@
       {
         "id": "doctor",
         "name": "doctor",
-        "description": "Doctor - Full patient and medical record access"
+        "description": "Doctor - Access is limited to assigned care relationships"
       },
       {
         "id": "nurse",
         "name": "nurse",
-        "description": "Nurse - Patient care and basic record management"
+        "description": "Nurse - Access is limited to assigned care relationships"
       },
       {
         "id": "viewer",
@@ -86,66 +85,7 @@
       }
     ]
   },
-  "users": [
-    {
-      "id": "admin-user",
-      "username": "admin",
-      "enabled": true,
-      "emailVerified": true,
-      "firstName": "System",
-      "lastName": "Administrator",
-      "email": "admin@medimesh.com",
-      "credentials": [
-        {
-          "type": "password",
-          "value": "admin123",
-          "temporary": false
-        }
-      ],
-      "realmRoles": [
-        "admin",
-        "doctor"
-      ]
-    },
-    {
-      "id": "doctor-user",
-      "username": "doctor",
-      "enabled": true,
-      "emailVerified": true,
-      "firstName": "Dr. John",
-      "lastName": "Smith",
-      "email": "doctor@medimesh.com",
-      "credentials": [
-        {
-          "type": "password",
-          "value": "doctor123",
-          "temporary": false
-        }
-      ],
-      "realmRoles": [
-        "doctor"
-      ]
-    },
-    {
-      "id": "nurse-user",
-      "username": "nurse",
-      "enabled": true,
-      "emailVerified": true,
-      "firstName": "Sarah",
-      "lastName": "Johnson",
-      "email": "nurse@medimesh.com",
-      "credentials": [
-        {
-          "type": "password",
-          "value": "nurse123",
-          "temporary": false
-        }
-      ],
-      "realmRoles": [
-        "nurse"
-      ]
-    }
-  ],
+  "users": [],
   "groups": [
     {
       "id": "healthcare-providers",
@@ -173,4 +113,4 @@
       "realmRoles": ["admin"]
     }
   ]
-} 
+}

@@ -2,32 +2,42 @@ jest.mock('../logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 }));
 
-const { StorageService, BUCKETS, bodyToBuffer, isNotFoundError } = require('../storage');
+const {
+  StorageService,
+  BUCKETS,
+  bodyToBuffer,
+  encryptFileBody,
+  isNotFoundError
+} = require('../storage');
 
 describe('AWS SDK v3 MinIO storage adapter', () => {
+  beforeAll(() => {
+    process.env.FILE_ENCRYPTION_KEY = Buffer.alloc(32, 5).toString('base64');
+  });
+
+  afterAll(() => {
+    delete process.env.FILE_ENCRYPTION_KEY;
+  });
+
   test('recognizes v3 and legacy S3 not-found error shapes', () => {
     expect(isNotFoundError({ $metadata: { httpStatusCode: 404 } })).toBe(true);
     expect(isNotFoundError({ statusCode: 404 })).toBe(true);
     expect(isNotFoundError({ name: 'AccessDenied' })).toBe(false);
   });
 
-  test('creates a missing bucket and applies its private policy with v3 commands', async () => {
+  test('fails readiness when a required bucket is missing', async () => {
     const client = {
-      send: jest.fn()
-        .mockRejectedValueOnce({ $metadata: { httpStatusCode: 404 } })
-        .mockResolvedValueOnce({})
-        .mockResolvedValueOnce({})
+      send: jest.fn().mockRejectedValue({ $metadata: { httpStatusCode: 404 } })
     };
     const service = new StorageService(client, { initializeBuckets: false });
 
-    await service.createBucketIfNotExists(BUCKETS.medical_records);
+    await expect(service.initializeBuckets()).rejects.toMatchObject({
+      $metadata: { httpStatusCode: 404 }
+    });
 
     expect(client.send.mock.calls.map(([command]) => command.constructor.name)).toEqual([
-      'HeadBucketCommand',
-      'CreateBucketCommand',
-      'PutBucketPolicyCommand'
+      'HeadBucketCommand'
     ]);
-    expect(client.send.mock.calls[1][0].input.Bucket).toBe(BUCKETS.medical_records);
   });
 
   test('uploads through lib-storage while preserving MinIO parameters and metadata', async () => {
@@ -61,11 +71,11 @@ describe('AWS SDK v3 MinIO storage adapter', () => {
     expect(uploadOptions.leavePartsOnError).toBe(false);
     expect(uploadOptions.params).toMatchObject({
       Bucket: BUCKETS.medical_records,
-      Body: file.buffer,
-      ContentType: 'application/pdf',
+      ContentType: 'application/octet-stream',
       ServerSideEncryption: 'AES256'
     });
-    expect(uploadOptions.params.Metadata.patient).toBe('Patient One');
+    expect(uploadOptions.params.Body).not.toEqual(file.buffer);
+    expect(uploadOptions.params.Metadata['encryption-version']).toBe('v1');
     expect(done).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       bucket: BUCKETS.medical_records,
@@ -75,11 +85,12 @@ describe('AWS SDK v3 MinIO storage adapter', () => {
   });
 
   test('converts the v3 streaming response body back to a Buffer', async () => {
+    const encrypted = encryptFileBody(Buffer.from('Medi'));
     const client = { send: jest.fn().mockResolvedValue({
-      Body: Uint8Array.from([77, 101, 100, 105]),
+      Body: Uint8Array.from(encrypted.body),
       ContentType: 'text/plain',
       ContentLength: 4,
-      Metadata: { kind: 'test' }
+      Metadata: { kind: 'test', ...encrypted.metadata }
     }) };
     const service = new StorageService(client, { initializeBuckets: false });
 

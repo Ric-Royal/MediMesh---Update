@@ -3,30 +3,31 @@ set -eu
 . "$(dirname "$0")/_common.sh"
 
 BACKUP=${1:-}
-CONFIRM=${2:-}
-[ -n "$BACKUP" ] || { echo "Usage: $0 backups/medimesh-*.tar.enc --confirm-destroy-current-data" >&2; exit 2; }
-[ "$CONFIRM" = "--confirm-destroy-current-data" ] || { echo "Restore replaces the current database and object storage. Pass --confirm-destroy-current-data." >&2; exit 2; }
+OUTPUT_DIR=${2:-}
+CONFIRM=${3:-}
+[ -n "$BACKUP" ] && [ -n "$OUTPUT_DIR" ] || {
+  echo "Usage: $0 backups/name.tar.age /empty/restore-directory --confirm-extract" >&2
+  exit 2
+}
+[ "$CONFIRM" = "--confirm-extract" ] || {
+  echo "Pass --confirm-extract after selecting an empty protected output directory." >&2
+  exit 2
+}
 case "$BACKUP" in /*) ;; *) BACKUP="$DEPLOY_DIR/$BACKUP" ;; esac
+[ -d "$OUTPUT_DIR" ] || { echo "Restore directory does not exist." >&2; exit 2; }
+[ -z "$(find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ] || {
+  echo "Restore directory must be empty." >&2
+  exit 2
+}
+
 "$SCRIPT_DIR/verify-backup.sh" "$BACKUP"
 
-RESTORE_DIR="$DEPLOY_DIR/restore-work/restore-$$"
-mkdir -p "$RESTORE_DIR"
+RESTORE_DIR=$(mktemp -d "$BACKUP_WORK_ROOT/medimesh-restore.XXXXXX")
 trap 'rm -rf "$RESTORE_DIR"' EXIT INT TERM
-openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 \
-  -in "$BACKUP" -out "$RESTORE_DIR/archive.tar" -pass file:"$DEPLOY_DIR/secrets/backup_passphrase"
-tar -xf "$RESTORE_DIR/archive.tar" -C "$RESTORE_DIR"
+umask 077
+age -d -i "$BACKUP_AGE_IDENTITY_FILE" -o "$RESTORE_DIR/bundle.tar" "$BACKUP"
+tar -xf "$RESTORE_DIR/bundle.tar" -C "$RESTORE_DIR"
+(cd "$RESTORE_DIR" && sha256sum -c manifest.sha256)
+tar -xf "$RESTORE_DIR/payload.tar" -C "$OUTPUT_DIR"
 
-compose stop patient-api web-app
-compose cp "$RESTORE_DIR/database.dump" postgres:/tmp/medimesh-restore.dump
-compose exec -T postgres sh -c 'PGPASSWORD=$(cat /run/secrets/postgres_password) pg_restore -U medimesh -d medimesh --clean --if-exists --no-owner --no-acl /tmp/medimesh-restore.dump'
-
-PROJECT_NAME=${COMPOSE_PROJECT_NAME:-medimesh-clinic}
-docker run --rm \
-  -v "${PROJECT_NAME}_minio_data:/target" \
-  -v "$RESTORE_DIR:/restore:ro" \
-  "$BACKUP_HELPER_IMAGE" \
-  sh -c 'find /target -mindepth 1 -maxdepth 1 -exec rm -rf {} + && tar -xzf /restore/minio-data.tar.gz -C /target'
-
-compose up -d patient-api web-app
-"$SCRIPT_DIR/healthcheck.sh"
-echo "Restore completed and the application passed its health check."
+echo "Verified provider export extracted. Restore it through the approved database and object-storage runbooks."
