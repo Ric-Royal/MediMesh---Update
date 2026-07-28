@@ -317,5 +317,10 @@ intentionally retained for comparison and were not altered.
 - No payment network, email, chat, calendar, SMS, or other external service was
   contacted. All application requests and health-data fields remained on
   loopback.
+- Reviewed Git objects were pushed to the existing security branch and a draft
+  pull request was opened. Only source, tests, migrations, documentation,
+  branch and commit metadata, and the pull-request description left the
+  workstation; ignored secrets and local database data were excluded.
+- A temporary pull-request description under `C:\tmp` was removed after use.
 - Detailed findings and the complete ingress/egress record are in
   `CONNECTED_PATIENT_FLOW_FIX_REPORT_2026-07-28.md`.

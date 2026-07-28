@@ -146,6 +146,11 @@ Health Agency certification before production use with real patient data.
 - No email, chat message, calendar event, payment request, SMS, or external
   application write was sent.
 - The browser interacted only with the local application.
+- Reviewed Git objects for this repair were pushed to the existing
+  `security/kenya-health-hardening` branch on the configured GitHub repository.
+  The draft pull-request title, description, branch names, commit metadata, and
+  hosted-check request also left the workstation. No ignored secret, session
+  value, database row, browser data, or Docker volume was included.
 
 ### Local changes
 
@@ -157,3 +162,6 @@ Health Agency certification before production use with real patient data.
   billing invoice for verification.
 - The user-created future appointment was not advanced and remains scheduled.
 - No database row, patient file, volume, or real-person record was deleted.
+- A temporary plain-text pull-request description was created under `C:\tmp`
+  and removed after the pull request was opened. It contained only the change
+  summary and test counts.
