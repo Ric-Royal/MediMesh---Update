@@ -16,10 +16,10 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
     - name: Set up Node.js
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
         node-version: '22'
         cache: 'npm'
@@ -57,7 +57,7 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         fetch-depth: 0
         
@@ -76,7 +76,7 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
     - name: Build Docker images
       run: |
@@ -135,7 +135,7 @@ jobs:
         
     steps:
     - name: Checkout repository
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
     - name: Initialize CodeQL
       uses: github/codeql-action/init@f25eda876ebb741d872b63b9f2c6dfdd77f14b83 # v4.35.5
@@ -165,27 +165,27 @@ jobs:
     
     steps:
     - name: Checkout code
-      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       
     - name: Set up Node.js
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
       with:
-        node-version: '22'
+        node-version: '24'
         
-    - name: Install license checker
-      run: npm install -g license-checker@25.0.1
+    - name: Install maintained license checker
+      run: npm install -g license-checker-rseidelsohn@5.0.1
       
     - name: Check frontend licenses
       run: |
         cd web-app
         npm ci
-        license-checker --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;CC0-1.0;0BSD;MIT-0;BlueOak-1.0.0;CC-BY-4.0;(MIT OR CC0-1.0);MIT AND ISC' --excludePrivatePackages
+        license-checker-rseidelsohn --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;CC0-1.0;0BSD;MIT-0;BlueOak-1.0.0;CC-BY-4.0;Unlicense;(MIT OR CC0-1.0);MIT AND ISC' --excludePrivatePackages
         
     - name: Check backend licenses
       run: |
         cd services/patient-api
         npm ci
-        license-checker --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;CC0-1.0;0BSD;MIT-0;BlueOak-1.0.0;CC-BY-4.0;(MIT OR CC0-1.0);MIT AND ISC' --excludePrivatePackages
+        license-checker-rseidelsohn --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;CC0-1.0;0BSD;MIT-0;BlueOak-1.0.0;CC-BY-4.0;Unlicense;(MIT OR CC0-1.0);MIT AND ISC' --excludePrivatePackages
 
   security-report:
     name: Generate Security Report
@@ -196,7 +196,7 @@ jobs:
     steps:
     - name: Security Scan Summary
       run: |
-        echo "## 🔒 Security Scan Results" >> $GITHUB_STEP_SUMMARY
+        echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
         echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
         echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
         echo "| Dependency Scan | ${{ needs.security-scan.result }} |" >> $GITHUB_STEP_SUMMARY
@@ -205,7 +205,7 @@ jobs:
         echo "| CodeQL Analysis | ${{ needs.codeql-analysis.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "| License Check | ${{ needs.license-check.result }} |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 📋 Security Recommendations" >> $GITHUB_STEP_SUMMARY
+        echo "### Security Recommendations" >> $GITHUB_STEP_SUMMARY
         echo "- Review any failed security checks above" >> $GITHUB_STEP_SUMMARY
         echo "- Update dependencies with known vulnerabilities" >> $GITHUB_STEP_SUMMARY
         echo "- Ensure no secrets are committed to the repository" >> $GITHUB_STEP_SUMMARY

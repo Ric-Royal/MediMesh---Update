@@ -77,6 +77,11 @@ testing.
 14. The API production image retained npm, Corepack, and Yarn even though the
     running service needs only Node.js. Those package managers, their caches,
     and their global package trees are now removed from the runtime image.
+15. The remote licence gate omitted Wouter's permissive Unlicense identifier
+    and used an obsolete checker that installed the old vulnerable glob chain.
+    The allow-list now includes the exact SPDX identifier, the checker is
+    replaced by maintained version 5.0.1, and checkout/setup actions are pinned
+    to current immutable releases that use the supported runner runtime.
 
 ## Kenyan health-data alignment
 

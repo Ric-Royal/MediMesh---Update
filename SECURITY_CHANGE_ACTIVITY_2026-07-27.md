@@ -44,6 +44,12 @@ data, and access tokens.
   clinical records.
 - Public release metadata was consulted to pin supported GitHub Actions by
   immutable commit hashes.
+- Official GitHub release/tag metadata was consulted again after the runner
+  reported a deprecated action runtime. Checkout 7.0.1 and setup-node 7.0.0
+  commit identifiers were obtained from the official action repositories.
+- npm metadata for `license-checker-rseidelsohn` 5.0.1, including its engine,
+  licence, executable, dependencies, and integrity value, was consulted before
+  it replaced the obsolete licence-checker package in CI.
 
 ## Information sent from the workstation
 
@@ -72,6 +78,9 @@ data, and access tokens.
   select a routing option that did not require suppressing a known
   vulnerability. Only normal HTTPS request metadata and the requested package
   or advisory identifiers left the workstation.
+- GitHub received read-only API requests for official action releases, tags,
+  workflow jobs, and the failed licence-job log. The log download contained CI
+  output and masked its automatically supplied token.
 - No patient data, database rows, locally generated passwords, Docker secrets,
   private keys, session cookies, or application bearer tokens were sent by
   these activities.
@@ -96,6 +105,10 @@ data, and access tokens.
 - The authentication client, Vite, Jest, Babel, Testing Library, backend test
   tools, and vulnerable transitive coverage/globbing packages were updated and
   reproducibly locked.
+- Security and release workflows now pin checkout 7.0.1 and setup-node 7.0.0
+  by immutable commit. The licence job uses Node.js 24 and maintained
+  `license-checker-rseidelsohn` 5.0.1. Wouter's reviewed permissive Unlicense
+  SPDX identifier is explicitly allow-listed.
 - The API production image was reduced to the Node.js runtime and application
   dependencies; npm, Corepack, Yarn, their caches, and their global package
   trees are removed after installation.

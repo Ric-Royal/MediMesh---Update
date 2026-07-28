@@ -119,6 +119,10 @@ HTTP preview.
   minified JavaScript chunk is about 1.49 MB. This does not fail the build or
   the security gate; route-level code splitting remains a performance
   improvement for a later user-interface release.
+- The first remote licence rerun correctly rejected Wouter's Unlicense because
+  the policy omitted that SPDX identifier. The permissive licence was reviewed
+  and added, and the obsolete licence checker was replaced by maintained
+  version 5.0.1 so CI no longer installs the old glob chain.
 - Some negative-path tests intentionally emit simulated API-error messages,
   and MUI tooltip transitions emit test-only React timing warnings. All 51
   assertions pass, and these messages do not occur as patient-workflow
