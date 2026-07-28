@@ -74,6 +74,10 @@ data, and access tokens.
   transmitted Git objects contained reviewed source, tests, migrations, and
   documentation; ignored local secrets and preview database contents were not
   included.
+- GitHub subsequently received commits
+  `dd01cee49c270f05d29eec9c07e12cdcfd30353c` and
+  `1dd1c358d69197ec6dc4c3d0a08b313e02391a32` on the same branch for the
+  dependency/runtime remediation and focused licence-gate repair.
 - Public GitHub advisory metadata and Wouter documentation were consulted to
   select a routing option that did not require suppressing a known
   vulnerability. Only normal HTTPS request metadata and the requested package
@@ -168,8 +172,10 @@ data, and access tokens.
   findings.
 - The direct `/dashboard` route returned HTTP 200, loaded the application
   entry point, and included the configured content-security policy.
-- The remote workflow requires one final pushed run after these corrections
-  are committed.
+- Hosted security run
+  [30352418868](https://github.com/Ric-Royal/MediMesh---Update/actions/runs/30352418868)
+  passed dependency auditing, secret detection, exact Docker image scanning,
+  licence compliance, CodeQL analysis, and the aggregate security report.
 
 ## Credentials and local sign-in
 

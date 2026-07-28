@@ -23,8 +23,11 @@ Date: 27 July 2026
 
 The GitHub workflows are configured to enforce dependency auditing, secret
 detection, CodeQL, licence checks, image vulnerability scanning, SBOM
-generation, provenance attestations, and immutable release digests. Final
-remote results are recorded in the completion handoff after the branch push.
+generation, provenance attestations, and immutable release digests. Hosted
+security run
+[30352418868](https://github.com/Ric-Royal/MediMesh---Update/actions/runs/30352418868)
+passed all six jobs for commit
+`1dd1c358d69197ec6dc4c3d0a08b313e02391a32`.
 
 ## Live Docker verification
 

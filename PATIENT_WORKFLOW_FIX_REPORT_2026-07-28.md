@@ -126,6 +126,10 @@ Official sources used:
   application lockfiles.
 - Offline scans of the exact frontend and API runtime images reported zero
   high or critical findings in operating-system and application packages.
+- Hosted security run
+  [30352418868](https://github.com/Ric-Royal/MediMesh---Update/actions/runs/30352418868)
+  passed dependency auditing, secret detection, container scanning, licence
+  compliance, CodeQL analysis, and the aggregate security report.
 - API and web containers were rebuilt and replaced in
   `medimesh-security-preview`.
 - PostgreSQL, Redis, MinIO, ClamAV, and the API reported healthy after the
