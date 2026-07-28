@@ -1,13 +1,13 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import Keycloak from 'keycloak-js';
 import apiService from '../services/api';
+import { RUNTIME_CONFIG } from '../config/runtime';
 
 const AuthContext = createContext();
-const authMode = process.env.REACT_APP_IDENTITY_MODE || 'local';
+const authMode = RUNTIME_CONFIG.identityMode;
 const keycloakConfig = {
-  url: process.env.REACT_APP_KEYCLOAK_URL || 'http://localhost:8080',
-  realm: process.env.REACT_APP_KEYCLOAK_REALM || 'medimesh',
-  clientId: process.env.REACT_APP_KEYCLOAK_CLIENT_ID || 'medimesh-client'
+  url: RUNTIME_CONFIG.keycloakUrl,
+  realm: RUNTIME_CONFIG.keycloakRealm,
+  clientId: RUNTIME_CONFIG.keycloakClientId
 };
 
 export const AuthProvider = ({ children }) => {
@@ -30,6 +30,9 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const initKeycloak = useCallback(async () => {
+    // Keep the optional identity-provider client out of the default local
+    // authentication bundle and load it only when explicitly configured.
+    const { default: Keycloak } = await import('keycloak-js');
     const kc = new Keycloak(keycloakConfig);
     const authenticated = await kc.init({
       onLoad: 'check-sso',

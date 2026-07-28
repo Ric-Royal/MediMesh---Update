@@ -36,7 +36,7 @@ Run tests:
 
 ```sh
 cd services/patient-api && npm ci && npm test -- --runInBand
-cd web-app && npm ci && npm test -- --watchAll=false --runInBand
+cd web-app && npm ci && npm test
 ```
 
 ## Production release

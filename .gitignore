@@ -56,6 +56,8 @@ db-dumps/
 # ===========================================
 # Dependencies
 node_modules/
+.dependency-recovery/
+.activity/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

@@ -16,6 +16,7 @@ import {
   Shield as ShieldIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
+import { RUNTIME_CONFIG } from '../config/runtime';
 
 const LoginPage = () => {
   const { login, verifyMfa } = useAuth();
@@ -267,7 +268,7 @@ const LoginPage = () => {
 
             <Box sx={{ mt: 4, textAlign: 'center' }}>
               <Typography variant="caption" color="text.secondary">
-                {process.env.REACT_APP_SHOW_DEMO_LOGIN === 'true'
+                {RUNTIME_CONFIG.showDemoLogin
                   ? 'Development environment — do not use real patient data'
                   : 'Protected account authentication with MFA support'
                 }

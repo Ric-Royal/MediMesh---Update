@@ -6,6 +6,9 @@ jest.mock('../../middleware/auth', () => ({
 }));
 jest.mock('../../models/QueueEntry', () => ({
   getQueueStatistics: jest.fn(),
+  findByPk: jest.fn(),
+  create: jest.fn(),
+  update: jest.fn(),
 }));
 jest.mock('../../models/Encounter', () => ({}));
 jest.mock('../../models/Patient', () => ({}));
@@ -13,10 +16,12 @@ jest.mock('../../utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 jest.mock('../../utils/websocket', () => ({ emitQueueUpdate: jest.fn() }));
+jest.mock('../../utils/database', () => ({ getDB: jest.fn() }));
 
 const express = require('express');
 const request = require('supertest');
 const QueueEntry = require('../../models/QueueEntry');
+const { getDB } = require('../../utils/database');
 const queueRouter = require('../queue');
 
 describe('queue statistics routes', () => {
@@ -58,5 +63,66 @@ describe('queue statistics routes', () => {
     expect(response.status).toBe(200);
     expect(QueueEntry.getQueueStatistics).toHaveBeenCalledWith('clinic-01', 'consultation');
     expect(response.body.data.averageWaitTime).toBe(0);
+  });
+
+  test('routes completed triage to consultation inside one transaction', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn()
+    };
+    getDB.mockReturnValue({ connect: jest.fn().mockResolvedValue(client) });
+    QueueEntry.findByPk.mockResolvedValue({
+      id: '550e8400-e29b-41d4-a716-446655440021',
+      encounter_id: '550e8400-e29b-41d4-a716-446655440022',
+      patient_id: '550e8400-e29b-41d4-a716-446655440023',
+      doctor_id: '550e8400-e29b-41d4-a716-446655440024',
+      queue_type: 'triage',
+      status: 'in-service',
+      priority_level: 3,
+      is_emergency: false
+    });
+    QueueEntry.create.mockResolvedValue({ id: 'next-queue' });
+    QueueEntry.update.mockResolvedValue({
+      id: '550e8400-e29b-41d4-a716-446655440021',
+      queue_type: 'triage',
+      status: 'completed'
+    });
+
+    const response = await request(app)
+      .put('/api/queue/550e8400-e29b-41d4-a716-446655440021/status')
+      .send({ status: 'completed', nextQueue: 'consultation' });
+
+    expect(response.status).toBe(200);
+    expect(QueueEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({ queueType: 'consultation' }),
+      client
+    );
+    expect(QueueEntry.update).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ status: 'completed' }),
+      client
+    );
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
+  });
+
+  test('does not permit triage to skip consultation', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn()
+    };
+    getDB.mockReturnValue({ connect: jest.fn().mockResolvedValue(client) });
+    QueueEntry.findByPk.mockResolvedValue({
+      id: '550e8400-e29b-41d4-a716-446655440031',
+      queue_type: 'triage',
+      status: 'in-service'
+    });
+
+    const response = await request(app)
+      .put('/api/queue/550e8400-e29b-41d4-a716-446655440031/status')
+      .send({ status: 'completed', nextQueue: 'billing' });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toMatch(/consultation/i);
+    expect(QueueEntry.create).not.toHaveBeenCalled();
   });
 });

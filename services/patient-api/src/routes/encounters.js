@@ -34,6 +34,8 @@ const encounterCreateSchema = Joi.object({
   clinic_id: Joi.string().uuid().allow(null),
   doctorId: Joi.string().uuid().allow(null),
   doctor_id: Joi.string().uuid().allow(null),
+  initialQueue: Joi.string().valid('triage', 'consultation'),
+  initial_queue: Joi.string().valid('triage', 'consultation'),
   waitingLocation: Joi.string().trim().max(100),
   waiting_location: Joi.string().trim().max(100),
   chiefComplaint: Joi.string().trim().max(2000).allow('', null),
@@ -135,21 +137,31 @@ router.post(
     
     const encounter = await Encounter.create(encounterData, client);
     
-    // Auto-add to consultation queue if outpatient or emergency
-    if (encounter.encounter_type === 'outpatient' || encounter.encounter_type === 'emergency') {
+    const queueEligibleTypes = ['outpatient', 'emergency', 'follow-up', 'day-case'];
+    const requestedInitialQueue =
+      req.validatedData.initialQueue || req.validatedData.initial_queue;
+    const initialQueue = requestedInitialQueue || (
+      ['outpatient', 'emergency'].includes(encounter.encounter_type)
+        ? 'triage'
+        : 'consultation'
+    );
+
+    if (queueEligibleTypes.includes(encounter.encounter_type)) {
       await QueueEntry.create({
         encounterId: encounter.id,
         patientId: encounter.patient_id,
         clinicId: encounter.clinic_id || null,
         doctorId: encounter.doctor_id || null,
-        queueType: 'consultation',
+        queueType: initialQueue,
         isEmergency: ['emergency', 'critical'].includes(encounter.triage_level),
-        waitingLocation: encounter.waiting_location || 'reception'
+        waitingLocation: initialQueue === 'triage'
+          ? 'triage-waiting'
+          : 'consultation-waiting'
       }, client);
     }
     await client.query('COMMIT');
     
-    logger.info(`Encounter created: ${encounter.encounterNumber}`);
+    logger.info(`Encounter created: ${encounter.encounter_number || encounter.encounterNumber}`);
     res.status(201).json({ success: true, data: encounter });
   } catch (error) {
     if (client) await client.query('ROLLBACK');

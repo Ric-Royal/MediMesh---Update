@@ -1,10 +1,11 @@
 // API Configuration
 // This file centralizes all API URL configuration to prevent hardcoded URLs
+import { RUNTIME_CONFIG } from './runtime';
 
 // Empty means same-origin. In Docker, nginx proxies /api and /socket.io to the
 // patient service, which also makes the UI work from another workstation.
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
-const WS_BASE_URL = process.env.REACT_APP_WS_URL || window.location.origin;
+const API_BASE_URL = RUNTIME_CONFIG.apiUrl;
+const WS_BASE_URL = RUNTIME_CONFIG.wsUrl || window.location.origin;
 
 export const API_CONFIG = {
   // Base URLs

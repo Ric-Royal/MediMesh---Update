@@ -6,6 +6,7 @@ const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
 const { validate } = require('../utils/validation');
 const {
+  isAdmin,
   requireConsultationAccess,
   requireEncounterAccess,
   requireProviderIdentity
@@ -78,6 +79,7 @@ router.post('/',
     const {
       encounterId,
       patientId,
+      doctorId,
       // Vitals
       vitals,
       // Clinical Information
@@ -102,10 +104,8 @@ router.post('/',
       prescriptions = []
     } = req.validatedData;
 
-    const resolvedDoctorId = req.user.staffId || req.user.id;
-
     // Validate required fields
-    if (!encounterId || !patientId || !resolvedDoctorId) {
+    if (!encounterId || !patientId) {
       return res.status(400).json({
         success: false,
         error: 'Missing required patient or encounter context'
@@ -121,7 +121,7 @@ router.post('/',
 
     try {
       const encounterCheck = await db.query(`
-        SELECT id
+        SELECT id, doctor_id
         FROM encounters
         WHERE id = $1 AND patient_id = $2
         FOR UPDATE
@@ -130,6 +130,57 @@ router.post('/',
         const error = new Error('Encounter does not belong to the supplied patient');
         error.status = 409;
         throw error;
+      }
+
+      const assignedDoctorId = encounterCheck.rows[0].doctor_id;
+      let resolvedDoctorId;
+
+      if (isAdmin(req.user)) {
+        if (assignedDoctorId && doctorId && assignedDoctorId !== doctorId) {
+          const error = new Error('Selected clinician does not match the clinician assigned to this visit');
+          error.status = 409;
+          throw error;
+        }
+        resolvedDoctorId = assignedDoctorId || doctorId;
+      } else {
+        resolvedDoctorId = req.user.staffId;
+        if (doctorId && doctorId !== resolvedDoctorId) {
+          const error = new Error('A clinician cannot record a consultation under another provider');
+          error.status = 403;
+          throw error;
+        }
+        if (assignedDoctorId && assignedDoctorId !== resolvedDoctorId) {
+          const error = new Error('This visit is assigned to another clinician');
+          error.status = 403;
+          throw error;
+        }
+      }
+
+      if (!resolvedDoctorId) {
+        const error = new Error('Assign an active clinician to the visit before completing the consultation');
+        error.status = 409;
+        throw error;
+      }
+
+      const providerCheck = await db.query(`
+        SELECT id
+        FROM staff
+        WHERE id = $1
+          AND role = 'doctor'
+          AND status = 'active'
+          AND NULLIF(TRIM(staff_number), '') IS NOT NULL
+      `, [resolvedDoctorId]);
+      if (!providerCheck.rows.length) {
+        const error = new Error('The assigned clinician is not an active provider');
+        error.status = 409;
+        throw error;
+      }
+
+      if (!assignedDoctorId) {
+        await db.query(
+          'UPDATE encounters SET doctor_id = $2, updated_at = NOW() WHERE id = $1',
+          [encounterId, resolvedDoctorId]
+        );
       }
 
       // 1. Create consultation record

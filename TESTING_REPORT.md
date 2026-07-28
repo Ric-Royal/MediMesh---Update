@@ -1,6 +1,6 @@
 # MediMesh Security Verification Report
 
-Date: 24 July 2026
+Date: 27 July 2026
 
 ## Automated verification
 
@@ -8,7 +8,8 @@ Date: 24 July 2026
   image.
 - Frontend: 7 suites, 48 tests, all passed in the digest-pinned Node.js test
   image.
-- Production frontend: optimized build completed successfully.
+- Production frontend: the Vite 7.2.2 optimized build completed successfully
+  after 12,616 modules were transformed.
 - Backend dependency installation: 541 packages audited, zero known
   vulnerabilities reported.
 - JavaScript syntax: all 69 backend source files passed.
@@ -18,9 +19,10 @@ Date: 24 July 2026
 - Compose: local and production models both passed configuration validation.
 - Repository diff: whitespace validation passed.
 
-The GitHub workflows additionally enforce dependency auditing, secret
+The GitHub workflows are configured to enforce dependency auditing, secret
 detection, CodeQL, licence checks, image vulnerability scanning, SBOM
-generation, provenance attestations, and immutable release digests.
+generation, provenance attestations, and immutable release digests. The final
+remote run for the current uncommitted workflow corrections remains pending.
 
 ## Live Docker verification
 
@@ -30,6 +32,9 @@ Preview URL: `http://localhost:3000`
 - The API readiness endpoint returned HTTP 200 after checking PostgreSQL,
   Redis, and an encrypted object-store write/read probe.
 - Only the web container is host-published, on `127.0.0.1:3000`.
+- The web container serves the production bundle through nginx on internal
+  port 8080; development source mounts and the Vite development port are not
+  present in the base stack.
 - The web tier is connected only to the edge and application networks.
 - PostgreSQL is connected only to the database network.
 - The secure smoke test verified cookie-only login, absence of a bearer token
@@ -69,3 +74,20 @@ docker compose -p medimesh-security-preview up -d --build
 
 Use generated local credentials only. Do not place real patient data in the
 HTTP preview.
+
+## Patient journey regression verification — 28 July 2026
+
+- API: 17 suites and 77 tests passed in the isolated locked-dependency test
+  image.
+- Frontend: 7 suites and 48 tests passed in the isolated locked-dependency test
+  image.
+- The production frontend bundle completed successfully under Vite 7.2.2.
+- A live two-session check confirmed that signing out one session leaves the
+  other session valid.
+- A synthetic outpatient visit completed registration, triage, consultation,
+  automatic invoicing, local cash-ledger settlement, encounter closure, and
+  billing-queue closure.
+- The automatic consultation charge used the clinician assigned to the
+  encounter rather than the administrator performing delegated data entry.
+- Patient `P000001004` and encounter `ENC2026072800004` are synthetic
+  verification records and must not be treated as clinical or financial truth.

@@ -1,6 +1,7 @@
 import axios from 'axios';
+import { RUNTIME_CONFIG } from '../config/runtime';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
+const API_BASE_URL = RUNTIME_CONFIG.apiUrl;
 
 // Create axios instance
 const api = axios.create({

@@ -144,7 +144,9 @@ test('front desk registers a visit for the patient already in context', async ()
   global.fetch = jest.fn((input, options = {}) => {
     const url = String(input);
     if (url.includes('/api/clinics')) return jsonResponse({ data: [] });
-    if (url.includes('/api/staff')) return jsonResponse({ data: [] });
+    if (url.includes('/api/staff')) return jsonResponse({ data: [{
+      id: 'doctor-1', first_name: 'Test', last_name: 'Clinician'
+    }] });
     if (url.endsWith('/api/encounters') && options.method === 'POST') {
       return jsonResponse({ success: true, data: { id: 'enc-1' } });
     }
@@ -161,11 +163,15 @@ test('front desk registers a visit for the patient already in context', async ()
   );
 
   fireEvent.change(await screen.findByRole('textbox', { name: /Chief Complaint/i }), { target: { value: 'Persistent fever' } });
+  fireEvent.mouseDown(screen.getByLabelText(/Clinician/));
+  fireEvent.click(await screen.findByText('Dr. Test Clinician'));
   fireEvent.click(screen.getByRole('button', { name: 'Register Visit & Add to Queue' }));
 
-  await waitFor(() => expect(global.fetch).toHaveBeenCalledWith(
-    '/api/encounters',
-    expect.objectContaining({ method: 'POST' })
+  await waitFor(() => expect(global.fetch).toHaveBeenCalledWith('/api/encounters',
+    expect.objectContaining({
+      method: 'POST',
+      body: expect.stringContaining('"initialQueue":"consultation"')
+    })
   ));
 });
 
@@ -191,7 +197,8 @@ test('visit registration surfaces directory failures and disables affected assig
     screen.getAllByRole('alert').some(alert => /Clinic directory is unavailable/i.test(alert.textContent))
   ).toBe(true));
   expect(screen.getByLabelText('Clinic')).toHaveAttribute('aria-disabled', 'true');
-  expect(screen.getByLabelText('Clinician')).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByLabelText(/Clinician/)).toHaveAttribute('aria-disabled', 'true');
+  expect(screen.getByRole('button', { name: 'Register Visit & Add to Queue' })).toBeDisabled();
   expect(screen.getByLabelText('Encounter Type')).toBeInTheDocument();
   expect(screen.getByLabelText('Triage Level')).toBeInTheDocument();
   expect(screen.getByLabelText('Payment Type')).toBeInTheDocument();

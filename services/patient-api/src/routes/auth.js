@@ -1,5 +1,6 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const { randomUUID } = require('crypto');
 const UserAccount = require('../models/UserAccount');
 const { authenticateToken } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
@@ -13,6 +14,7 @@ const {
 const {
   buildOtpAuthUri, decryptSecret, encryptSecret, findTotpCounter, generateSecret
 } = require('../utils/totp');
+const { revokeSession } = require('../security/sessionRevocation');
 
 const router = express.Router();
 
@@ -63,7 +65,11 @@ const createSession = (user, { mfaAuthenticated = false } = {}) => {
     mfa: mfaAuthenticated === true,
     iss: 'medimesh',
     aud: 'medimesh-client'
-  }, getJwtSecret(), { expiresIn: expiresInSeconds, algorithm: 'HS256' });
+  }, getJwtSecret(), {
+    expiresIn: expiresInSeconds,
+    algorithm: 'HS256',
+    jwtid: randomUUID()
+  });
 
   return {
     access_token: token,
@@ -300,10 +306,30 @@ router.post('/change-password', authenticateToken, async (req, res) => {
 });
 
 router.post('/logout', authenticateToken, async (req, res) => {
-  await UserAccount.revokeSessions(req.user.id);
-  clearSession(res);
-  logger.info('User logged out and session revoked', { userId: req.user.id, ip: req.ip });
-  res.json({ message: 'Logged out successfully' });
+  try {
+    await revokeSession({
+      sessionId: req.user.sessionId,
+      expiresAt: req.user.expiresAt
+    });
+    clearSession(res);
+    logger.info('User logged out and current session revoked', {
+      userId: req.user.id,
+      ip: req.ip
+    });
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    // If the per-session revocation store is unavailable, invalidate every
+    // token version for this account rather than leave the presented token
+    // usable after sign-out.
+    await UserAccount.revokeSessions(req.user.id);
+    clearSession(res);
+    logger.error('Per-session logout failed; account sessions revoked as a fallback', {
+      error: error.message,
+      userId: req.user.id,
+      ip: req.ip
+    });
+    res.json({ message: 'Logged out successfully' });
+  }
 });
 
 module.exports = router;

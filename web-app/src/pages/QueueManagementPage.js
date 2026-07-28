@@ -355,10 +355,16 @@ const QueueManagementPage = () => {
   };
 
   const handleOpenCompleteDialog = (queueEntry) => {
+    const queueType = getQueueType(queueEntry);
     if (requiresDepartmentCompletion(queueEntry)) {
-      const queueType = getQueueType(queueEntry);
       notifyWarning(`Complete this service in the ${queueType} workspace after its clinical work is recorded.`);
       if (DEPARTMENT_WORKSPACES[queueType]) navigate(DEPARTMENT_WORKSPACES[queueType]);
+      return;
+    }
+
+    if (queueType === 'consultation') {
+      notifyWarning('Complete the clinical record in the consultation form.');
+      handleStartService(queueEntry);
       return;
     }
 
@@ -372,6 +378,7 @@ const QueueManagementPage = () => {
       setNextQueue('billing'); // Lab/Pharmacy/Radiology → Billing
     }
     
+    setNextQueue(queueType === 'triage' ? 'consultation' : 'discharge');
     setCompleteDialogOpen(true);
   };
 
@@ -799,9 +806,9 @@ const QueueManagementPage = () => {
         <DialogContent>
           <Box sx={{ pt: 2 }}>
             <Alert severity="info" sx={{ mb: 3 }}>
-              {(selectedQueueEntry?.queueType === 'consultation' || selectedQueueEntry?.queue_type === 'consultation') 
-                ? 'Where should the patient go next?' 
-                : 'Service completed. Patient will automatically move to billing unless you select another destination.'}
+              {getQueueType(selectedQueueEntry) === 'triage'
+                ? 'Completing triage sends the patient to consultation.'
+                : 'Complete the current service in its clinical workspace.'}
             </Alert>
             
             {selectedQueueEntry && (
@@ -824,6 +831,13 @@ const QueueManagementPage = () => {
                 value={nextQueue}
                 onChange={(e) => setNextQueue(e.target.value)}
               >
+                {getQueueType(selectedQueueEntry) === 'triage' && (
+                  <FormControlLabel
+                    value="consultation"
+                    control={<Radio />}
+                    label="Consultation — clinician review"
+                  />
+                )}
                 {(selectedQueueEntry?.queueType === 'consultation' || selectedQueueEntry?.queue_type === 'consultation') && (
                   <>
                     <FormControlLabel 
@@ -846,11 +860,13 @@ const QueueManagementPage = () => {
                 <FormControlLabel 
                   value="billing" 
                   control={<Radio />} 
+                  disabled={getQueueType(selectedQueueEntry) === 'triage'}
                   label="Billing — Patient ready to pay and leave"
                 />
                 <FormControlLabel 
                   value="discharge" 
                   control={<Radio />} 
+                  disabled={getQueueType(selectedQueueEntry) === 'triage'}
                   label="Discharge — Patient can leave (no further action)"
                 />
               </RadioGroup>

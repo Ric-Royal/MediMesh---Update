@@ -1,12 +1,15 @@
 const express = require('express');
+const Joi = require('joi');
 const router = express.Router();
 const Encounter = require('../models/Encounter');
 const QueueEntry = require('../models/QueueEntry');
 const Patient = require('../models/Patient');
 const { logger } = require('../utils/logger');
+const { getDB } = require('../utils/database');
 const { emitQueueUpdate } = require('../utils/websocket');
 const { authorize } = require('../middleware/auth');
 const { requireEncounterAccess } = require('../security/accessControl');
+const { validate, validateParams, uuidSchema } = require('../utils/validation');
 
 const QUEUE_READ_ROLES = ['admin', 'doctor', 'nurse', 'receptionist', 'lab-tech', 'pharmacist', 'billing', 'radiologist', 'radiographer'];
 const QUEUE_REGISTER_ROLES = ['admin', 'doctor', 'nurse', 'receptionist'];
@@ -37,6 +40,25 @@ const serializeQueueStatistics = (stats = {}) => ({
   emergencies: Number(stats.emergencies) || 0,
   averageWaitTime: Number(stats.average_wait_minutes) || 0,
   longestWaitTime: Number(stats.longest_wait_minutes) || 0,
+});
+
+const queueStatusParamsSchema = Joi.object({ id: uuidSchema });
+const queueStatusSchema = Joi.object({
+  status: Joi.string().valid(
+    'waiting', 'called', 'in-service', 'completed', 'no-show', 'deferred', 'cancelled'
+  ).required(),
+  nextQueue: Joi.string().valid(
+    'triage', 'consultation', 'lab', 'radiology', 'pharmacy', 'billing', 'discharge'
+  ).allow(null)
+}).unknown(false);
+const QUEUE_STATUS_TRANSITIONS = Object.freeze({
+  waiting: ['called', 'in-service', 'no-show', 'cancelled'],
+  called: ['in-service', 'no-show', 'cancelled'],
+  'in-service': ['completed', 'cancelled'],
+  deferred: ['waiting', 'cancelled'],
+  completed: [],
+  'no-show': [],
+  cancelled: []
 });
 
 // Get all queue entries (for "all clinics" view)
@@ -175,19 +197,45 @@ router.post(
 });
 
 // Update queue entry status with workflow logic
-router.put('/:id/status', authorize(QUEUE_PROCESS_ROLES), async (req, res) => {
+router.put(
+  '/:id/status',
+  authorize(QUEUE_PROCESS_ROLES),
+  validateParams(queueStatusParamsSchema),
+  validate(queueStatusSchema),
+  async (req, res) => {
+  let client;
   try {
-    const { id } = req.params;
-    const { status, nextQueue } = req.body; // nextQueue: 'pharmacy', 'lab', 'billing', 'discharge'
+    const { id } = req.validatedParams;
+    const { status, nextQueue } = req.validatedData;
+    client = await getDB().connect();
+    await client.query('BEGIN');
     
-    const queueEntry = await QueueEntry.findByPk(id);
+    const queueEntry = await QueueEntry.findByPk(id, client);
     if (!queueEntry) {
+      await client.query('ROLLBACK');
       return res.status(404).json({ success: false, error: 'Queue entry not found' });
     }
     
-    const db = require('../utils/database').getDB();
+    const db = client;
     const currentQueueType = queueEntry.queue_type;
-    if (rejectQueueType(req, res, currentQueueType)) return;
+    if (rejectQueueType(req, res, currentQueueType)) {
+      await client.query('ROLLBACK');
+      return;
+    }
+
+    if (status === queueEntry.status) {
+      await client.query('COMMIT');
+      return res.json({
+        success: true,
+        data: queueEntry,
+        message: 'Queue status was already up to date'
+      });
+    }
+    if (!(QUEUE_STATUS_TRANSITIONS[queueEntry.status] || []).includes(status)) {
+      const error = new Error(`Queue cannot move from ${queueEntry.status} to ${status}`);
+      error.status = 409;
+      throw error;
+    }
     
     // Update timestamps based on status
     const updates = { status };
@@ -199,25 +247,28 @@ router.put('/:id/status', authorize(QUEUE_PROCESS_ROLES), async (req, res) => {
       // HOSPITAL WORKFLOW LOGIC - Queue-Type Aware Routing
       // Determine where patient should go next based on current queue and user selection
       
-      let targetQueue = nextQueue;
+      let targetQueue = null;
       let shouldCreateOrder = false;
       
-      // If user explicitly selected a queue, use that
-      if (nextQueue && nextQueue !== 'discharge') {
-        targetQueue = nextQueue;
-        // Moving a patient does not constitute a clinical order. Real orders
-        // are created from the consultation form with selected tests/drugs.
-        shouldCreateOrder = false;
-      } 
       // Triage has a deterministic handoff. Diagnostic and pharmacy routes are
       // deliberately handled by their order-completion services so a patient
       // can return to the doctor for results instead of skipping to billing.
-      else if (currentQueueType === 'triage' && !nextQueue) {
+      if (currentQueueType === 'triage') {
+        if (nextQueue && nextQueue !== 'consultation') {
+          const error = new Error('Triage must hand the patient to consultation');
+          error.status = 409;
+          throw error;
+        }
         targetQueue = 'consultation';
         shouldCreateOrder = false;
         logger.info('Auto-routing patient from triage to consultation');
       } else {
-        targetQueue = null;
+        const workspace = currentQueueType === 'consultation'
+          ? 'consultation form'
+          : `${currentQueueType} workspace`;
+        const error = new Error(`Complete this service in the ${workspace}`);
+        error.status = 409;
+        throw error;
       }
       
       // Create queue entry for next stage if not discharging
@@ -235,7 +286,7 @@ router.put('/:id/status', authorize(QUEUE_PROCESS_ROLES), async (req, res) => {
                             targetQueue === 'radiology' ? 'radiology-waiting' :
                             targetQueue === 'consultation' ? 'consultation-waiting' : 'billing-counter',
             priorityLevel: queueEntry.priority_level
-          });
+          }, client);
           
           logger.info(`✅ Patient ${queueEntry.patient_id} added to ${targetQueue} queue`);
           
@@ -306,7 +357,8 @@ router.put('/:id/status', authorize(QUEUE_PROCESS_ROLES), async (req, res) => {
       }
     }
     
-    const updatedEntry = await QueueEntry.update(id, updates);
+    const updatedEntry = await QueueEntry.update(id, updates, client);
+    await client.query('COMMIT');
     
     // Emit real-time update via WebSocket
     if (updatedEntry.clinic_id) {
@@ -326,8 +378,14 @@ router.put('/:id/status', authorize(QUEUE_PROCESS_ROLES), async (req, res) => {
         'Status updated successfully'
     });
   } catch (error) {
+    if (client) await client.query('ROLLBACK');
     logger.error('Error updating queue status:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({
+      success: false,
+      error: error.status ? error.message : 'Unable to update queue status'
+    });
+  } finally {
+    if (client) client.release();
   }
 });
 

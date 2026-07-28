@@ -624,6 +624,21 @@ router.post('/invoices/:id/payment', authorize(['admin', 'billing']), async (req
           WHERE paid_invoice.id = $2 AND paid_invoice.payment_status = 'paid'
         )
     `, [invoice.encounter_id, id]);
+
+    await client.query(`
+      UPDATE queue_entries
+      SET status = 'completed',
+          completed_at = COALESCE(completed_at, NOW()),
+          updated_at = NOW(),
+          notes = 'Payment completed; visit closed'
+      WHERE encounter_id = $1
+        AND queue_type = 'billing'
+        AND status IN ('waiting', 'called', 'in-service', 'deferred')
+        AND EXISTS (
+          SELECT 1 FROM invoices paid_invoice
+          WHERE paid_invoice.id = $2 AND paid_invoice.payment_status = 'paid'
+        )
+    `, [invoice.encounter_id, id]);
     
     await client.query('COMMIT');
     

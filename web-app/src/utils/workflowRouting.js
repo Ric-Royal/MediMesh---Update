@@ -5,7 +5,7 @@ export const DEPARTMENT_WORKSPACES = {
   billing: '/billing',
 };
 
-const DEPARTMENT_COMPLETION_TYPES = new Set(['lab', 'pharmacy', 'radiology']);
+const DEPARTMENT_COMPLETION_TYPES = new Set(['lab', 'pharmacy', 'radiology', 'billing']);
 
 export const getQueueType = (queueEntry) =>
   queueEntry?.queueType || queueEntry?.queue_type || '';

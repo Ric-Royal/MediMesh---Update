@@ -15,28 +15,28 @@
     "keycloak-js": "22.0.5",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "react-router-dom": "6.30.4",
+    "react-router-dom": "7.18.1",
     "recharts": "2.15.3",
     "socket.io-client": "4.8.1",
     "web-vitals": "2.1.4"
   },
   "devDependencies": {
+    "@babel/core": "7.28.5",
+    "@babel/preset-env": "7.28.5",
+    "@babel/preset-react": "7.28.5",
     "@testing-library/jest-dom": "5.17.0",
     "@testing-library/react": "13.4.0",
     "@testing-library/user-event": "13.5.0",
-    "react-scripts": "5.0.1"
+    "@vitejs/plugin-react": "5.1.1",
+    "babel-jest": "30.2.0",
+    "jest": "30.2.0",
+    "jest-environment-jsdom": "30.2.0",
+    "vite": "7.2.2"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
+    "start": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "test": "jest --runInBand"
   },
   "browserslist": {
     "production": [
@@ -48,6 +48,12 @@
       "last 1 chrome version",
       "last 1 firefox version",
       "last 1 safari version"
+    ]
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "setupFilesAfterEnv": [
+      "<rootDir>/src/setupTests.js"
     ]
   }
 }

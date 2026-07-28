@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const { logger } = require('../utils/logger');
 const { getDB } = require('../utils/database');
 const { csrfProtection, parseCookies } = require('../security/csrf');
+const { isSessionRevoked } = require('../security/sessionRevocation');
 
 const getJwtSecret = () => {
   const secret = String(process.env.JWT_SECRET || '');
@@ -30,6 +31,8 @@ const verifyAccessToken = (token) => {
     scope: decoded.scope,
     tokenVersion: decoded.token_version,
     mfa: decoded.mfa === true,
+    sessionId: decoded.jti,
+    expiresAt: decoded.exp,
     authenticationType: 'jwt'
   };
 };
@@ -67,7 +70,13 @@ const loadPersistedIdentity = async (tokenUser) => {
   if (tokenUser.authenticationType === 'jwt') {
     const tokenVersion = Number(tokenUser.tokenVersion);
     const currentVersion = Number(account.token_version) || 0;
-    if (!Number.isSafeInteger(tokenVersion) || tokenVersion < 0 || tokenVersion !== currentVersion) {
+    if (
+      !Number.isSafeInteger(tokenVersion) ||
+      tokenVersion < 0 ||
+      tokenVersion !== currentVersion ||
+      !tokenUser.sessionId ||
+      !Number.isSafeInteger(Number(tokenUser.expiresAt))
+    ) {
       throw new Error('Token has been revoked');
     }
   }
@@ -116,6 +125,9 @@ const authenticateToken = async (req, res, next) => {
     }
 
     req.user = await loadPersistedIdentity(verifyAccessToken(token));
+    if (await isSessionRevoked(req.user.sessionId)) {
+      throw new Error('Token has been revoked');
+    }
 
     const originalUrl = String(req.originalUrl || '');
     const passwordChangePath = originalUrl.startsWith('/api/auth/change-password') ||

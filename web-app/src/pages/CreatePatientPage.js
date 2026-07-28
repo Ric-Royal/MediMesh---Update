@@ -111,7 +111,7 @@ const CreatePatientPage = () => {
   }, []);
 
   // Check permissions
-  if (!hasRole('doctor') && !hasRole('nurse') && !hasRole('admin') && !hasRole('receptionist')) {
+  if (!hasRole('admin') && !hasRole('receptionist')) {
     return (
       <Box>
         <Button
@@ -266,6 +266,11 @@ const CreatePatientPage = () => {
   };
 
   const handleCreateEncounter = async () => {
+    if (!encounterData.doctorId) {
+      setSubmitError('Assign a clinician before adding the patient to the care queue.');
+      return;
+    }
+
     try {
       setCreatingEncounter(true);
       
@@ -277,7 +282,8 @@ const CreatePatientPage = () => {
         chiefComplaint: encounterData.chiefComplaint || 'General consultation',
         triageLevel: encounterData.triageLevel,
         paymentType: encounterData.paymentType,
-        waitingLocation: encounterData.waitingLocation
+        waitingLocation: encounterData.waitingLocation,
+        initialQueue: 'triage'
       };
       
       const response = await fetch(`${API_CONFIG.baseURL}/api/encounters`, {
@@ -290,7 +296,8 @@ const CreatePatientPage = () => {
       });
       
       if (!response.ok) {
-        throw new Error('Failed to create encounter');
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(errorBody.error || 'Failed to create encounter');
       }
       
       // Navigate to patient detail page with success message
@@ -300,7 +307,7 @@ const CreatePatientPage = () => {
       });
     } catch (error) {
       console.error('Error creating encounter:', error);
-      setSubmitError('Patient created but failed to add to queue. You can add them to the queue later.');
+      setSubmitError(`Patient created but failed to add to the queue: ${error.message}`);
       // Still navigate to patient page after a delay
       setTimeout(() => {
         navigate(`/patients/${createdPatient.id}`, {
@@ -665,7 +672,7 @@ const CreatePatientPage = () => {
 
           <Grid container spacing={2}>
             <Grid item xs={12}>
-              <FormControl fullWidth>
+              <FormControl fullWidth required>
                 <InputLabel>Encounter Type</InputLabel>
                 <Select
                   value={encounterData.encounterType}
@@ -700,7 +707,7 @@ const CreatePatientPage = () => {
             </Grid>
 
             <Grid item xs={12}>
-              <FormControl fullWidth>
+              <FormControl fullWidth required>
                 <InputLabel>Assigned Doctor</InputLabel>
                 <Select
                   value={encounterData.doctorId}
@@ -794,7 +801,7 @@ const CreatePatientPage = () => {
           </Button>
           <Button
             onClick={handleCreateEncounter}
-            disabled={creatingEncounter}
+            disabled={creatingEncounter || !encounterData.doctorId}
             variant="contained"
             startIcon={creatingEncounter ? null : <CheckCircleIcon />}
           >

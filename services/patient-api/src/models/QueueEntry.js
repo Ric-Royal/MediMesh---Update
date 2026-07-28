@@ -68,7 +68,7 @@ class QueueEntry {
     return result.rows;
   }
   
-  static async findByPk(id) {
+  static async findByPk(id, executor = getDB()) {
     const query = `
       SELECT q.*,
              p.first_name, p.last_name, p.uhid,
@@ -84,7 +84,7 @@ class QueueEntry {
       LEFT JOIN clinics c ON q.clinic_id = c.id
       WHERE q.id = $1
     `;
-    const result = await getDB().query(query, [id]);
+    const result = await executor.query(query, [id]);
     return result.rows[0];
   }
   
@@ -189,7 +189,7 @@ class QueueEntry {
     return result.rows[0];
   }
   
-  static async update(id, updateData) {
+  static async update(id, updateData, executor = getDB()) {
     const fields = [];
     const values = [];
     let paramCount = 1;
@@ -208,7 +208,7 @@ class QueueEntry {
       RETURNING *
     `;
     
-    const result = await getDB().query(query, values);
+    const result = await executor.query(query, values);
     return result.rows[0];
   }
 }

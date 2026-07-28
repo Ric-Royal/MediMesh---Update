@@ -30,10 +30,11 @@ describe('versioned access tokens', () => {
     token_version: tokenVersion,
     iss: 'medimesh',
     aud: 'medimesh-client'
-  }, secret, { algorithm: 'HS256', expiresIn: 3600 });
+  }, secret, { algorithm: 'HS256', expiresIn: 3600, jwtid: 'test-session-id' });
 
   test('reads the signed token version', () => {
     expect(verifyAccessToken(tokenForVersion(4)).tokenVersion).toBe(4);
+    expect(verifyAccessToken(tokenForVersion(4)).sessionId).toBe('test-session-id');
   });
 
   test('uses persisted roles when the token version matches', async () => {

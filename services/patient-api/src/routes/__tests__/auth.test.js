@@ -1,6 +1,10 @@
 jest.mock('../../middleware/auth', () => ({
   authenticateToken: (req, res, next) => {
-    req.user = { id: '550e8400-e29b-41d4-a716-446655440001' };
+    req.user = {
+      id: '550e8400-e29b-41d4-a716-446655440001',
+      sessionId: 'test-presented-session',
+      expiresAt: Math.floor(Date.now() / 1000) + 900
+    };
     next();
   }
 }));
@@ -23,6 +27,9 @@ jest.mock('../../security/loginThrottle', () => ({
   clearLoginFailures: jest.fn(),
   recordLoginFailure: jest.fn()
 }));
+jest.mock('../../security/sessionRevocation', () => ({
+  revokeSession: jest.fn().mockResolvedValue(undefined)
+}));
 jest.mock('../../utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 }));
@@ -31,6 +38,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const request = require('supertest');
 const UserAccount = require('../../models/UserAccount');
+const { revokeSession } = require('../../security/sessionRevocation');
 const authRouter = require('../auth');
 const { encryptSecret, generateSecret, generateTotp } = require('../../utils/totp');
 
@@ -121,5 +129,16 @@ describe('POST /api/auth/change-password', () => {
     expect(secondStep.body.access_token).toBeUndefined();
     expect(secondStep.headers['set-cookie'].join(';')).toContain('medimesh_session=');
     expect(UserAccount.markLogin).toHaveBeenCalledWith(account.id);
+  });
+
+  test('logs out only the presented session', async () => {
+    const response = await request(app).post('/api/auth/logout');
+
+    expect(response.status).toBe(200);
+    expect(revokeSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: expect.anything(),
+      expiresAt: expect.anything()
+    }));
+    expect(UserAccount.revokeSessions).not.toHaveBeenCalled();
   });
 });

@@ -16,5 +16,5 @@ services:
       target: test
     environment:
       CI: "true"
-    command: ["npm", "test", "--", "--watchAll=false", "--runInBand"]
+    command: ["npm", "test"]
     ports: []

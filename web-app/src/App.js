@@ -103,7 +103,7 @@ function App() {
                   
                   {/* Patient routes */}
                   <Route path="/patients" element={<RoleRoute roles={['doctor', 'nurse', 'admin', 'receptionist']}><PatientsPage /></RoleRoute>} />
-                  <Route path="/patients/new" element={<RoleRoute roles={['doctor', 'nurse', 'admin', 'receptionist']}><CreatePatientPage /></RoleRoute>} />
+                  <Route path="/patients/new" element={<RoleRoute roles={['admin', 'receptionist']}><CreatePatientPage /></RoleRoute>} />
                   <Route path="/patients/:id" element={<RoleRoute roles={['doctor', 'nurse', 'admin', 'receptionist']}><PatientDetailPage /></RoleRoute>} />
                   <Route path="/patients/:id/edit" element={<RoleRoute roles={['doctor', 'nurse', 'admin', 'receptionist']}><EditPatientPage /></RoleRoute>} />
                   

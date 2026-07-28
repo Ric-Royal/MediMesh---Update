@@ -40,11 +40,13 @@ jobs:
         
     # Backend Security Scan
     - name: Install backend dependencies
+      if: always()
       run: |
         cd services/patient-api
         npm ci
         
     - name: Run backend security audit
+      if: always()
       run: |
         cd services/patient-api
         npm audit --audit-level=moderate
@@ -63,7 +65,7 @@ jobs:
       uses: trufflesecurity/trufflehog@17456f8c7d042d8c82c9a8ca9e937231f9f42e26 # v3.95.2
       with:
         path: ./
-        extra_args: --no-update --results=verified,unknown
+        extra_args: --results=verified,unknown
 
   docker-security:
     name: Docker Security Scan
@@ -71,7 +73,6 @@ jobs:
     permissions:
       actions: read
       contents: read
-      security-events: write
     
     steps:
     - name: Checkout code
@@ -106,20 +107,18 @@ jobs:
         limit-severities-for-sarif: true
         exit-code: '1'
         
-    - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@3b0bd1d116c0bde30213346b22d4f634d96a2fb0 # v3
+    - name: Retain Trivy scan reports
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       if: always()
       with:
-        sarif_file: 'trivy-frontend-results.sarif'
-        
-    - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@3b0bd1d116c0bde30213346b22d4f634d96a2fb0 # v3
-      if: always()
-      with:
-        sarif_file: 'trivy-backend-results.sarif'
+        name: trivy-sarif-reports
+        path: |
+          trivy-frontend-results.sarif
+          trivy-backend-results.sarif
+        if-no-files-found: error
 
     - name: Enforce container vulnerability gate
-      if: steps.trivy_frontend.outcome == 'failure' || steps.trivy_backend.outcome == 'failure'
+      if: always() && (steps.trivy_frontend.outcome == 'failure' || steps.trivy_backend.outcome == 'failure')
       run: exit 1
 
   codeql-analysis:
@@ -128,7 +127,6 @@ jobs:
     permissions:
       actions: read
       contents: read
-      security-events: write
       
     strategy:
       fail-fast: false
@@ -140,15 +138,26 @@ jobs:
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@3b0bd1d116c0bde30213346b22d4f634d96a2fb0 # v3
+      uses: github/codeql-action/init@f25eda876ebb741d872b63b9f2c6dfdd77f14b83 # v4.35.5
       with:
         languages: ${{ matrix.language }}
         
     - name: Autobuild
-      uses: github/codeql-action/autobuild@3b0bd1d116c0bde30213346b22d4f634d96a2fb0 # v3
+      uses: github/codeql-action/autobuild@f25eda876ebb741d872b63b9f2c6dfdd77f14b83 # v4.35.5
       
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@3b0bd1d116c0bde30213346b22d4f634d96a2fb0 # v3
+      uses: github/codeql-action/analyze@f25eda876ebb741d872b63b9f2c6dfdd77f14b83 # v4.35.5
+      with:
+        upload: false
+        output: codeql-results
+
+    - name: Retain CodeQL analysis report
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      if: always()
+      with:
+        name: codeql-sarif-report
+        path: codeql-results
+        if-no-files-found: error
 
   license-check:
     name: License Compliance Check
@@ -170,13 +179,13 @@ jobs:
       run: |
         cd web-app
         npm ci
-        license-checker --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC' --excludePrivatePackages
+        license-checker --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;CC0-1.0;0BSD;MIT-0;BlueOak-1.0.0;CC-BY-4.0;(MIT OR CC0-1.0);MIT AND ISC' --excludePrivatePackages
         
     - name: Check backend licenses
       run: |
         cd services/patient-api
         npm ci
-        license-checker --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC' --excludePrivatePackages
+        license-checker --onlyAllow 'MIT;Apache-2.0;BSD-2-Clause;BSD-3-Clause;ISC;CC0-1.0;0BSD;MIT-0;BlueOak-1.0.0;CC-BY-4.0;(MIT OR CC0-1.0);MIT AND ISC' --excludePrivatePackages
 
   security-report:
     name: Generate Security Report

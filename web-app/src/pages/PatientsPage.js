@@ -109,7 +109,7 @@ const PatientsPage = () => {
         <Typography variant="h4" gutterBottom>
           Patients
         </Typography>
-        {(hasRole('doctor') || hasRole('nurse') || hasRole('admin')) && (
+        {(hasRole('admin') || hasRole('receptionist')) && (
           <Button
             variant="contained"
             startIcon={<AddIcon />}

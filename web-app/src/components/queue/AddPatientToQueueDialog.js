@@ -148,6 +148,11 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess, initialPatient = nu
       return;
     }
 
+    if (!encounterData.doctorId) {
+      notifyError('Please assign a clinician before adding the patient to consultation');
+      return;
+    }
+
     setLoading(true);
     try {
       // Create encounter
@@ -165,6 +170,8 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess, initialPatient = nu
           doctorId: encounterData.doctorId || null,
           paymentType: encounterData.paymentType,
           triageLevel: encounterData.triageLevel,
+          initialQueue: 'consultation',
+          waitingLocation: 'consultation-waiting',
           status: 'registered'
         })
       });
@@ -209,12 +216,15 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess, initialPatient = nu
       <DialogContent>
         <Box sx={{ pt: 2 }}>
           <Alert severity="info" sx={{ mb: 3 }}>
-            Search for an existing patient and register a new visit to add them to the consultation queue.
+            Search for an existing patient, assign the clinician, and register a new visit in the consultation queue.
           </Alert>
 
           {(clinicDirectoryError || doctorDirectoryError) && (
             <Alert severity="warning" sx={{ mb: 3 }}>
-              {[clinicDirectoryError, doctorDirectoryError].filter(Boolean).join(' ')} The visit can still be registered without the affected optional assignment.
+              {[clinicDirectoryError, doctorDirectoryError].filter(Boolean).join(' ')}{' '}
+              {doctorDirectoryError
+                ? 'Registration is disabled until the clinician directory is available.'
+                : 'The visit can still be registered without a clinic assignment.'}
             </Alert>
           )}
 
@@ -353,7 +363,7 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess, initialPatient = nu
             </Grid>
 
             <Grid item xs={12} md={6}>
-              <FormControl fullWidth error={Boolean(doctorDirectoryError)}>
+              <FormControl fullWidth required error={Boolean(doctorDirectoryError)}>
                 <InputLabel id="visit-doctor-label">Clinician</InputLabel>
                 <Select
                   id="visit-doctor-select"
@@ -363,7 +373,6 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess, initialPatient = nu
                   disabled={doctorDirectoryLoading || Boolean(doctorDirectoryError)}
                   onChange={(e) => setEncounterData({ ...encounterData, doctorId: e.target.value })}
                 >
-                  <MenuItem value="">Unassigned</MenuItem>
                   {doctors.map((doctor) => (
                     <MenuItem key={doctor.id} value={doctor.id}>
                       Dr. {doctor.first_name} {doctor.last_name}
@@ -372,7 +381,7 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess, initialPatient = nu
                   ))}
                 </Select>
                 <FormHelperText>
-                  {doctorDirectoryError || (doctorDirectoryLoading ? 'Loading clinician directory…' : 'Optional; assign now or route later')}
+                  {doctorDirectoryError || (doctorDirectoryLoading ? 'Loading clinician directory…' : 'Required for clinical attribution')}
                 </FormHelperText>
               </FormControl>
             </Grid>
@@ -405,7 +414,7 @@ const AddPatientToQueueDialog = ({ open, onClose, onSuccess, initialPatient = nu
         <Button 
           onClick={handleSubmit} 
           variant="contained" 
-          disabled={loading || !selectedPatient}
+          disabled={loading || !selectedPatient || !encounterData.doctorId || Boolean(doctorDirectoryError)}
         >
           {loading ? <CircularProgress size={24} /> : 'Register Visit & Add to Queue'}
         </Button>

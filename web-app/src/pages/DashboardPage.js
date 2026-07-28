@@ -236,14 +236,14 @@ const DashboardPage = () => {
             Refresh
           </Button>
           {(hasRole('doctor') || hasRole('nurse') || hasRole('admin') || hasRole('receptionist')) && (
-            <>
               <Button variant="outlined" size="small" onClick={() => setAddPatientDialogOpen(true)}>
                 Add to {visitLabel} queue
               </Button>
+          )}
+          {(hasRole('admin') || hasRole('receptionist')) && (
               <Button variant="contained" size="small" onClick={() => navigate('/patients/new')} startIcon={<AddIcon sx={{ fontSize: 16 }} />}>
                 New {patientLabel}
               </Button>
-            </>
           )}
         </Box>
       </Box>

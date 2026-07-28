@@ -26,7 +26,7 @@ jobs:
           cache-dependency-path: ${{ matrix.workspace }}/package-lock.json
       - run: npm ci
         working-directory: ${{ matrix.workspace }}
-      - run: npm test -- --watchAll=false --runInBand
+      - run: npm test
         working-directory: ${{ matrix.workspace }}
       - run: npm audit --omit=dev --audit-level=high
         working-directory: ${{ matrix.workspace }}
@@ -97,9 +97,8 @@ jobs:
           provenance: mode=max
           sbom: true
           build-args: |
-            REACT_APP_IDENTITY_MODE=local
-            REACT_APP_SHOW_DEMO_LOGIN=false
-            REACT_APP_DEV_MODE=false
+            VITE_IDENTITY_MODE=local
+            VITE_SHOW_DEMO_LOGIN=false
       - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
         with:
           subject-name: ghcr.io/${{ github.repository }}-${{ matrix.component }}

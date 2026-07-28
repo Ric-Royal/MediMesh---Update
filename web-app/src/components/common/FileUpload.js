@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { RUNTIME_CONFIG } from '../../config/runtime';
 import {
   Box,
   Paper,
@@ -305,7 +306,7 @@ const FileUpload = ({
       });
 
       // Send request
-      xhr.open('POST', `${process.env.REACT_APP_API_URL || ''}/api/files/upload`);
+      xhr.open('POST', `${RUNTIME_CONFIG.apiUrl}/api/files/upload`);
       xhr.withCredentials = true;
       const csrfCookie = document.cookie
         .split(';')
