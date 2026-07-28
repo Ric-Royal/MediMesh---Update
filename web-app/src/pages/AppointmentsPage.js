@@ -44,6 +44,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import API_CONFIG from '../config/api';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import { buildAppointmentListParams } from '../utils/appointmentQuery';
 
 const AppointmentsPage = () => {
   const { hasRole } = useAuth();
@@ -95,20 +96,11 @@ const AppointmentsPage = () => {
       setLoading(true);
       setError(null);
       
-      const statusMap = {
-        0: '', // All
-        1: 'scheduled',
-        2: 'confirmed',
-        3: 'checked-in',
-        4: 'completed',
-        5: 'cancelled'
-      };
-      
-      const params = new URLSearchParams({
-        page: page + 1,
-        limit: rowsPerPage,
-        status: statusMap[activeTab] || filters.status,
-        ...filters
+      const params = buildAppointmentListParams({
+        activeTab,
+        filters,
+        page,
+        rowsPerPage
       });
 
       const response = await fetch(`${API_CONFIG.baseURL}/api/appointments?${params}`, {
@@ -179,20 +171,28 @@ const AppointmentsPage = () => {
   };
 
   const fetchAvailableSlots = async (doctorId, date) => {
-    if (!doctorId || !date) return;
+    if (!doctorId || !date) {
+      setAvailableSlots([]);
+      return;
+    }
 
     try {
+      setError(null);
       const response = await fetch(
         `${API_CONFIG.baseURL}/api/appointments/doctor/${doctorId}/available-slots?date=${date}`,
         { headers: API_CONFIG.getAuthHeaders() }
       );
 
-      if (response.ok) {
-        const data = await response.json();
-        setAvailableSlots(data.data || []);
+      if (!response.ok) {
+        throw new Error('Unable to load the doctor’s available times. Please try again.');
       }
+
+      const data = await response.json();
+      setAvailableSlots(data.data || []);
     } catch (err) {
       console.error('Error fetching available slots:', err);
+      setAvailableSlots([]);
+      setError(err.message);
     }
   };
 

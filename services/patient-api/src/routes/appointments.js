@@ -27,13 +27,13 @@ const appointmentStatusSchema = Joi.string().valid(
 );
 const appointmentParamsSchema = Joi.object({ id: uuidSchema });
 const appointmentListSchema = Joi.object({
-  patient_id: Joi.string().uuid(),
-  doctor_id: Joi.string().uuid(),
-  clinic_id: Joi.string().uuid(),
-  status: appointmentStatusSchema,
-  date_from: dateSchema,
-  date_to: dateSchema,
-  appointment_type: appointmentTypeSchema,
+  patient_id: Joi.string().uuid().empty(''),
+  doctor_id: Joi.string().uuid().empty(''),
+  clinic_id: Joi.string().uuid().empty(''),
+  status: appointmentStatusSchema.empty(''),
+  date_from: dateSchema.empty(''),
+  date_to: dateSchema.empty(''),
+  appointment_type: appointmentTypeSchema.empty(''),
   page: Joi.number().integer().min(1).max(100000).default(1),
   limit: Joi.number().integer().min(1).max(100).default(50)
 });

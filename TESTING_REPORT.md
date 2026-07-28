@@ -130,3 +130,23 @@ HTTP preview.
   and MUI tooltip transitions emit test-only React timing warnings. All 51
   assertions pass, and these messages do not occur as patient-workflow
   failures in the rebuilt preview.
+
+## Appointment booking regression verification — 28 July 2026
+
+- API: 18 suites and 80 tests passed in the isolated locked-dependency image.
+- Frontend: 9 suites and 53 tests passed in the isolated locked-dependency
+  image.
+- Regression coverage confirms that legacy blank filters are accepted, the
+  frontend omits blank filters, status tabs remain authoritative, scheduling
+  helpers return available slots, and an available appointment is created.
+- The production frontend bundle rebuilt successfully.
+- The existing preview database received the narrow scheduling-function
+  permission migration without recreating its volume.
+- The rebuilt appointment list returned HTTP 200.
+- Synthetic appointment `APT-20260728-1000` was created through the complete
+  local authentication, CSRF, API, database-trigger, and audit path.
+- User-created appointment `APT-20260728-1001` remains scheduled. A mistaken
+  verification cancellation was reversed through the audited API; no row was
+  deleted.
+- Full findings and evidence are in
+  `APPOINTMENT_BOOKING_FIX_REPORT_2026-07-28.md`.

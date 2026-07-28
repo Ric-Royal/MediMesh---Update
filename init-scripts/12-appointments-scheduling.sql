@@ -294,15 +294,20 @@ INSERT INTO doctor_schedules (doctor_id, schedule_type, day_of_week, start_time,
 SELECT
     s.id,
     'regular',
-    generate_series(1, 5) as day_of_week,  -- Monday to Friday
+    weekdays.day_of_week,
     '09:00'::TIME,
     '17:00'::TIME,
     30,
     (SELECT id FROM clinics LIMIT 1),
     CURRENT_DATE
-FROM staff s
-WHERE s.role = 'doctor'
-LIMIT 3
+FROM (
+    SELECT id
+    FROM staff
+    WHERE role = 'doctor'
+    ORDER BY id
+    LIMIT 3
+) s
+CROSS JOIN generate_series(1, 5) AS weekdays(day_of_week) -- Monday to Friday
 ON CONFLICT DO NOTHING;
 
 -- ============================================

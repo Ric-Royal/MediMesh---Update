@@ -239,3 +239,52 @@ intentionally retained for comparison and were not altered.
   handoff.
 - The final evidence and fault descriptions are recorded in
   `PATIENT_WORKFLOW_FIX_REPORT_2026-07-28.md`.
+
+## Appointment booking repair activity on 28 July 2026
+
+- Inspected the running appointment page, API logs, route validation, database
+  helper definitions, service-role grants, doctor schedules, and audit output.
+- Confirmed that the application role could not execute
+  `is_time_slot_available` or `get_available_time_slots`.
+- Added and applied
+  `init-scripts/101-appointment-scheduling-permissions.sql`. It revoked
+  implicit public execution and granted only those two helpers to the
+  application role. It did not grant ownership, schema creation, role
+  creation, or unrestricted database access.
+- Changed appointment list request construction and backwards-compatible API
+  validation, improved visible slot-loading errors, and corrected the sample
+  schedule expansion query.
+- Built isolated test images `medimesh-appointment-api-tests` and
+  `medimesh-appointment-web-tests`. They contained source, locked public
+  dependencies, and synthetic test fixtures only; no preview volume or
+  database was mounted into them. Both temporary images were removed after
+  their successful results were recorded; they can be reproduced from the
+  project Dockerfiles and lockfiles.
+- Backend testing passed 18 suites and 80 tests. Frontend testing passed 9
+  suites and 53 tests.
+- Rebuilt and replaced only the API and web services. PostgreSQL, Redis,
+  MinIO, ClamAV, their persistent volumes, and existing records were
+  preserved.
+- Local loopback requests sent the administrator username, generated password,
+  CSRF token, synthetic patient identifier, doctor identifier, appointment
+  date/time, and synthetic reason only between the workstation web/API client
+  and the local preview. Secrets were read from ignored local files and were
+  not printed, committed, or transmitted externally.
+- Created synthetic appointment `APT-20260728-1000` for patient
+  `P000001004`. No payment or external notification was initiated.
+- The user independently created appointment `APT-20260728-1001`. It was
+  mistakenly cancelled during verification and immediately restored through
+  the audited API after the user clarified ownership. Its current status is
+  `scheduled`, its cancellation reason is null, no row was deleted, and both
+  state changes remain in the security audit history.
+- Docker checked pinned image metadata and reused cached image/dependency
+  layers while building. Ordinary Docker Hub request metadata may have left
+  the workstation; no repository source, credentials, secrets, database rows,
+  or patient records were uploaded.
+- Browser testing inspected the visible local login and appointment pages and
+  submitted only the synthetic verification data described above. Browser
+  cookies, local storage, password stores, and session stores were not read.
+- No email, chat message, payment request, or other third-party application
+  write occurred.
+- Detailed findings are recorded in
+  `APPOINTMENT_BOOKING_FIX_REPORT_2026-07-28.md`.
