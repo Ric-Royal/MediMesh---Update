@@ -125,4 +125,35 @@ describe('queue statistics routes', () => {
     expect(response.body.error).toMatch(/consultation/i);
     expect(QueueEntry.create).not.toHaveBeenCalled();
   });
+
+  test('starting consultation synchronizes the encounter and appointment states', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn()
+    };
+    getDB.mockReturnValue({ connect: jest.fn().mockResolvedValue(client) });
+    QueueEntry.findByPk.mockResolvedValue({
+      id: '550e8400-e29b-41d4-a716-446655440041',
+      encounter_id: '550e8400-e29b-41d4-a716-446655440042',
+      queue_type: 'consultation',
+      status: 'called'
+    });
+    QueueEntry.update.mockResolvedValue({
+      id: '550e8400-e29b-41d4-a716-446655440041',
+      queue_type: 'consultation',
+      status: 'in-service'
+    });
+
+    const response = await request(app)
+      .put('/api/queue/550e8400-e29b-41d4-a716-446655440041/status')
+      .send({ status: 'in-service' });
+
+    expect(response.status).toBe(200);
+    const sqlCalls = client.query.mock.calls
+      .map(([sql]) => String(sql))
+      .join('\n');
+    expect(sqlCalls).toMatch(/status = 'in-consultation'/);
+    expect(sqlCalls).toMatch(/SET status = 'in-progress'/);
+    expect(client.query).toHaveBeenCalledWith('COMMIT');
+  });
 });

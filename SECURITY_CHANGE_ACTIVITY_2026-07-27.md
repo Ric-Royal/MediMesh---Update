@@ -288,3 +288,34 @@ intentionally retained for comparison and were not altered.
   write occurred.
 - Detailed findings are recorded in
   `APPOINTMENT_BOOKING_FIX_REPORT_2026-07-28.md`.
+
+## Connected appointment-to-billing repair activity on 28 July 2026
+
+- Inspected the local appointment, encounter, queue, consultation, invoice, and
+  payment handoffs through source review, clean-container tests, local browser
+  verification, loopback API calls, and targeted database queries.
+- Confirmed that two `checked-in` future appointments had no encounter or queue
+  entry. Migration `init-scripts/102-appointment-checkin-workflow.sql` returned
+  both to scheduled and cleared only the invalid check-in markers.
+- Added unique encounter-per-appointment and active-stage constraints, an
+  appointment foreign key, and legacy in-window check-in recovery.
+- Rebuilt and replaced the API and web containers while preserving every
+  persistent volume and supporting container.
+- Clean-container testing passed 19 API suites with 86 tests and 9 frontend
+  suites with 54 tests.
+- The browser read the local generated administrator password from its ignored
+  secret file and submitted it only to the loopback login endpoint. It was not
+  displayed, committed, or sent externally.
+- Synthetic appointment `APT-20260728-1000` was rescheduled into the current
+  visit window and advanced through triage and consultation to billing.
+  Invoice `INV-20260728-1001` was created and left unpaid for inspection.
+- Future appointment `APT-20260728-1001` remains scheduled. Its early check-in
+  attempt was rejected without creating a visit or queue entry.
+- Docker checked public base-image metadata and reused cached dependency
+  layers. Ordinary Docker Hub request metadata may have left the workstation;
+  no repository source, secret, health record, or invoice data was uploaded.
+- No payment network, email, chat, calendar, SMS, or other external service was
+  contacted. All application requests and health-data fields remained on
+  loopback.
+- Detailed findings and the complete ingress/egress record are in
+  `CONNECTED_PATIENT_FLOW_FIX_REPORT_2026-07-28.md`.

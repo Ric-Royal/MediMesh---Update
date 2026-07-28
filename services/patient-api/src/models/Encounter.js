@@ -29,16 +29,17 @@ class Encounter {
     const id = uuidv4();
     const query = `
       INSERT INTO encounters (
-        id, patient_id, encounter_type, status, triage_level,
+        id, patient_id, appointment_id, encounter_type, status, triage_level,
         department_id, clinic_id, doctor_id, waiting_location,
         chief_complaint, payment_type, payment_status, created_by
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *
     `;
     
     const values = [
       id,
       encounterData.patientId || encounterData.patient_id,
+      encounterData.appointmentId || encounterData.appointment_id || null,
       encounterData.encounterType || encounterData.encounter_type || encounterData.visit_type || 'outpatient',
       encounterData.status || 'registered',
       encounterData.triageLevel || encounterData.triage_level || 'routine',

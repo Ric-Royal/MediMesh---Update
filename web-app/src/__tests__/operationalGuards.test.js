@@ -1,5 +1,8 @@
 import { getHomeRoute, hasRouteRole } from '../utils/navigation';
-import { requiresDepartmentCompletion } from '../utils/workflowRouting';
+import {
+  getRequestedQueueType,
+  requiresDepartmentCompletion
+} from '../utils/workflowRouting';
 import {
   getMaximumDispensableQuantity,
   getRemainingPrescriptionQuantity,
@@ -40,6 +43,12 @@ test.each(['lab', 'pharmacy', 'radiology'])(
   '%s queues can only be completed in their department workspace',
   (queueType) => expect(requiresDepartmentCompletion({ queue_type: queueType })).toBe(true)
 );
+
+test('appointment check-in opens Patient Flow on the returned queue stage', () => {
+  expect(getRequestedQueueType({ queueType: 'triage' })).toBe('triage');
+  expect(getRequestedQueueType({ queueType: 'billing' })).toBe('billing');
+  expect(getRequestedQueueType({ queueType: 'unknown' })).toBe('consultation');
+});
 
 test('partial dispensing uses only the remaining prescribed quantity', () => {
   const item = { quantity: 10, quantity_dispensed: 4, current_stock: 3 };

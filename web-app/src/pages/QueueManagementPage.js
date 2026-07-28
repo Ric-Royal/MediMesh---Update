@@ -44,19 +44,22 @@ import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog
 import ConsultationForm from '../components/consultation/ConsultationForm';
 import { useNotification } from '../contexts/NotificationContext';
 import API_CONFIG from '../config/api';
-import { useNavigate } from '../routerCompat';
+import { useLocation, useNavigate } from '../routerCompat';
 import {
   DEPARTMENT_WORKSPACES,
   getQueueType,
+  getRequestedQueueType,
   requiresDepartmentCompletion,
 } from '../utils/workflowRouting';
 
 const QueueManagementPage = () => {
+  const location = useLocation();
+  const requestedQueueType = getRequestedQueueType(location.state);
   const [queue, setQueue] = useState([]);
   const [statistics, setStatistics] = useState(null);
   const [clinics, setClinics] = useState([]);
   const [selectedClinic, setSelectedClinic] = useState('all');
-  const [selectedQueueType, setSelectedQueueType] = useState('consultation');
+  const [selectedQueueType, setSelectedQueueType] = useState(requestedQueueType);
   const [loading, setLoading] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);

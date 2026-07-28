@@ -240,7 +240,33 @@ router.put(
     // Update timestamps based on status
     const updates = { status };
     if (status === 'called') updates.called_at = new Date();
-    if (status === 'in-service') updates.served_at = new Date();
+    if (status === 'in-service') {
+      updates.served_at = new Date();
+      if (currentQueueType === 'triage') {
+        await client.query(`
+          UPDATE encounters
+          SET status = 'triage', updated_at = NOW()
+          WHERE id = $1
+        `, [queueEntry.encounter_id]);
+      }
+      if (currentQueueType === 'consultation') {
+        await client.query(`
+          UPDATE encounters
+          SET status = 'in-consultation',
+              consultation_start_time = COALESCE(consultation_start_time, NOW()),
+              updated_at = NOW()
+          WHERE id = $1
+        `, [queueEntry.encounter_id]);
+        await client.query(`
+          UPDATE appointments
+          SET status = 'in-progress', updated_at = NOW()
+          WHERE id = (
+            SELECT appointment_id FROM encounters WHERE id = $1
+          )
+            AND status = 'checked-in'
+        `, [queueEntry.encounter_id]);
+      }
+    }
     if (status === 'completed') {
       updates.completed_at = new Date();
       
@@ -262,6 +288,14 @@ router.put(
         targetQueue = 'consultation';
         shouldCreateOrder = false;
         logger.info('Auto-routing patient from triage to consultation');
+        await client.query(`
+          UPDATE encounters
+          SET status = 'waiting',
+              triage_time = COALESCE(triage_time, NOW()),
+              waiting_location = 'consultation-waiting',
+              updated_at = NOW()
+          WHERE id = $1
+        `, [queueEntry.encounter_id]);
       } else {
         const workspace = currentQueueType === 'consultation'
           ? 'consultation form'

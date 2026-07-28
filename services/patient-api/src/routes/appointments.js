@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
+const Encounter = require('../models/Encounter');
+const QueueEntry = require('../models/QueueEntry');
+const { emitQueueRefresh } = require('../utils/websocket');
 const { authorize } = require('../middleware/auth');
 const Joi = require('joi');
 const { validate, validateParams, validateQuery, uuidSchema } = require('../utils/validation');
@@ -72,6 +75,18 @@ const appointmentAccess = requirePatientResourceAccess({
   table: 'appointments',
   processRoles: ['receptionist']
 });
+const positiveIntegerSetting = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+};
+const APPOINTMENT_EARLY_CHECK_IN_MINUTES = positiveIntegerSetting(
+  process.env.APPOINTMENT_EARLY_CHECK_IN_MINUTES,
+  60
+);
+const APPOINTMENT_LATE_CHECK_IN_HOURS = positiveIntegerSetting(
+  process.env.APPOINTMENT_LATE_CHECK_IN_HOURS,
+  12
+);
 
 const requireClinicalProviderWhenApplicable = (req, res, next) => {
   if (isAdmin(req.user) || hasRole(req.user, 'receptionist')) return next();
@@ -472,6 +487,15 @@ router.put(
     if (checkResult.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Appointment not found' });
     }
+    if (
+      status !== undefined &&
+      ['checked-in', 'in-progress', 'completed', 'cancelled'].includes(status)
+    ) {
+      return res.status(409).json({
+        success: false,
+        error: 'Use the confirm, check-in, consultation, or cancellation workflow to change this status'
+      });
+    }
 
     // Build update query dynamically
     const updates = [];
@@ -553,32 +577,167 @@ router.post(
   validateParams(appointmentParamsSchema),
   appointmentAccess,
   async (req, res) => {
+  let client;
   try {
     const { id } = req.validatedParams;
-    const staffId = await resolveStaffId(req.user?.id);
+    client = await getDB().connect();
+    await client.query('BEGIN');
 
-    const query = `
-      UPDATE appointments
-      SET 
-        status = 'checked-in',
-        checked_in_at = NOW(),
-        checked_in_by = $2
-      WHERE id = $1 AND status IN ('scheduled', 'confirmed')
-      RETURNING *
-    `;
+    const appointmentResult = await client.query(`
+      WITH configured_timezone AS (
+        SELECT COALESCE(
+          (
+            SELECT timezone.name
+            FROM system_settings setting
+            JOIN pg_timezone_names timezone
+              ON timezone.name = TRIM(BOTH '"' FROM setting.value::text)
+            WHERE setting.key = 'organization.timezone'
+            LIMIT 1
+          ),
+          'Africa/Nairobi'
+        ) AS name
+      )
+      SELECT
+        appointment.*,
+        (
+          appointment.scheduled_date + appointment.scheduled_time
+        ) AT TIME ZONE configured_timezone.name AS scheduled_at,
+        configured_timezone.name AS facility_timezone,
+        NOW() >= (
+          (
+            appointment.scheduled_date + appointment.scheduled_time
+          ) AT TIME ZONE configured_timezone.name
+          - make_interval(mins => $2)
+        ) AS check_in_open,
+        NOW() <= (
+          (
+            appointment.scheduled_date + appointment.scheduled_time
+          ) AT TIME ZONE configured_timezone.name
+          + make_interval(hours => $3)
+        ) AS check_in_not_expired
+      FROM appointments appointment
+      CROSS JOIN configured_timezone
+      WHERE appointment.id = $1
+      FOR UPDATE OF appointment
+    `, [id, APPOINTMENT_EARLY_CHECK_IN_MINUTES, APPOINTMENT_LATE_CHECK_IN_HOURS]);
 
-    const result = await getDB().query(query, [id, staffId]);
-
-    if (result.rows.length === 0) {
-      return res.status(409).json({ success: false, error: 'Appointment is not in a check-in eligible state' });
+    if (!appointmentResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Appointment not found' });
     }
 
-    logger.info(`Patient checked in for appointment: ${result.rows[0].appointment_number}`);
+    const appointment = appointmentResult.rows[0];
+    if (!['scheduled', 'confirmed', 'checked-in'].includes(appointment.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ success: false, error: 'Appointment is not in a check-in eligible state' });
+    }
+    if (!appointment.check_in_open) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        error: `Check-in opens ${APPOINTMENT_EARLY_CHECK_IN_MINUTES} minutes before the scheduled appointment`
+      });
+    }
+    if (!appointment.check_in_not_expired) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        success: false,
+        error: 'The appointment check-in window has expired; reschedule the appointment'
+      });
+    }
 
-    res.json({ success: true, data: result.rows[0] });
+    const staffResult = await client.query(
+      'SELECT id FROM staff WHERE keycloak_user_id = $1 OR id::text = $1 LIMIT 1',
+      [req.user?.id]
+    );
+    const staffId = staffResult.rows[0]?.id || null;
+
+    const encounterResult = await client.query(`
+      SELECT *
+      FROM encounters
+      WHERE appointment_id = $1
+      ORDER BY registration_time DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [id]);
+
+    const encounter = encounterResult.rows[0] || await Encounter.create({
+      appointmentId: id,
+      patientId: appointment.patient_id,
+      encounterType: appointment.appointment_type === 'follow-up' ? 'follow-up' : 'outpatient',
+      status: 'waiting',
+      triageLevel: 'routine',
+      departmentId: appointment.department_id,
+      clinicId: appointment.clinic_id,
+      doctorId: appointment.doctor_id,
+      waitingLocation: 'triage-waiting',
+      chiefComplaint: appointment.reason_for_visit,
+      paymentType: appointment.payment_type,
+      paymentStatus: 'unpaid',
+      createdBy: staffId
+    }, client);
+
+    const activeQueueResult = await client.query(`
+      SELECT *
+      FROM queue_entries
+      WHERE encounter_id = $1
+        AND status IN ('waiting', 'called', 'in-service', 'deferred')
+      ORDER BY joined_at DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [encounter.id]);
+
+    const queueEntry = activeQueueResult.rows[0] || await QueueEntry.create({
+      encounterId: encounter.id,
+      patientId: appointment.patient_id,
+      clinicId: appointment.clinic_id,
+      doctorId: appointment.doctor_id,
+      queueType: 'triage',
+      isEmergency: false,
+      waitingLocation: 'triage-waiting',
+      priorityLevel: 5
+    }, client);
+
+    const checkedInResult = await client.query(`
+      UPDATE appointments
+      SET
+        status = 'checked-in',
+        encounter_id = $3,
+        checked_in_at = COALESCE(checked_in_at, NOW()),
+        checked_in_by = COALESCE(checked_in_by, $2),
+        updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `, [id, staffId, encounter.id]);
+
+    await client.query('COMMIT');
+    emitQueueRefresh(appointment.clinic_id, 'appointment-checked-in');
+
+    logger.info(`Patient checked in for appointment: ${appointment.appointment_number}`, {
+      appointmentId: id,
+      encounterId: encounter.id,
+      queueEntryId: queueEntry.id,
+      queueType: queueEntry.queue_type
+    });
+
+    res.json({
+      success: true,
+      data: {
+        appointment: checkedInResult.rows[0],
+        encounter,
+        queueEntry
+      },
+      message: `Patient checked in and added to the ${queueEntry.queue_type} queue`
+    });
   } catch (error) {
+    if (client) await client.query('ROLLBACK');
     logger.error('Error checking in appointment:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({
+      success: false,
+      error: error.status ? error.message : 'Unable to check in appointment'
+    });
+  } finally {
+    if (client) client.release();
   }
 });
 
@@ -631,9 +790,18 @@ router.post(
   validate(cancelSchema),
   appointmentAccess,
   async (req, res) => {
+  let client;
   try {
     const { id } = req.validatedParams;
     const { cancellation_reason } = req.validatedData;
+    client = await getDB().connect();
+    await client.query('BEGIN');
+
+    const staffResult = await client.query(
+      'SELECT id FROM staff WHERE keycloak_user_id = $1 OR id::text = $1 LIMIT 1',
+      [req.user?.id]
+    );
+    const staffId = staffResult.rows[0]?.id || null;
 
     const query = `
       UPDATE appointments
@@ -645,19 +813,43 @@ router.post(
       RETURNING *
     `;
 
-    const staffId = await resolveStaffId(req.user?.id);
-    const result = await getDB().query(query, [id, cancellation_reason, staffId]);
+    const result = await client.query(query, [id, cancellation_reason, staffId]);
 
     if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
       return res.status(409).json({ success: false, error: 'Appointment cannot be cancelled in its current state' });
     }
+
+    await client.query(`
+      UPDATE encounters
+      SET status = 'cancelled', updated_at = NOW()
+      WHERE appointment_id = $1
+        AND status NOT IN ('completed', 'cancelled')
+    `, [id]);
+    await client.query(`
+      UPDATE queue_entries
+      SET status = 'cancelled', updated_at = NOW(),
+          notes = CONCAT_WS(' ', NULLIF(notes, ''), 'Appointment cancelled.')
+      WHERE encounter_id IN (
+        SELECT encounter.id
+        FROM encounters encounter
+        WHERE encounter.appointment_id = $1
+      )
+        AND status IN ('waiting', 'called', 'in-service', 'deferred')
+    `, [id]);
+
+    await client.query('COMMIT');
+    emitQueueRefresh(result.rows[0].clinic_id, 'appointment-cancelled');
 
     logger.info(`Appointment cancelled: ${result.rows[0].appointment_number}`);
 
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
+    if (client) await client.query('ROLLBACK');
     logger.error('Error cancelling appointment:', error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({ success: false, error: 'Unable to cancel appointment' });
+  } finally {
+    if (client) client.release();
   }
 });
 

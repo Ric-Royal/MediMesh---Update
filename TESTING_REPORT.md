@@ -150,3 +150,21 @@ HTTP preview.
   deleted.
 - Full findings and evidence are in
   `APPOINTMENT_BOOKING_FIX_REPORT_2026-07-28.md`.
+
+## Connected appointment-to-billing verification — 28 July 2026
+
+- Focused API workflow tests: 3 suites and 13 tests passed.
+- Full API clean-container run: 19 suites and 86 tests passed.
+- Full frontend clean-container run: 9 suites and 54 tests passed.
+- Production API and frontend images built successfully and the replacement API
+  reported healthy.
+- The migration applied without duplicates or data-volume recreation.
+- A future synthetic appointment was rescheduled into the current visit window,
+  then advanced through check-in, triage, consultation, automatic invoicing,
+  and the waiting billing queue.
+- The visible Billing screen showed invoice `INV-20260728-1001` for the
+  synthetic patient. It remains unpaid.
+- A second future appointment returned HTTP 409 on early check-in and remained
+  scheduled without an encounter or queue entry.
+- Full details are in
+  `CONNECTED_PATIENT_FLOW_FIX_REPORT_2026-07-28.md`.

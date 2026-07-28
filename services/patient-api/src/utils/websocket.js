@@ -159,6 +159,18 @@ const emitQueueUpdate = (clinicId, data) => {
   }
 };
 
+// All-clinic queue boards also need an immediate refresh. Broadcast only a
+// change signal; clients retrieve authorised patient data through the API.
+const emitQueueRefresh = (clinicId, action = 'queue-changed') => {
+  if (io) {
+    io.emit('queue-update', {
+      action,
+      clinicId: clinicId || null
+    });
+    logger.info('Emitted data-free queue refresh', { clinicId: clinicId || null, action });
+  }
+};
+
 // Emit ward update to specific ward
 const emitWardUpdate = (wardId, data) => {
   if (io) {
@@ -178,6 +190,7 @@ const emitEmergencyAlert = (data) => {
 module.exports = {
   initializeWebSocket,
   emitQueueUpdate,
+  emitQueueRefresh,
   emitWardUpdate,
   emitEmergencyAlert
 };

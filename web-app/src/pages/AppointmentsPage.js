@@ -39,15 +39,18 @@ import {
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
   Visibility as ViewIcon,
-  CalendarToday as CalendarIcon
+  CalendarToday as CalendarIcon,
+  EditCalendar as RescheduleIcon
 } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
 import API_CONFIG from '../config/api';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import { buildAppointmentListParams } from '../utils/appointmentQuery';
+import { useNavigate } from '../routerCompat';
 
 const AppointmentsPage = () => {
   const { hasRole } = useAuth();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState(0);
   const [appointments, setAppointments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -69,7 +72,12 @@ const AppointmentsPage = () => {
   // Dialog states
   const [showBookingDialog, setShowBookingDialog] = useState(false);
   const [showDetailsDialog, setShowDetailsDialog] = useState(false);
+  const [showRescheduleDialog, setShowRescheduleDialog] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [rescheduleData, setRescheduleData] = useState({
+    scheduled_date: '',
+    scheduled_time: ''
+  });
   
   // Form data for new appointment
   const [bookingData, setBookingData] = useState({
@@ -227,9 +235,16 @@ const AppointmentsPage = () => {
         headers: API_CONFIG.getAuthHeaders()
       });
 
-      if (!response.ok) throw new Error('Failed to check in');
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to check in');
 
-      fetchAppointments();
+      navigate('/queue', {
+        state: {
+          queueType: result.data?.queueEntry?.queue_type || 'triage',
+          encounterId: result.data?.encounter?.id,
+          patientId: result.data?.appointment?.patient_id
+        }
+      });
     } catch (err) {
       setError(err.message);
     }
@@ -244,6 +259,40 @@ const AppointmentsPage = () => {
 
       if (!response.ok) throw new Error('Failed to confirm');
 
+      fetchAppointments();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const openRescheduleDialog = (appointment) => {
+    setSelectedAppointment(appointment);
+    setRescheduleData({
+      scheduled_date: String(appointment.scheduled_date || '').slice(0, 10),
+      scheduled_time: String(appointment.scheduled_time || '').slice(0, 5)
+    });
+    setShowRescheduleDialog(true);
+  };
+
+  const handleReschedule = async () => {
+    try {
+      const response = await fetch(
+        `${API_CONFIG.baseURL}/api/appointments/${selectedAppointment.id}`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            ...API_CONFIG.getAuthHeaders()
+          },
+          body: JSON.stringify(rescheduleData)
+        }
+      );
+
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Failed to reschedule appointment');
+
+      setShowRescheduleDialog(false);
+      setSelectedAppointment(null);
       fetchAppointments();
     } catch (err) {
       setError(err.message);
@@ -515,15 +564,26 @@ const AppointmentsPage = () => {
                         </Tooltip>
                       )}
                       {(appointment.status === 'scheduled' || appointment.status === 'confirmed') && (
-                        <Tooltip title="Check In">
-                          <IconButton
-                            size="small"
-                            color="success"
-                            onClick={() => handleCheckIn(appointment.id)}
-                          >
-                            <PersonIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
+                        <>
+                          <Tooltip title="Reschedule">
+                            <IconButton
+                              size="small"
+                              color="primary"
+                              onClick={() => openRescheduleDialog(appointment)}
+                            >
+                              <RescheduleIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="Check In">
+                            <IconButton
+                              size="small"
+                              color="success"
+                              onClick={() => handleCheckIn(appointment.id)}
+                            >
+                              <PersonIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </>
                       )}
                       {appointment.status !== 'cancelled' && appointment.status !== 'completed' && (
                         <Tooltip title="Cancel">
@@ -800,6 +860,59 @@ const AppointmentsPage = () => {
             disabled={!bookingData.patient_id || !bookingData.scheduled_date || !bookingData.scheduled_time}
           >
             Book Appointment
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Reschedule Dialog */}
+      <Dialog
+        open={showRescheduleDialog}
+        onClose={() => setShowRescheduleDialog(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Reschedule Appointment</DialogTitle>
+        <DialogContent>
+          <Alert severity="info" sx={{ mt: 1, mb: 2 }}>
+            Rescheduling does not check the patient in. Use Check In when the patient is ready to begin the visit.
+          </Alert>
+          <Grid container spacing={2}>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                type="date"
+                label="New Date"
+                value={rescheduleData.scheduled_date}
+                onChange={(event) => setRescheduleData(current => ({
+                  ...current,
+                  scheduled_date: event.target.value
+                }))}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                type="time"
+                label="New Time"
+                value={rescheduleData.scheduled_time}
+                onChange={(event) => setRescheduleData(current => ({
+                  ...current,
+                  scheduled_time: event.target.value
+                }))}
+                InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowRescheduleDialog(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={handleReschedule}
+            disabled={!rescheduleData.scheduled_date || !rescheduleData.scheduled_time}
+          >
+            Save New Date & Time
           </Button>
         </DialogActions>
       </Dialog>

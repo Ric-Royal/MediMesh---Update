@@ -488,7 +488,14 @@ router.post('/',
 
       await db.query(`
         UPDATE encounters SET
+          status = CASE
+            WHEN $2::int > 0 THEN 'pending-lab'
+            WHEN $3::int > 0 THEN 'pending-radiology'
+            WHEN $4::int > 0 THEN 'pending-pharmacy'
+            ELSE 'waiting'
+          END,
           consultation_completed = TRUE,
+          consultation_end_time = COALESCE(consultation_end_time, NOW()),
           has_pending_orders = $1,
           pending_lab_orders = $2,
           pending_radiology_orders = $3,
@@ -503,6 +510,15 @@ router.post('/',
         pendingCounts.pharmacy,
         encounterId
       ]);
+
+      await db.query(`
+        UPDATE appointments
+        SET status = 'completed', updated_at = NOW()
+        WHERE id = (
+          SELECT appointment_id FROM encounters WHERE id = $1
+        )
+          AND status IN ('checked-in', 'in-progress')
+      `, [encounterId]);
 
       // 6. Update consultation queue entry status
       await db.query(`
