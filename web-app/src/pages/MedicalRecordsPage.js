@@ -42,7 +42,7 @@ import {
   MoreVert as MoreVertIcon,
   Clear as ClearIcon
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';

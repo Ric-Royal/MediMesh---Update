@@ -22,7 +22,7 @@ import {
   Description as DescriptionIcon,
   Person as PersonIcon
 } from '@mui/icons-material';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';

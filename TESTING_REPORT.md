@@ -4,14 +4,16 @@ Date: 27 July 2026
 
 ## Automated verification
 
-- Backend: 16 suites, 72 tests, all passed in the digest-pinned Node.js test
+- Backend: 17 suites, 77 tests, all passed in the digest-pinned Node.js test
   image.
-- Frontend: 7 suites, 48 tests, all passed in the digest-pinned Node.js test
+- Frontend: 8 suites, 51 tests, all passed in the digest-pinned Node.js test
   image.
-- Production frontend: the Vite 7.2.2 optimized build completed successfully
-  after 12,616 modules were transformed.
-- Backend dependency installation: 541 packages audited, zero known
-  vulnerabilities reported.
+- Production frontend: the Vite 7.3.6 optimized build completed successfully
+  on Node.js 22.23.1.
+- Reproducible dependency installation: both application lockfiles reported
+  zero known vulnerabilities.
+- Exact runtime image scans: zero high or critical operating-system or
+  application-package findings for the frontend and API.
 - JavaScript syntax: all 69 backend source files passed.
 - Python syntax: the approved Airflow aggregation DAG and Superset security
   configuration both passed AST parsing.
@@ -21,8 +23,8 @@ Date: 27 July 2026
 
 The GitHub workflows are configured to enforce dependency auditing, secret
 detection, CodeQL, licence checks, image vulnerability scanning, SBOM
-generation, provenance attestations, and immutable release digests. The final
-remote run for the current uncommitted workflow corrections remains pending.
+generation, provenance attestations, and immutable release digests. Final
+remote results are recorded in the completion handoff after the branch push.
 
 ## Live Docker verification
 
@@ -79,9 +81,12 @@ HTTP preview.
 
 - API: 17 suites and 77 tests passed in the isolated locked-dependency test
   image.
-- Frontend: 7 suites and 48 tests passed in the isolated locked-dependency test
+- Frontend: 8 suites and 51 tests passed in the isolated locked-dependency test
   image.
-- The production frontend bundle completed successfully under Vite 7.2.2.
+- The production frontend bundle completed successfully under Vite 7.3.6 on
+  Node.js 22.23.1.
+- Router regression tests cover dynamic patient paths, protected redirects,
+  invoice query parameters, and patient navigation state.
 - A live two-session check confirmed that signing out one session leaves the
   other session valid.
 - A synthetic outpatient visit completed registration, triage, consultation,
@@ -91,3 +96,30 @@ HTTP preview.
   encounter rather than the administrator performing delegated data entry.
 - Patient `P000001004` and encounter `ENC2026072800004` are synthetic
   verification records and must not be treated as clinical or financial truth.
+
+## Dependency and runtime security gate — 28 July 2026
+
+- Frontend and API clean dependency installs each reported zero known
+  vulnerabilities.
+- The vulnerable frontend routing release line was removed; Wouter 3.10.0 and
+  a locally tested compatibility layer now provide the required navigation
+  surface.
+- Patched and digest-pinned Node.js 22.23.1 Alpine 3.23 and unprivileged nginx
+  1.31.3 Alpine images replaced the outdated build/runtime bases.
+- npm, Corepack, Yarn, their caches, and their global package trees are absent
+  from the API production image.
+- Offline scans used a locally cached public vulnerability database with
+  network access disabled. The exact final images produced zero high or
+  critical findings.
+- Two upstream deprecation notices remain during the frontend dependency
+  build: one in the jsdom test-only encoding chain and one in the current MUI
+  date-picker chain. Neither is a reported vulnerability, and the production
+  nginx image contains no Node.js package tree.
+- The production builder reports a performance advisory because the main
+  minified JavaScript chunk is about 1.49 MB. This does not fail the build or
+  the security gate; route-level code splitting remains a performance
+  improvement for a later user-interface release.
+- Some negative-path tests intentionally emit simulated API-error messages,
+  and MUI tooltip transitions emit test-only React timing warnings. All 51
+  assertions pass, and these messages do not occur as patient-workflow
+  failures in the rebuilt preview.

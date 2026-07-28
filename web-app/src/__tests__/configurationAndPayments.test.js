@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { NotificationProvider } from '../contexts/NotificationContext';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from '../routerCompat';
 import AdminOperationsSettings from '../components/settings/AdminOperationsSettings';
 import EnhancedBillingPage from '../pages/EnhancedBillingPage';
 

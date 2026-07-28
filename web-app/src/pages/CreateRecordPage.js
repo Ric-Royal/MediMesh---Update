@@ -22,7 +22,7 @@ import {
   Description as DescriptionIcon,
   Person as PersonIcon
 } from '@mui/icons-material';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';

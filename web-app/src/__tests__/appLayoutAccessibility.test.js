@@ -1,7 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from '../routerCompat';
 import AppLayout, { SIDEBAR_COLLAPSED_STORAGE_KEY } from '../components/layout/AppLayout';
 
 jest.mock('../contexts/AuthContext', () => ({

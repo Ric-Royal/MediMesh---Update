@@ -33,9 +33,15 @@
     "winston": "3.18.3"
   },
   "devDependencies": {
-    "jest": "29.7.0",
-    "nodemon": "3.1.11",
-    "supertest": "6.3.4"
+    "jest": "30.4.2",
+    "nodemon": "3.1.14",
+    "supertest": "7.2.2"
+  },
+  "overrides": {
+    "babel-plugin-istanbul": "8.0.0",
+    "brace-expansion": "5.0.8",
+    "glob": "13.0.6",
+    "test-exclude": "8.0.0"
   },
   "keywords": [
     "healthcare",

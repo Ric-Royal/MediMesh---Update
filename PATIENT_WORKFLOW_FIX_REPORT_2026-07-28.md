@@ -63,6 +63,20 @@ testing.
 11. Encounter creation hid the server response behind a generic message and
     logged an undefined encounter number. The frontend now surfaces the
     server-provided error and the API logs the persisted encounter number.
+12. The frontend routing dependency had a published high-severity advisory in
+    the only registry-available release line that otherwise satisfied the
+    application. It was removed and replaced with a small compatibility layer
+    over Wouter. Regression coverage now verifies dynamic patient paths,
+    redirects, query parameters, and navigation state used to carry patient
+    identifiers and completion messages between workspaces.
+13. Dependency and container gates found vulnerable development dependency
+    chains and outdated runtime operating-system packages. The frontend and
+    API now use patched, digest-pinned Node.js, nginx, Vite, Jest, Babel,
+    authentication-client, and test-library releases. Dependency overrides
+    constrain vulnerable coverage-only transitive packages to fixed versions.
+14. The API production image retained npm, Corepack, and Yarn even though the
+    running service needs only Node.js. Those package managers, their caches,
+    and their global package trees are now removed from the runtime image.
 
 ## Kenyan health-data alignment
 
@@ -87,16 +101,34 @@ The provider-attribution, role-alignment, transaction, validation, and
 session-isolation changes directly reduce inaccurate clinical records,
 privilege abuse, unintended disclosure, and unauthorised workflow changes.
 
+Official sources used:
+
+- [Data Protection Act, 2019](https://new.kenyalaw.org/akn/ke/act/2019/24)
+- [Health Act, 2017](https://new.kenyalaw.org/akn/ke/act/2017/21/eng@2017-06-30)
+- [Digital Health Act, 2023](https://new.kenyalaw.org/akn/ke/act/2023/15/eng@2023-11-24)
+- [Digital Health (Health Information Management Procedures) Regulations,
+  2025](https://new.kenyalaw.org/akn/ke/act/ln/2025/76/eng@2025-04-11)
+- [ODPC Guidance Note on Processing of Health
+  Data](https://www.odpc.go.ke/wp-content/uploads/2024/02/ODPC-Guidance-Note-on-Processing-of-Health-Data.pdf)
+
 ## Verification evidence
 
 - API: 17 suites, 77 tests passed in the isolated locked-dependency image.
-- Frontend: 7 suites, 48 tests passed in the isolated locked-dependency image.
-- Production frontend bundle completed successfully.
+- Frontend: 8 suites, 51 tests passed in the isolated locked-dependency image.
+- Production frontend bundle completed successfully with Vite 7.3.6 on the
+  pinned Node.js 22.23.1 build image.
+- Reproducible npm installation reported zero known vulnerabilities for both
+  application lockfiles.
+- Offline scans of the exact frontend and API runtime images reported zero
+  high or critical findings in operating-system and application packages.
 - API and web containers were rebuilt and replaced in
   `medimesh-security-preview`.
 - PostgreSQL, Redis, MinIO, ClamAV, and the API reported healthy after the
   rebuild.
-- `GET /health/live` and the web root both returned HTTP 200.
+- `GET /health/live`, the web root, the direct `/dashboard` SPA route, and the
+  public health endpoint returned HTTP 200.
+- The live web response carried the content-security, frame, MIME-sniffing,
+  referrer, permissions, and cross-origin opener protections.
 - Two simultaneous administrator sessions were created. Signing out session B
   did not invalidate session A.
 - Live synthetic record:

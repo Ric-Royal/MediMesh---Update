@@ -21,7 +21,7 @@ import {
   ChevronRight as ChevronRightIcon,
 } from '@mui/icons-material';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotification } from '../contexts/NotificationContext';

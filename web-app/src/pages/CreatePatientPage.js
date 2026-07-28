@@ -24,7 +24,7 @@ import {
   Person as PersonIcon,
   CheckCircle as CheckCircleIcon
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import FileUpload from '../components/common/FileUpload';

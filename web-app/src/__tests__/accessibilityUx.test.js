@@ -31,8 +31,9 @@ jest.mock('../contexts/ThemeContext', () => ({
 
 jest.mock('../components/settings/AdminOperationsSettings', () => () => null);
 
-test('clickable metrics expose button semantics and keyboard activation', () => {
+test('clickable metrics expose button semantics and keyboard activation', async () => {
   const handleClick = jest.fn();
+  const user = userEvent.setup();
   render(
     <MetricCard
       title="Open patient queue"
@@ -43,10 +44,10 @@ test('clickable metrics expose button semantics and keyboard activation', () => 
   );
 
   const action = screen.getByRole('button', { name: 'Open patient queue' });
-  userEvent.tab();
+  await user.tab();
   expect(action).toHaveFocus();
 
-  userEvent.keyboard('{Enter}');
+  await user.keyboard('{Enter}');
   expect(handleClick).toHaveBeenCalledTimes(1);
 });
 

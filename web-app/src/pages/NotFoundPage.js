@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Typography, Button, Paper } from '@mui/material';
 import { Home as HomeIcon, ArrowBack as ArrowBackIcon } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from '../routerCompat';
 
 const NotFoundPage = () => {
   const navigate = useNavigate();
@@ -46,4 +46,4 @@ const NotFoundPage = () => {
   );
 };
 
-export default NotFoundPage; 
+export default NotFoundPage;

@@ -1,5 +1,5 @@
 # Build stage
-FROM node:22.17.0-alpine3.21@sha256:0d722d537f07d5e962b82733cd641cfa1fb868eab8c597ebfc87b8fa0436daa9 AS workspace
+FROM node:22.23.1-alpine3.23@sha256:8516dce0483394d5708d4b2ee6cacb79fb1d617ea4e2787c2120bcca92ce372e AS workspace
 
 WORKDIR /app
 
@@ -45,7 +45,7 @@ FROM workspace AS build
 RUN npm run build
 
 # Production stage
-FROM nginxinc/nginx-unprivileged:1.27.5-alpine@sha256:65e3e85dbaed8ba248841d9d58a899b6197106c23cb0ff1a132b7bfe0547e4c0
+FROM nginxinc/nginx-unprivileged:1.31.3-alpine@sha256:59ccf0943b0b8e8d9e6ea9039a39555730f544701a655c596f7df7d096c593f5
 
 # Copy built app from build stage
 COPY --from=build /app/dist /usr/share/nginx/html

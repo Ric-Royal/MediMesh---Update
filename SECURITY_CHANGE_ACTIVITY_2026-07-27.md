@@ -11,19 +11,36 @@ data, and access tokens.
 ## Data and software received by the workstation
 
 - Pinned Docker image layers were obtained from Docker Hub for Node.js, nginx,
-  PostgreSQL, Redis, MinIO, the MinIO client, and ClamAV. Image references in
-  the project use immutable digests or fixed release tags.
+  PostgreSQL, Redis, MinIO, the MinIO client, ClamAV, and a temporary
+  vulnerability scanner. The final application references use immutable
+  digests or fixed release tags.
+- The final build used Node.js 22.23.1 on Alpine 3.23 and unprivileged nginx
+  1.31.3 on Alpine. The temporary scanner was version 0.70.0.
+- A public vulnerability database of approximately 102 MB was downloaded to
+  `C:\tmp\medimesh-trivy-20260728\cache` for network-disabled image scans.
+  The cache, exported image archives, and containing temporary directory were
+  removed after results were recorded.
 - Frontend packages were obtained from the public npm registry. The direct
-  additions were:
-  - Vite 7.2.2
-  - Vite React plugin 5.1.1
-  - Jest, Babel Jest, and jsdom test environment 30.2.0
-  - Babel core and React/environment presets 7.28.5
-  - React Router DOM 7.18.1
-- Transitive npm packages and their integrity hashes were recorded in
-  `web-app/package-lock.json`.
+  security-maintenance additions and updates included:
+  - Vite 7.3.6 and Vite React plugin 5.2.0
+  - Jest 30.4.2, Babel Jest 30.4.1, and jsdom test environment 30.4.1
+  - Babel core and React/environment presets 7.29.7
+  - Wouter 3.10.0
+  - Keycloak JavaScript client 26.2.4
+  - Testing Library DOM 10.4.1, React 16.3.2, user-event 14.6.1, and
+    jest-dom 7.0.0
+- Backend development dependencies were updated to Jest 30.4.2, Nodemon
+  3.1.14, and Supertest 7.2.2.
+- Fixed transitive versions were locked for coverage tooling, globbing, and
+  brace expansion in both applications.
+- Transitive npm packages and integrity hashes were recorded in both
+  application lockfiles.
 - GitHub Actions job status and failure logs were downloaded through the
   authenticated GitHub CLI. These logs contained build and scanner output, not
+  clinical records.
+- The security-results artifact from run `30345376042` was downloaded under
+  the ignored `.activity` directory to identify exact dependency and image
+  findings. It contains scanner metadata and package paths, not secrets or
   clinical records.
 - Public release metadata was consulted to pin supported GitHub Actions by
   immutable commit hashes.
@@ -34,14 +51,27 @@ data, and access tokens.
   metadata while resolving image layers.
 - npm received package names, requested versions, dependency-resolution
   metadata, the workstation's public network address, and normal HTTPS request
-  metadata during installation.
+  metadata during installation, lockfile resolution, and individual release
+  metadata checks.
 - A local npm advisory request was attempted but blocked before execution.
   No local advisory payload was sent by that blocked command.
+- Docker image builds performed their standard npm installation audit checks
+  and reported zero known vulnerabilities. No source files, secrets, patient
+  rows, cookies, or tokens were part of package-registry requests.
 - GitHub received authenticated API requests identifying the repository,
   branch, workflow run, and job identifiers when workflow status and logs were
   inspected.
 - GitHub previously received commit
   `635b63ed2a157063cbb01114e546ca3c3be711cc` on the security branch.
+- GitHub also received commit
+  `a14af950ff13fba7eeff432459e314785ce18ad0` on the same security branch. The
+  transmitted Git objects contained reviewed source, tests, migrations, and
+  documentation; ignored local secrets and preview database contents were not
+  included.
+- Public GitHub advisory metadata and Wouter documentation were consulted to
+  select a routing option that did not require suppressing a known
+  vulnerability. Only normal HTTPS request metadata and the requested package
+  or advisory identifiers left the workstation.
 - No patient data, database rows, locally generated passwords, Docker secrets,
   private keys, session cookies, or application bearer tokens were sent by
   these activities.
@@ -59,15 +89,29 @@ data, and access tokens.
   were implemented.
 - The obsolete frontend build chain was replaced with Vite and current Jest and
   Babel tooling. The generated lockfile no longer contains `react-scripts`.
+- The vulnerable frontend routing release line was removed. A local
+  compatibility module over Wouter now supplies the routing surface used by
+  the application, with tests for dynamic paths, redirects, query parameters,
+  and patient navigation state.
+- The authentication client, Vite, Jest, Babel, Testing Library, backend test
+  tools, and vulnerable transitive coverage/globbing packages were updated and
+  reproducibly locked.
+- The API production image was reduced to the Node.js runtime and application
+  dependencies; npm, Corepack, Yarn, their caches, and their global package
+  trees are removed after installation.
 - The base Compose file was restored to production targets, nginx proxying,
   read-only application filesystems, internal networks, and loopback-only web
   publication.
 - Local secret files were generated under `secrets/`. They are ignored by Git
   and were not printed into this report.
-- Two incomplete frontend dependency trees were preserved for recovery under
-  the ignored `.dependency-recovery` directory:
+- Two incomplete frontend dependency trees had been preserved for recovery
+  under the ignored `.dependency-recovery` directory:
   - `web-app-node_modules-enotempty-20260724`
   - `web-app-node_modules-partial-20260727`
+- After clean locked builds and all automated tests passed, both obsolete
+  recovery trees and the empty parent directory were removed, releasing about
+  663 MB. They are not recoverable except by reinstalling the locked public
+  packages.
 - Build logs are stored under the ignored `.activity` directory.
 
 ## Docker changes
@@ -84,19 +128,35 @@ data, and access tokens.
 - Temporary dependency and test containers were created. Completed ephemeral
   installers were automatically removed, and the remaining stopped installer
   and exited test container were removed after their results were recorded.
+- The temporary test, CI scan, and scanner images were verified to have no
+  dependent containers and then removed. The exact removed tags were
+  `medimesh-workflow-api-test`, `medimesh-workflow-web-test`,
+  `medimesh-backend-ci`, `medimesh-frontend-ci`, and
+  `aquasec/trivy:0.70.0`.
+- The isolated `C:\tmp\medimesh-trivy-20260728` directory, including the public
+  vulnerability database and exported image archives, was removed after both
+  final scans passed. These temporary artifacts are not recoverable except by
+  downloading or rebuilding them again.
 
 ## Validation performed
 
-- Backend: 16 suites and 72 tests passed.
-- Frontend: 7 suites and 48 tests passed after migration.
-- Frontend production bundle built successfully with Vite.
+- Backend: 17 suites and 77 tests passed.
+- Frontend: 8 suites and 51 tests passed after migration and routing
+  replacement.
+- The frontend production bundle built successfully with Vite 7.3.6 on the
+  pinned Node.js 22.23.1 image.
+- Clean dependency installation reported zero known vulnerabilities for both
+  application lockfiles.
 - Live preview smoke checks passed for cookie-only login, absence of a bearer
   token, session identity, route validation, CSRF rejection, and logout.
 - The preview serves the production bundle through nginx on port 3000.
-- Earlier Trivy scans found no gated high or critical findings in either
-  application image.
-- The remote workflow still requires one final pushed run after the current
-  workflow corrections are committed.
+- Final network-disabled scans of the exact frontend and API runtime images
+  found zero high or critical operating-system or application-package
+  findings.
+- The direct `/dashboard` route returned HTTP 200, loaded the application
+  entry point, and included the configured content-security policy.
+- The remote workflow requires one final pushed run after these corrections
+  are committed.
 
 ## Credentials and local sign-in
 
@@ -108,10 +168,11 @@ approved identity and access-management process.
 
 ## Recovery and cleanup
 
-The two preserved dependency directories can be deleted after the branch is
-committed, pushed, and the remote security run passes. They are not used by the
-application or Docker build. Temporary containers have already been removed;
-the older stopped application containers were intentionally retained.
+The two obsolete dependency-recovery directories, temporary scanner database,
+exported image archives, test/scan images, installers, and test containers were
+removed after their results were recorded. The current application images and
+preview volumes were retained. Older stopped application containers were
+intentionally retained for comparison and were not altered.
 
 ## Patient workflow repair activity on 28 July 2026
 
@@ -139,17 +200,23 @@ the older stopped application containers were intentionally retained.
   payment fields into the local containers. Responses, logs, and identifiers
   stayed on the workstation.
 - Docker resolved pinned/base image metadata through Docker Hub during builds.
-  Dependency installation steps were satisfied from Docker build cache; the
-  captured build output showed no new npm package download step.
+  Some later dependency installation steps were satisfied from Docker build
+  cache; earlier clean builds downloaded the locked public npm packages listed
+  above.
+- Browser-control connection was attempted for visual inspection of the open
+  dashboard, but the local integration failed before a page binding was
+  established. No browser cookies, local storage, passwords, session stores,
+  or page data were inspected. Equivalent loopback route, header, session, and
+  application-entry checks were completed without reading browser storage.
 - Official Kenya Law and Office of the Data Protection Commissioner pages were
   consulted for the Data Protection Act, Health Act, Digital Health Act,
   2025 Digital Health Regulations, and health-data processing guidance. Normal
   web request metadata and the search terms left the workstation; no repository
   files, credentials, tokens, secrets, database rows, or patient data were
   uploaded to those sites.
-- At this report checkpoint, no new branch push, commit, pull request, email,
-  chat message, or external application write had been performed during the
-  workflow repair. The final repository commit and push are recorded in the
-  completion handoff.
+- No pull request, email, chat message, or external application write was
+  performed. The final repository push was limited to reviewed Git objects on
+  the existing security branch; the exact commit is recorded in the completion
+  handoff.
 - The final evidence and fault descriptions are recorded in
   `PATIENT_WORKFLOW_FIX_REPORT_2026-07-28.md`.

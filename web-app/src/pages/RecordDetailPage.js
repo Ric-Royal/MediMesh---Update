@@ -29,7 +29,7 @@ import {
   LocalHospital as LocalHospitalIcon,
   Assignment as AssignmentIcon
 } from '@mui/icons-material';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';

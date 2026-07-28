@@ -17,7 +17,7 @@ import {
 import API_CONFIG from '../config/api';
 import { useNotification } from '../contexts/NotificationContext';
 import { useSettings } from '../contexts/SettingsContext';
-import { useLocation } from 'react-router-dom';
+import { useLocation } from '../routerCompat';
 import { useAuth } from '../contexts/AuthContext';
 
 const getTotal = (invoice) => parseFloat(invoice.total || invoice.total_amount || 0);

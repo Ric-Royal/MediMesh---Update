@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from './routerCompat';
 import { Box } from '@mui/material';
 import { useAuth } from './contexts/AuthContext';
 

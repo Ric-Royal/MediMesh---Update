@@ -44,7 +44,7 @@ import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog
 import ConsultationForm from '../components/consultation/ConsultationForm';
 import { useNotification } from '../contexts/NotificationContext';
 import API_CONFIG from '../config/api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from '../routerCompat';
 import {
   DEPARTMENT_WORKSPACES,
   getQueueType,

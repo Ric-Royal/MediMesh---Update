@@ -1,8 +1,12 @@
 import React from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from '../routerCompat';
 import DashboardPage from '../pages/DashboardPage';
 import apiService from '../services/api';
+
+const mockNotifySuccess = jest.fn();
+const mockNotifyError = jest.fn();
+const mockNotifyWarning = jest.fn();
 
 jest.mock('../services/api', () => ({
   __esModule: true,
@@ -29,9 +33,9 @@ jest.mock('../contexts/SettingsContext', () => ({
 
 jest.mock('../contexts/NotificationContext', () => ({
   useNotification: () => ({
-    notifySuccess: jest.fn(),
-    notifyError: jest.fn(),
-    notifyWarning: jest.fn(),
+    notifySuccess: mockNotifySuccess,
+    notifyError: mockNotifyError,
+    notifyWarning: mockNotifyWarning,
   }),
 }));
 
@@ -81,7 +85,7 @@ test('dashboard marks failed operational data unavailable instead of rendering f
   expect(within(waitingCard).getByText('—')).toBeInTheDocument();
   expect(within(serviceCard).getByText('—')).toBeInTheDocument();
   expect(within(bedCard).getByText('—')).toBeInTheDocument();
-  expect(screen.getByText(/operational metrics/i)).toBeInTheDocument();
+  expect(await screen.findByText(/operational metrics/i)).toBeInTheDocument();
   expect(screen.getByText('Operational thresholds are unavailable.')).toBeInTheDocument();
   expect(screen.getByText('Seven-day activity is unavailable.')).toBeInTheDocument();
   expect(screen.queryByText('0 min average wait')).not.toBeInTheDocument();
