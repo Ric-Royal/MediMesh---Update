@@ -103,7 +103,7 @@ const AppLayout = ({ children }) => {
       text: 'Billing',
       icon: <BillingIcon />,
       path: '/billing',
-      roles: ['billing', 'doctor', 'admin'],
+      roles: ['billing', 'admin'],
       group: 'Front office',
     },
     {
@@ -117,21 +117,21 @@ const AppLayout = ({ children }) => {
       text: 'Pharmacy',
       icon: <PharmacyIcon />,
       path: '/pharmacy',
-      roles: ['pharmacist', 'doctor', 'admin'],
+      roles: ['pharmacist', 'admin'],
       group: 'Care delivery',
     },
     {
       text: 'Laboratory',
       icon: <LabIcon />,
       path: '/lab',
-      roles: ['lab-tech', 'doctor', 'admin'],
+      roles: ['lab-tech', 'admin'],
       group: 'Care delivery',
     },
     {
       text: 'Radiology',
       icon: <RadiologyIcon />,
       path: '/radiology',
-      roles: ['radiographer', 'radiologist', 'doctor', 'admin'],
+      roles: ['radiographer', 'radiologist', 'admin'],
       group: 'Care delivery',
     },
     {

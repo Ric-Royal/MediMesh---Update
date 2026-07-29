@@ -1,10 +1,15 @@
 jest.mock('../../middleware/auth', () => ({
   authorize: () => (req, res, next) => {
-    req.user = { id: 'admin-id', roles: ['admin'] };
+    req.user = {
+      id: 'admin-id',
+      staffId: '550e8400-e29b-41d4-a716-446655440024',
+      roles: (req.get('x-test-roles') || 'admin').split(','),
+    };
     next();
   },
 }));
 jest.mock('../../models/QueueEntry', () => ({
+  getAll: jest.fn(),
   getQueueStatistics: jest.fn(),
   findByPk: jest.fn(),
   create: jest.fn(),
@@ -15,7 +20,10 @@ jest.mock('../../models/Patient', () => ({}));
 jest.mock('../../utils/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
-jest.mock('../../utils/websocket', () => ({ emitQueueUpdate: jest.fn() }));
+jest.mock('../../utils/websocket', () => ({
+  emitQueueUpdate: jest.fn(),
+  emitQueueRefresh: jest.fn(),
+}));
 jest.mock('../../utils/database', () => ({ getDB: jest.fn() }));
 
 const express = require('express');
@@ -65,9 +73,37 @@ describe('queue statistics routes', () => {
     expect(response.body.data.averageWaitTime).toBe(0);
   });
 
-  test('routes completed triage to consultation inside one transaction', async () => {
+  test('limits a nurse queue board to the triage stage', async () => {
+    const response = await request(app)
+      .get('/api/queue?queueType=consultation')
+      .set('x-test-roles', 'nurse');
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toMatch(/access denied/i);
+  });
+
+  test('shows a doctor only consultation entries assigned to that provider', async () => {
+    QueueEntry.getAll.mockResolvedValue([]);
+
+    const response = await request(app)
+      .get('/api/queue?queueType=consultation')
+      .set('x-test-roles', 'doctor');
+
+    expect(response.status).toBe(200);
+    expect(QueueEntry.getAll).toHaveBeenCalledWith({
+      queueType: 'consultation',
+      status: undefined,
+      doctorId: '550e8400-e29b-41d4-a716-446655440024'
+    });
+  });
+
+  test('records triage and hands the encounter to consultation in one transaction', async () => {
     const client = {
-      query: jest.fn().mockResolvedValue({ rows: [] }),
+      query: jest.fn(async sql => (
+        String(sql).includes('INSERT INTO triage_assessments')
+          ? { rows: [{ id: 'assessment-1' }] }
+          : { rows: [] }
+      )),
       release: jest.fn()
     };
     getDB.mockReturnValue({ connect: jest.fn().mockResolvedValue(client) });
@@ -89,8 +125,23 @@ describe('queue statistics routes', () => {
     });
 
     const response = await request(app)
-      .put('/api/queue/550e8400-e29b-41d4-a716-446655440021/status')
-      .send({ status: 'completed', nextQueue: 'consultation' });
+      .post('/api/queue/550e8400-e29b-41d4-a716-446655440021/triage-complete')
+      .set('x-test-roles', 'nurse')
+      .send({
+        triageLevel: 'routine',
+        vitals: {
+          bloodPressure: '120/80',
+          temperature: 36.7,
+          pulse: 74,
+          respiratoryRate: 16,
+          oxygenSaturation: 98,
+          weight: 70,
+          height: 175,
+          bmi: 22.9
+        },
+        chiefComplaint: 'Headache',
+        historyPresentIllness: 'Started this morning'
+      });
 
     expect(response.status).toBe(200);
     expect(QueueEntry.create).toHaveBeenCalledWith(
@@ -102,10 +153,12 @@ describe('queue statistics routes', () => {
       expect.objectContaining({ status: 'completed' }),
       client
     );
+    expect(client.query.mock.calls.map(([sql]) => String(sql)).join('\n'))
+      .toMatch(/INSERT INTO triage_assessments/);
     expect(client.query).toHaveBeenCalledWith('COMMIT');
   });
 
-  test('does not permit triage to skip consultation', async () => {
+  test('does not permit generic completion to bypass the triage assessment', async () => {
     const client = {
       query: jest.fn().mockResolvedValue({ rows: [] }),
       release: jest.fn()
@@ -122,8 +175,53 @@ describe('queue statistics routes', () => {
       .send({ status: 'completed', nextQueue: 'billing' });
 
     expect(response.status).toBe(409);
-    expect(response.body.error).toMatch(/consultation/i);
+    expect(response.body.error).toMatch(/triage assessment/i);
     expect(QueueEntry.create).not.toHaveBeenCalled();
+  });
+
+  test('does not let front-office staff process a clinical queue stage', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn()
+    };
+    getDB.mockReturnValue({ connect: jest.fn().mockResolvedValue(client) });
+    QueueEntry.findByPk.mockResolvedValue({
+      id: '550e8400-e29b-41d4-a716-446655440051',
+      queue_type: 'triage',
+      status: 'waiting'
+    });
+
+    const response = await request(app)
+      .put('/api/queue/550e8400-e29b-41d4-a716-446655440051/status')
+      .set('x-test-roles', 'receptionist')
+      .send({ status: 'called' });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toMatch(/another clinical role/i);
+    expect(QueueEntry.update).not.toHaveBeenCalled();
+  });
+
+  test('does not let a doctor start another clinician assigned consultation', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [] }),
+      release: jest.fn()
+    };
+    getDB.mockReturnValue({ connect: jest.fn().mockResolvedValue(client) });
+    QueueEntry.findByPk.mockResolvedValue({
+      id: '550e8400-e29b-41d4-a716-446655440061',
+      doctor_id: '550e8400-e29b-41d4-a716-446655440099',
+      queue_type: 'consultation',
+      status: 'waiting'
+    });
+
+    const response = await request(app)
+      .put('/api/queue/550e8400-e29b-41d4-a716-446655440061/status')
+      .set('x-test-roles', 'doctor')
+      .send({ status: 'in-service' });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toMatch(/assigned clinician/i);
+    expect(QueueEntry.update).not.toHaveBeenCalled();
   });
 
   test('starting consultation synchronizes the encounter and appointment states', async () => {

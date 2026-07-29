@@ -1,5 +1,7 @@
 import { getHomeRoute, hasRouteRole } from '../utils/navigation';
 import {
+  canProcessQueueType,
+  getAllowedQueueTypes,
   getRequestedQueueType,
   requiresDepartmentCompletion
 } from '../utils/workflowRouting';
@@ -48,6 +50,17 @@ test('appointment check-in opens Patient Flow on the returned queue stage', () =
   expect(getRequestedQueueType({ queueType: 'triage' })).toBe('triage');
   expect(getRequestedQueueType({ queueType: 'billing' })).toBe('billing');
   expect(getRequestedQueueType({ queueType: 'unknown' })).toBe('consultation');
+});
+
+test('patient-flow actions stay with the owning clinical role while admin retains all stages', () => {
+  expect(getAllowedQueueTypes(['nurse'])).toEqual(['triage']);
+  expect(getAllowedQueueTypes(['doctor'])).toEqual(['consultation']);
+  expect(getAllowedQueueTypes(['receptionist'])).toEqual(['triage', 'consultation']);
+  expect(canProcessQueueType(['receptionist'], 'triage')).toBe(false);
+  expect(canProcessQueueType(['nurse'], 'consultation')).toBe(false);
+  expect(canProcessQueueType(['doctor'], 'consultation')).toBe(true);
+  expect(canProcessQueueType(['admin'], 'pharmacy')).toBe(true);
+  expect(getRequestedQueueType({ queueType: 'consultation' }, ['nurse'])).toBe('triage');
 });
 
 test('partial dispensing uses only the remaining prescribed quantity', () => {

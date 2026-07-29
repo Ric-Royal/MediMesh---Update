@@ -18,6 +18,21 @@ describe('QueueEntry live operational window', () => {
     );
   });
 
+  test('parameterizes the assigned clinician scope on consultation queues', async () => {
+    const query = jest.fn().mockResolvedValue({ rows: [] });
+    getDB.mockReturnValue({ query });
+
+    await QueueEntry.getAll({
+      queueType: 'consultation',
+      doctorId: 'doctor-1'
+    });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/q\.queue_type = \$1[\s\S]*q\.doctor_id = \$2/),
+      ['consultation', 'doctor-1']
+    );
+  });
+
   test('returns current aggregate statistics for a selected queue type', async () => {
     const row = {
       total_waiting: '2',

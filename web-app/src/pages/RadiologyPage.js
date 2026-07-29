@@ -211,6 +211,10 @@ const RadiologyPage = () => {
           Radiology & Imaging
         </Typography>
       </Box>
+      <Alert severity="info" sx={{ mb: 3 }}>
+        Clinician imaging orders arrive here. Releasing the report returns the
+        patient and report to the clinician for diagnosis and planning.
+      </Alert>
 
       {/* Summary Cards */}
       <Grid container spacing={3} sx={{ mb: 3 }}>

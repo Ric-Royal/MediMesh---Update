@@ -197,6 +197,10 @@ const PharmacyPage = () => {
           Pharmacy Management
         </Typography>
       </Box>
+      <Alert severity="info" sx={{ mb: 3 }}>
+        Clinician prescriptions arrive here for stock-controlled dispensing.
+        The visit advances only after the prescribed medicines are fully handled.
+      </Alert>
 
       {/* Summary Cards */}
       <Grid container spacing={3} sx={{ mb: 3 }}>

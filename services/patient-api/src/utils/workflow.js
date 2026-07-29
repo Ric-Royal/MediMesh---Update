@@ -159,6 +159,25 @@ async function completeDepartmentService(encounterId, queueType) {
         } else {
           nextQueue = 'billing';
         }
+
+        if (nextQueue === 'billing') {
+          await client.query(`
+            UPDATE encounters
+            SET status = 'waiting',
+                waiting_location = 'billing-counter',
+                all_services_completed = TRUE,
+                updated_at = NOW()
+            WHERE id = $1
+          `, [encounterId]);
+          await client.query(`
+            UPDATE appointments
+            SET status = 'completed',
+                completed_at = COALESCE(completed_at, NOW()),
+                updated_at = NOW()
+            WHERE id = $1
+              AND status IN ('checked-in', 'in-progress')
+          `, [encounter.appointment_id]);
+        }
       }
     }
 

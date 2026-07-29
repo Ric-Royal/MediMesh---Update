@@ -28,7 +28,7 @@ class QueueEntry {
     return result.rows[0];
   }
   
-  static async getAll({ queueType, status } = {}) {
+  static async getAll({ queueType, status, doctorId } = {}) {
     let query = `
       SELECT q.*,
              p.first_name, p.last_name, p.uhid,
@@ -51,6 +51,11 @@ class QueueEntry {
     if (queueType) {
       query += ` AND q.queue_type = $${paramCount++}`;
       values.push(queueType);
+    }
+
+    if (doctorId) {
+      query += ` AND q.doctor_id = $${paramCount++}`;
+      values.push(doctorId);
     }
     
     if (status) {
@@ -88,7 +93,7 @@ class QueueEntry {
     return result.rows[0];
   }
   
-  static async getClinicQueue(clinicId, queueType = 'consultation') {
+  static async getClinicQueue(clinicId, queueType = 'consultation', doctorId = null) {
     const query = `
       SELECT q.*,
              p.first_name, p.last_name, p.uhid,
@@ -104,11 +109,13 @@ class QueueEntry {
       LEFT JOIN clinics c ON q.clinic_id = c.id
       WHERE q.clinic_id = $1 
         AND q.queue_type = $2
+        ${doctorId ? 'AND q.doctor_id = $3' : ''}
         AND q.status IN ('waiting', 'called', 'in-service')
         AND q.joined_at >= NOW() - INTERVAL '24 hours'
       ORDER BY q.priority_level ASC, q.queue_position ASC
     `;
-    const result = await getDB().query(query, [clinicId, queueType]);
+    const values = doctorId ? [clinicId, queueType, doctorId] : [clinicId, queueType];
+    const result = await getDB().query(query, values);
     return result.rows;
   }
   

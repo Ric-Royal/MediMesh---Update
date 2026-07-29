@@ -513,12 +513,14 @@ router.post('/',
 
       await db.query(`
         UPDATE appointments
-        SET status = 'completed', updated_at = NOW()
+        SET status = CASE WHEN $2 THEN 'in-progress' ELSE 'completed' END,
+            completed_at = CASE WHEN $2 THEN NULL ELSE COALESCE(completed_at, NOW()) END,
+            updated_at = NOW()
         WHERE id = (
           SELECT appointment_id FROM encounters WHERE id = $1
         )
           AND status IN ('checked-in', 'in-progress')
-      `, [encounterId]);
+      `, [encounterId, hasPendingOrders]);
 
       // 6. Update consultation queue entry status
       await db.query(`
@@ -604,6 +606,106 @@ router.post('/',
     db.release();
   }
 });
+
+// =====================================================
+// GET ROLE-OWNED CLINICAL CONTEXT FOR A VISIT
+// =====================================================
+router.get(
+  '/encounter/:encounterId/clinical-context',
+  authorize(CONSULTATION_READ_ROLES),
+  requireEncounterAccess(),
+  async (req, res) => {
+    try {
+      const { encounterId } = req.params;
+      const db = getDB();
+
+      const [triage, consultations, labResults, radiologyResults, prescriptions] = await Promise.all([
+        db.query(`
+          SELECT ta.*, CONCAT(s.first_name, ' ', s.last_name) AS performed_by_name
+          FROM triage_assessments ta
+          LEFT JOIN staff s ON s.id = ta.performed_by
+          WHERE ta.encounter_id = $1
+          LIMIT 1
+        `, [encounterId]),
+        db.query(`
+          SELECT
+            cr.id, cr.consultation_date, cr.status,
+            cr.chief_complaint, cr.provisional_diagnosis,
+            cr.differential_diagnosis, cr.final_diagnosis,
+            cr.treatment_plan, cr.follow_up_instructions,
+            CONCAT(s.first_name, ' ', s.last_name) AS doctor_name
+          FROM consultation_records cr
+          JOIN staff s ON s.id = cr.doctor_id
+          WHERE cr.encounter_id = $1
+          ORDER BY cr.consultation_date DESC
+        `, [encounterId]),
+        db.query(`
+          SELECT
+            lo.id AS order_id, lo.order_number, lo.status AS order_status,
+            lo.order_date, lt.test_name, lt.test_code,
+            loi.status, loi.result_value, loi.result_unit, loi.result_flag,
+            loi.reference_min, loi.reference_max, loi.result_notes,
+            loi.result_entered_at
+          FROM lab_orders lo
+          JOIN lab_order_items loi ON loi.lab_order_id = lo.id
+          JOIN lab_tests lt ON lt.id = loi.test_id
+          WHERE lo.encounter_id = $1
+          ORDER BY lo.order_date DESC, lt.test_name
+        `, [encounterId]),
+        db.query(`
+          SELECT
+            ro.id AS order_id, ro.order_number, ro.status AS order_status,
+            ro.order_date, rt.test_name, rt.test_code,
+            roi.status, roi.body_part, roi.laterality,
+            rr.findings, rr.impression, rr.recommendations,
+            rr.critical_finding, rr.released_at
+          FROM radiology_orders ro
+          JOIN radiology_order_items roi ON roi.radiology_order_id = ro.id
+          JOIN radiology_tests rt ON rt.id = roi.test_id
+          LEFT JOIN LATERAL (
+            SELECT report.*
+            FROM radiology_reports report
+            WHERE report.radiology_order_item_id = roi.id
+            ORDER BY report.version DESC, report.created_at DESC
+            LIMIT 1
+          ) rr ON TRUE
+          WHERE ro.encounter_id = $1
+          ORDER BY ro.order_date DESC, rt.test_name
+        `, [encounterId]),
+        db.query(`
+          SELECT
+            p.id AS prescription_id, p.prescription_number,
+            p.status AS prescription_status, p.prescription_date,
+            d.generic_name, d.brand_name, pi.dosage, pi.frequency,
+            pi.duration_days, pi.quantity, pi.quantity_dispensed,
+            pi.status, pi.notes
+          FROM prescriptions p
+          JOIN prescription_items pi ON pi.prescription_id = p.id
+          JOIN drugs d ON d.id = pi.drug_id
+          WHERE p.encounter_id = $1
+          ORDER BY p.prescription_date DESC, d.generic_name
+        `, [encounterId])
+      ]);
+
+      res.json({
+        success: true,
+        data: {
+          triage: triage.rows[0] || null,
+          consultations: consultations.rows,
+          labResults: labResults.rows,
+          radiologyResults: radiologyResults.rows,
+          prescriptions: prescriptions.rows
+        }
+      });
+    } catch (error) {
+      logger.error('Error fetching visit clinical context:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Unable to load the visit clinical context'
+      });
+    }
+  }
+);
 
 // =====================================================
 // GET CONSULTATION BY ID

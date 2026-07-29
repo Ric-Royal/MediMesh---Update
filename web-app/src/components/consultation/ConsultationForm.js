@@ -18,18 +18,22 @@ import { useAuth } from '../../contexts/AuthContext';
 import API_CONFIG from '../../config/api';
 
 // Import sub-components
-import VitalsSection from './VitalsSection';
 import ExaminationSection from './ExaminationSection';
 import DiagnosisSection from './DiagnosisSection';
 import LabTestsSelector from './LabTestsSelector';
 import RadiologyStudiesSelector from './RadiologyStudiesSelector';
 import MedicationsSelector from './MedicationsSelector';
+import ClinicalContextSection from './ClinicalContextSection';
 
-const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
+const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuccess }) => {
   const { notifySuccess, notifyError } = useNotification();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState(0);
+  const [clinicalContext, setClinicalContext] = useState(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextError, setContextError] = useState('');
+  const isResultsReview = queueEntry?.service_type === 'results-review';
   
   // Form data state
   const [formData, setFormData] = useState({
@@ -76,6 +80,28 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
   });
 
   const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    if (!open || !encounter?.id) return;
+    let active = true;
+    setContextLoading(true);
+    setContextError('');
+    fetch(`${API_CONFIG.endpoints.consultations}/encounter/${encounter.id}/clinical-context`, {
+      headers: API_CONFIG.getAuthHeaders(),
+    })
+      .then(async response => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Unable to load clinical context');
+        if (active) setClinicalContext(result.data);
+      })
+      .catch(error => {
+        if (active) setContextError(error.message);
+      })
+      .finally(() => {
+        if (active) setContextLoading(false);
+      });
+    return () => { active = false; };
+  }, [encounter?.id, open]);
 
   // Calculate BMI when weight or height changes
   useEffect(() => {
@@ -138,11 +164,21 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
     setLoading(true);
 
     try {
+      const {
+        vitals,
+        historyPresentIllness,
+        pastMedicalHistory,
+        familyHistory,
+        socialHistory,
+        allergies,
+        currentMedications,
+        ...doctorOwnedData
+      } = formData;
       const payload = {
         encounterId: encounter.id,
         patientId: patient.id,
         doctorId: encounter.doctor_id || user?.id,
-        ...formData,
+        ...doctorOwnedData,
       };
 
 
@@ -194,12 +230,12 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
   };
 
   const tabs = [
-    { label: 'Vitals & History', component: VitalsSection },
+    { label: isResultsReview ? 'Results & Triage' : 'Triage Summary', component: ClinicalContextSection },
     { label: 'Examination', component: ExaminationSection },
     { label: 'Diagnosis & Plan', component: DiagnosisSection },
-    { label: 'Lab Tests', component: LabTestsSelector },
-    { label: 'Radiology', component: RadiologyStudiesSelector },
-    { label: 'Medications', component: MedicationsSelector },
+    { label: 'Order Lab Tests', component: LabTestsSelector },
+    { label: 'Order Imaging', component: RadiologyStudiesSelector },
+    { label: 'Prescribe Medication', component: MedicationsSelector },
   ];
 
   return (
@@ -310,16 +346,11 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
 
         <Box sx={{ minHeight: 400 }}>
           {activeTab === 0 && (
-            <VitalsSection
-              vitals={formData.vitals}
-              chiefComplaint={formData.chiefComplaint}
-              historyPresentIllness={formData.historyPresentIllness}
-              pastMedicalHistory={formData.pastMedicalHistory}
-              familyHistory={formData.familyHistory}
-              socialHistory={formData.socialHistory}
-              allergies={formData.allergies}
-              currentMedications={formData.currentMedications}
-              onChange={(data) => setFormData(prev => ({ ...prev, ...data }))}
+            <ClinicalContextSection
+              context={clinicalContext}
+              loading={contextLoading}
+              error={contextError}
+              isResultsReview={isResultsReview}
             />
           )}
           {activeTab === 1 && (
@@ -402,7 +433,13 @@ const ConsultationForm = ({ open, onClose, encounter, patient, onSuccess }) => {
           disabled={loading}
           startIcon={loading && <CircularProgress size={20} />}
         >
-          {loading ? 'Saving...' : 'Complete & Order Services'}
+          {loading
+            ? 'Saving...'
+            : isResultsReview
+              ? 'Complete Results Review'
+              : (formData.labOrders.length || formData.radiologyOrders.length || formData.prescriptions.length)
+                ? 'Submit Orders & Hand Off'
+                : 'Complete Consultation & Send to Billing'}
         </Button>
       </DialogActions>
     </Dialog>

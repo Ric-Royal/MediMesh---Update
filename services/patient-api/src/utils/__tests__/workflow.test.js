@@ -12,6 +12,7 @@ const encounter = {
   clinic_id: 'clinic-1',
   doctor_id: 'doctor-1',
   triage_level: 'routine',
+  appointment_id: 'appointment-1',
 };
 
 function makeClient({ counts, resultReviewCreated = true, activeConsultation = false } = {}) {
@@ -72,5 +73,9 @@ describe('repeatable patient journey routing', () => {
     expect(result.nextQueue).toBe('billing');
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes("'billing-payment'"))).toBe(true);
     expect(client.query.mock.calls.some(([sql]) => String(sql).includes("'results-review'"))).toBe(false);
+    expect(client.query.mock.calls.some(([sql]) => (
+      String(sql).includes('UPDATE appointments') &&
+      String(sql).includes("status = 'completed'")
+    ))).toBe(true);
   });
 });

@@ -138,6 +138,10 @@ const validate = (schema) => {
       if (obj === null || obj === undefined || typeof obj !== 'object') {
         return obj;
       }
+
+      if (Array.isArray(obj)) {
+        return obj.map(item => convertEmptyStringsToNull(item));
+      }
       
       const result = {};
       for (const [key, value] of Object.entries(obj)) {

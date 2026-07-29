@@ -213,6 +213,10 @@ const LaboratoryPage = () => {
           Laboratory Management
         </Typography>
       </Box>
+      <Alert severity="info" sx={{ mb: 3 }}>
+        Clinician orders arrive in this workspace. Completing every ordered test
+        returns the patient and verified results to the clinician for review.
+      </Alert>
 
       {/* Summary Cards */}
       <Grid container spacing={3} sx={{ mb: 3 }}>

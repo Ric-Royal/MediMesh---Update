@@ -42,19 +42,35 @@ import PriorityBadge from '../components/common/PriorityBadge';
 import ProgressStat from '../components/common/ProgressStat';
 import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog';
 import ConsultationForm from '../components/consultation/ConsultationForm';
+import TriageForm from '../components/triage/TriageForm';
 import { useNotification } from '../contexts/NotificationContext';
+import { useAuth } from '../contexts/AuthContext';
 import API_CONFIG from '../config/api';
 import { useLocation, useNavigate } from '../routerCompat';
 import {
   DEPARTMENT_WORKSPACES,
+  canProcessQueueType,
+  getAllowedQueueTypes,
   getQueueType,
   getRequestedQueueType,
   requiresDepartmentCompletion,
 } from '../utils/workflowRouting';
 
+const QUEUE_TYPE_LABELS = {
+  triage: 'Triage',
+  consultation: 'Consultation',
+  lab: 'Laboratory',
+  radiology: 'Radiology',
+  pharmacy: 'Pharmacy',
+  billing: 'Billing',
+};
+
 const QueueManagementPage = () => {
   const location = useLocation();
-  const requestedQueueType = getRequestedQueueType(location.state);
+  const { user } = useAuth();
+  const userRoles = user?.roles || [];
+  const allowedQueueTypes = getAllowedQueueTypes(userRoles);
+  const requestedQueueType = getRequestedQueueType(location.state, userRoles);
   const [queue, setQueue] = useState([]);
   const [statistics, setStatistics] = useState(null);
   const [clinics, setClinics] = useState([]);
@@ -65,6 +81,7 @@ const QueueManagementPage = () => {
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false);
   const [addPatientDialogOpen, setAddPatientDialogOpen] = useState(false);
   const [consultationFormOpen, setConsultationFormOpen] = useState(false);
+  const [triageFormOpen, setTriageFormOpen] = useState(false);
   const [selectedQueueEntry, setSelectedQueueEntry] = useState(null);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [selectedEncounter, setSelectedEncounter] = useState(null);
@@ -287,9 +304,14 @@ const QueueManagementPage = () => {
   };
 
   const handleStartService = async (queueEntry) => {
-    // For consultation queue, open the consultation form
-    if (selectedQueueType === 'consultation' || queueEntry.queueType === 'consultation' || queueEntry.queue_type === 'consultation') {
-      // Fetch patient and encounter details
+    const queueType = getQueueType(queueEntry);
+    if (!canProcessQueueType(userRoles, queueType)) {
+      notifyWarning('This stage belongs to another clinical role.');
+      return;
+    }
+
+    // Triage and consultation use role-owned forms against the same encounter.
+    if (queueType === 'triage' || queueType === 'consultation') {
       try {
         const [patientRes, encounterRes] = await Promise.all([
           fetch(`${API_CONFIG.endpoints.patients}/${queueEntry.patientId || queueEntry.patient_id}`, {
@@ -300,17 +322,13 @@ const QueueManagementPage = () => {
           })
         ]);
 
-        if (patientRes.ok && encounterRes.ok) {
-          const patientData = await patientRes.json();
-          const encounterData = await encounterRes.json();
-          
-          setSelectedPatient(patientData.data);
-          setSelectedEncounter(encounterData.data);
-          setSelectedQueueEntry(queueEntry);
-          setConsultationFormOpen(true);
-
-          // Update queue status to in-service
-          await fetch(`${API_CONFIG.baseURL}/api/queue/${queueEntry.id}/status`, {
+        if (!patientRes.ok || !encounterRes.ok) {
+          throw new Error('Unable to load the shared patient visit');
+        }
+        const patientData = await patientRes.json();
+        const encounterData = await encounterRes.json();
+        if (queueEntry.status !== 'in-service') {
+          const statusResponse = await fetch(`${API_CONFIG.baseURL}/api/queue/${queueEntry.id}/status`, {
             method: 'PUT',
             headers: {
               'Content-Type': 'application/json',
@@ -318,12 +336,19 @@ const QueueManagementPage = () => {
             },
             body: JSON.stringify({ status: 'in-service' })
           });
-
-          fetchQueue({ silent: true });
+          const statusResult = await statusResponse.json();
+          if (!statusResponse.ok) throw new Error(statusResult.error || 'Unable to start this stage');
         }
+
+        setSelectedPatient(patientData.data);
+        setSelectedEncounter(encounterData.data);
+        setSelectedQueueEntry({ ...queueEntry, status: 'in-service' });
+        if (queueType === 'triage') setTriageFormOpen(true);
+        if (queueType === 'consultation') setConsultationFormOpen(true);
+        fetchQueue({ silent: true });
       } catch (error) {
         console.error('Error fetching patient/encounter:', error);
-        notifyError('Failed to load patient details');
+        notifyError(error.message || 'Failed to load patient details');
       }
     } else {
       // For other queues, just update status
@@ -532,12 +557,14 @@ const QueueManagementPage = () => {
           />
         </Box>
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button
-            variant="outlined"
-            onClick={() => setAddPatientDialogOpen(true)}
-          >
-            + Add Patient
-          </Button>
+          {(userRoles.includes('admin') || userRoles.includes('receptionist')) && (
+            <Button
+              variant="outlined"
+              onClick={() => setAddPatientDialogOpen(true)}
+            >
+              + Add Patient
+            </Button>
+          )}
           <Button
             startIcon={<RefreshIcon />}
             onClick={handleRefresh}
@@ -591,12 +618,11 @@ const QueueManagementPage = () => {
                 label="Queue Type"
                 onChange={(e) => setSelectedQueueType(e.target.value)}
               >
-                <MenuItem value="consultation">Consultation</MenuItem>
-                <MenuItem value="pharmacy">Pharmacy</MenuItem>
-                <MenuItem value="lab">Laboratory</MenuItem>
-                <MenuItem value="radiology">Radiology</MenuItem>
-                <MenuItem value="billing">Billing</MenuItem>
-                <MenuItem value="triage">Triage</MenuItem>
+                {allowedQueueTypes.map(queueType => (
+                  <MenuItem key={queueType} value={queueType}>
+                    {QUEUE_TYPE_LABELS[queueType] || queueType}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
           </Grid>
@@ -737,7 +763,10 @@ const QueueManagementPage = () => {
                   </TableCell>
                   <TableCell>
                     <Box sx={{ display: 'flex', gap: 1 }}>
-                      {entry.status === 'waiting' && (
+                      {!canProcessQueueType(userRoles, getQueueType(entry)) && (
+                        <Chip label="View only" size="small" variant="outlined" />
+                      )}
+                      {canProcessQueueType(userRoles, getQueueType(entry)) && entry.status === 'waiting' && (
                         <Button 
                           size="small" 
                           variant="outlined"
@@ -746,7 +775,8 @@ const QueueManagementPage = () => {
                           Call
                         </Button>
                       )}
-                      {(entry.status === 'waiting' || entry.status === 'called') && (
+                      {canProcessQueueType(userRoles, getQueueType(entry))
+                        && (entry.status === 'waiting' || entry.status === 'called') && (
                         <Button 
                           size="small" 
                           variant="contained"
@@ -755,12 +785,18 @@ const QueueManagementPage = () => {
                           Start
                         </Button>
                       )}
-                      {entry.status === 'in-service' && (
+                      {canProcessQueueType(userRoles, getQueueType(entry))
+                        && entry.status === 'in-service' && (
                         requiresDepartmentCompletion(entry) ? (
                           <Button
                             size="small"
                             variant="outlined"
-                            onClick={() => navigate(DEPARTMENT_WORKSPACES[getQueueType(entry)])}
+                            onClick={() => navigate(DEPARTMENT_WORKSPACES[getQueueType(entry)], {
+                              state: {
+                                encounterId: entry.encounterId || entry.encounter_id,
+                                patientId: entry.patientId || entry.patient_id,
+                              },
+                            })}
                           >
                             Open workspace
                           </Button>
@@ -768,10 +804,9 @@ const QueueManagementPage = () => {
                           <Button
                             size="small"
                             variant="contained"
-                            color="success"
-                            onClick={() => handleOpenCompleteDialog(entry)}
+                            onClick={() => handleStartService(entry)}
                           >
-                            Complete
+                            Resume {getQueueType(entry) === 'triage' ? 'triage' : 'consultation'}
                           </Button>
                         )
                       )}
@@ -909,9 +944,27 @@ const QueueManagementPage = () => {
           }}
           encounter={selectedEncounter}
           patient={selectedPatient}
+          queueEntry={selectedQueueEntry}
           onSuccess={() => {
             fetchQueue({ silent: true });
             notifySuccess('Consultation completed! Patient added to service queues.');
+          }}
+        />
+      )}
+      {triageFormOpen && selectedPatient && selectedEncounter && selectedQueueEntry && (
+        <TriageForm
+          open={triageFormOpen}
+          onClose={() => {
+            setTriageFormOpen(false);
+            setSelectedPatient(null);
+            setSelectedEncounter(null);
+            setSelectedQueueEntry(null);
+          }}
+          queueEntry={selectedQueueEntry}
+          encounter={selectedEncounter}
+          patient={selectedPatient}
+          onSuccess={() => {
+            fetchQueue({ silent: true });
           }}
         />
       )}

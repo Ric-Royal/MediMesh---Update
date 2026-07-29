@@ -123,16 +123,16 @@ function App() {
                   <Route path="/wards" element={<RoleRoute roles={['doctor', 'nurse', 'admin']}><WardOccupancyPage /></RoleRoute>} />
                   
                   {/* Pharmacy Management - PHASE 2! */}
-                  <Route path="/pharmacy" element={<RoleRoute roles={['pharmacist', 'doctor', 'admin']}><PharmacyPage /></RoleRoute>} />
+                  <Route path="/pharmacy" element={<RoleRoute roles={['pharmacist', 'admin']}><PharmacyPage /></RoleRoute>} />
                   
                   {/* Lab Workflow - PHASE 2! */}
-                  <Route path="/lab" element={<RoleRoute roles={['lab-tech', 'doctor', 'admin']}><LaboratoryPage /></RoleRoute>} />
+                  <Route path="/lab" element={<RoleRoute roles={['lab-tech', 'admin']}><LaboratoryPage /></RoleRoute>} />
                   
                   {/* Billing - PHASE 3! */}
-                  <Route path="/billing" element={<RoleRoute roles={['billing', 'doctor', 'admin']}><EnhancedBillingPage /></RoleRoute>} />
+                  <Route path="/billing" element={<RoleRoute roles={['billing', 'admin']}><EnhancedBillingPage /></RoleRoute>} />
                   
                   {/* Radiology - PHASE 3! */}
-                  <Route path="/radiology" element={<RoleRoute roles={['radiographer', 'radiologist', 'doctor', 'admin']}><RadiologyPage /></RoleRoute>} />
+                  <Route path="/radiology" element={<RoleRoute roles={['radiographer', 'radiologist', 'admin']}><RadiologyPage /></RoleRoute>} />
                   
                   {/* Settings */}
                   <Route path="/settings" element={<SettingsPage />} />
