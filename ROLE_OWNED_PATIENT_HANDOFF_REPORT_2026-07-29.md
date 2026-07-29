@@ -102,6 +102,12 @@ limited to encounters assigned to that doctor.
   - no browser console errors were present.
 - GitHub security automation passed dependency, secret, container, static code,
   licence, and summary jobs after the source push.
+- The updated artifact action removed the Node.js runtime deprecation warning.
+- Static analysis completed successfully and its report was retained as a
+  workflow artifact. GitHub also reported that its code-scanning dashboard is
+  not enabled for this private repository, so the report could not be published
+  into that dashboard. Enabling that owner-level feature may affect repository
+  billing and was not changed automatically.
 
 ## Synthetic end-to-end journey inserted locally
 
