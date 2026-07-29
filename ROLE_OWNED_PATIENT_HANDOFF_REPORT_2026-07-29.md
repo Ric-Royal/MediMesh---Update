@@ -79,6 +79,12 @@ limited to encounters assigned to that doctor.
 - Added explanatory handoff notices to laboratory, radiology, and pharmacy
   workspaces.
 
+### Security automation
+
+- Updated the pinned artifact-upload action from version 4.6.2 to 7.0.1 so
+  security reports run on the supported Node.js 24 action runtime.
+- Kept immutable commit pinning for the workflow dependency.
+
 ## Local validation performed
 
 - Backend: 20 suites, 92 tests passed.
@@ -94,6 +100,8 @@ limited to encounters assigned to that doctor.
   - the consultation dialog contains the new role-owned tabs and triage summary;
   - the laboratory workspace explains the result-return handoff;
   - no browser console errors were present.
+- GitHub security automation passed dependency, secret, container, static code,
+  licence, and summary jobs after the source push.
 
 ## Synthetic end-to-end journey inserted locally
 
@@ -131,6 +139,8 @@ then submitted after the correction.
 - Synthetic records listed above.
 - Docker checked pinned base-image metadata. Dependency-install build layers were
   satisfied from the existing Docker cache during the final builds.
+- Public release metadata for the pinned GitHub workflow action and pull-request
+  check results were read from GitHub.
 
 No application dependency was installed into the Windows host. The incomplete
 host `web-app/node_modules` directory was not reused or repaired; clean container
@@ -145,6 +155,9 @@ builds used the lockfiles.
 - The tested source changes were pushed to the configured GitHub repository on
   the named branch. No database content, Docker volume, or secret file was
   included in that push.
+- Pull-request text and workflow-status requests were sent to GitHub. They
+  contained source-change descriptions and check identifiers, not patient data
+  or local credentials.
 
 The local bootstrap administrator password was read into process memory only to
 authenticate synthetic API tests against `127.0.0.1`. It was not printed,
