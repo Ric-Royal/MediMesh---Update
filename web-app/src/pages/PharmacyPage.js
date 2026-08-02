@@ -15,6 +15,7 @@ import {
 } from '@mui/icons-material';
 import API_CONFIG from '../config/api';
 import { useNotification } from '../contexts/NotificationContext';
+import { printClinicalDocument } from '../utils/printClinicalDocument';
 import {
   getMaximumDispensableQuantity,
   getRemainingPrescriptionQuantity,
@@ -346,7 +347,16 @@ const PharmacyPage = () => {
                             >
                               <VisibilityIcon />
                             </IconButton>
-                            <IconButton size="small" color="primary">
+                            <IconButton
+                              size="small"
+                              color="primary"
+                              onClick={async () => {
+                                await handleViewPrescription(prescription);
+                                window.setTimeout(() => {
+                                  try { printClinicalDocument(); } catch (error) { notifyError(error.message); }
+                                }, 250);
+                              }}
+                            >
                               <PrintIcon />
                             </IconButton>
                           </>
@@ -472,7 +482,13 @@ const PharmacyPage = () => {
       </Dialog>
 
       {/* View Prescription Dialog */}
-      <Dialog open={viewDialogOpen} onClose={() => setViewDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog
+        open={viewDialogOpen}
+        onClose={() => setViewDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{ 'data-print-document': true }}
+      >
         <DialogTitle>
           Prescription Details - {selectedPrescription?.prescription_number}
         </DialogTitle>
@@ -543,9 +559,16 @@ const PharmacyPage = () => {
             </Box>
           )}
         </DialogContent>
-        <DialogActions>
+        <DialogActions data-print-actions>
           <Button onClick={() => setViewDialogOpen(false)}>Close</Button>
-          <Button variant="contained" color="primary" startIcon={<PrintIcon />}>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<PrintIcon />}
+            onClick={() => {
+              try { printClinicalDocument(); } catch (error) { notifyError(error.message); }
+            }}
+          >
             Print Label
           </Button>
         </DialogActions>

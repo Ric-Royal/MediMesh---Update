@@ -115,4 +115,36 @@ describe('clinical decision rules', () => {
 
     expect(details).toEqual([]);
   });
+
+  test('accepts a fully specified admission after final diagnosis', () => {
+    const payload = {
+      ...basePayload,
+      clinicalOutcome: CLINICAL_OUTCOMES.DIAGNOSIS_CONFIRMED,
+      finalDiagnosis: 'Severe pneumonia',
+      patientDisposition: 'admit',
+      admission: {
+        wardId: '44444444-4444-4444-8444-444444444444',
+        bedId: '55555555-5555-4555-8555-555555555555',
+        admissionType: 'emergency',
+        reason: 'Requires inpatient oxygen and monitoring',
+        expectedDischargeDate: null
+      }
+    };
+    const result = consultationSchema.validate(payload, { abortEarly: false });
+
+    expect(result.error).toBeUndefined();
+    expect(validateConsultationDecision(result.value)).toEqual([]);
+  });
+
+  test('rejects admission without a selected bed', () => {
+    const details = validateConsultationDecision({
+      ...basePayload,
+      clinicalOutcome: CLINICAL_OUTCOMES.DIAGNOSIS_CONFIRMED,
+      finalDiagnosis: 'Severe pneumonia',
+      patientDisposition: 'admit',
+      admission: null
+    });
+
+    expect(details).toContainEqual(expect.objectContaining({ field: 'admission' }));
+  });
 });

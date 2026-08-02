@@ -30,7 +30,9 @@ import {
 import { styled } from '@mui/material/styles';
 import { useSettings } from '../../contexts/SettingsContext';
 
-const DropZone = styled(Paper)(({ theme, isDragOver }) => ({
+const DropZone = styled(Paper, {
+  shouldForwardProp: prop => prop !== 'isDragOver',
+})(({ theme, isDragOver }) => ({
   border: `2px dashed ${isDragOver ? theme.palette.primary.main : theme.palette.grey[300]}`,
   borderRadius: theme.shape.borderRadius,
   padding: theme.spacing(3),
@@ -48,10 +50,15 @@ const FileUpload = ({
   category = 'medical-records',
   patientId = null,
   recordId = null,
+  encounterId = null,
+  labOrderId = null,
+  radiologyOrderId = null,
+  prescriptionId = null,
+  admissionId = null,
   onUploadSuccess = () => {},
   onUploadError = () => {},
   onFilesSelected = () => {},
-  maxFiles = 10,
+  maxFiles = 3,
   maxFileSize = null, // Will use system setting if not provided
   allowedTypes = null, // Will use system setting if not provided
   disabled = false,
@@ -71,7 +78,7 @@ const FileUpload = ({
   const systemAllowedTypes = getSystemSetting('allowedFileTypes', ['pdf', 'jpg', 'jpeg', 'png', 'docx', 'doc', 'dicom', 'txt', 'csv']);
   
   // Use prop values if provided, otherwise use system settings
-  const effectiveMaxFileSize = maxFileSize || systemMaxFileSize;
+  const effectiveMaxFileSize = Math.min(maxFileSize || systemMaxFileSize, 10 * 1024 * 1024);
   const effectiveAllowedTypes = allowedTypes || systemAllowedTypes.map(type => {
     // Convert file extensions to MIME types
     const mimeTypes = {
@@ -267,6 +274,11 @@ const FileUpload = ({
       formData.append('category', category);
       if (patientId) formData.append('patientId', patientId);
       if (recordId) formData.append('recordId', recordId);
+      if (encounterId) formData.append('encounterId', encounterId);
+      if (labOrderId) formData.append('labOrderId', labOrderId);
+      if (radiologyOrderId) formData.append('radiologyOrderId', radiologyOrderId);
+      if (prescriptionId) formData.append('prescriptionId', prescriptionId);
+      if (admissionId) formData.append('admissionId', admissionId);
       if (fileMetadata.description) formData.append('description', fileMetadata.description);
       if (fileMetadata.tags.length > 0) formData.append('tags', JSON.stringify(fileMetadata.tags));
       formData.append('isPrivate', fileMetadata.isPrivate);
@@ -283,15 +295,20 @@ const FileUpload = ({
 
       // Handle response
       xhr.addEventListener('load', () => {
-        if (xhr.status === 201) {
-          const response = JSON.parse(xhr.responseText);
+        if ([201, 207].includes(xhr.status)) {
+          const response = JSON.parse(xhr.responseText || '{}');
           setSuccess(`Successfully uploaded ${response.results.successful.length} file(s)`);
           setFiles([]);
           setFileMetadata({ description: '', tags: [], isPrivate: false });
           onUploadSuccess(response.results.successful);
         } else {
-          const error = JSON.parse(xhr.responseText);
-          setError(error.message || 'Upload failed');
+          let error;
+          try {
+            error = JSON.parse(xhr.responseText || '{}');
+          } catch {
+            error = { message: 'Upload failed' };
+          }
+          setError(error.error || error.message || 'Upload failed');
           onUploadError(error);
         }
         setUploading(false);

@@ -15,6 +15,9 @@ import {
 } from '@mui/icons-material';
 import API_CONFIG from '../config/api';
 import { useNotification } from '../contexts/NotificationContext';
+import FileUpload from '../components/common/FileUpload';
+import FilePreview from '../components/common/FilePreview';
+import { printClinicalDocument } from '../utils/printClinicalDocument';
 
 const RadiologyPage = () => {
   const { notifySuccess, notifyError } = useNotification();
@@ -26,6 +29,7 @@ const RadiologyPage = () => {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [reports, setReports] = useState({});
   const [statistics, setStatistics] = useState({});
+  const [attachmentRefresh, setAttachmentRefresh] = useState(0);
 
   // Fetch radiology orders
   const fetchOrders = useCallback(async (status = 'pending') => {
@@ -362,7 +366,16 @@ const RadiologyPage = () => {
                             >
                               <VisibilityIcon />
                             </IconButton>
-                            <IconButton size="small" color="primary">
+                            <IconButton
+                              size="small"
+                              color="primary"
+                              onClick={async () => {
+                                await handleViewOrder(order);
+                                window.setTimeout(() => {
+                                  try { printClinicalDocument(); } catch (error) { notifyError(error.message); }
+                                }, 250);
+                              }}
+                            >
                               <PrintIcon />
                             </IconButton>
                           </>
@@ -435,6 +448,28 @@ const RadiologyPage = () => {
           ) : (
             <Alert severity="info">No study items found for this order.</Alert>
           )}
+          {selectedOrder && (
+            <Box sx={{ mt: 3 }}>
+              <Divider sx={{ mb: 3 }} />
+              <FileUpload
+                patientId={selectedOrder.patient_id}
+                encounterId={selectedOrder.encounter_id}
+                radiologyOrderId={selectedOrder.id}
+                label="Upload radiology images and documents"
+                description="Attach DICOM, image or PDF evidence for this imaging order."
+                allowedTypes={['application/dicom', 'image/jpeg', 'image/png', 'application/pdf']}
+                onUploadSuccess={() => setAttachmentRefresh(value => value + 1)}
+                onUploadError={uploadError => notifyError(uploadError?.message || 'File upload failed')}
+              />
+              <FilePreview
+                patientId={selectedOrder.patient_id}
+                encounterId={selectedOrder.encounter_id}
+                radiologyOrderId={selectedOrder.id}
+                refreshKey={attachmentRefresh}
+                allowDelete={false}
+              />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setReportDialogOpen(false)}>Cancel</Button>
@@ -445,7 +480,13 @@ const RadiologyPage = () => {
       </Dialog>
 
       {/* View Order Dialog */}
-      <Dialog open={viewDialogOpen} onClose={() => setViewDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog
+        open={viewDialogOpen}
+        onClose={() => setViewDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{ 'data-print-document': true }}
+      >
         <DialogTitle>
           Radiology Report - {selectedOrder?.order_number}
         </DialogTitle>
@@ -518,12 +559,38 @@ const RadiologyPage = () => {
               }) : (
                 <Alert severity="info">No released report is available for this order.</Alert>
               )}
+              <Divider sx={{ my: 3 }} />
+              <Typography variant="h6" gutterBottom>Attached images and documents</Typography>
+              <FileUpload
+                patientId={selectedOrder.patient_id}
+                encounterId={selectedOrder.encounter_id}
+                radiologyOrderId={selectedOrder.id}
+                label="Add radiology image or document"
+                description="Attach DICOM, image or PDF evidence without changing the released report."
+                allowedTypes={['application/dicom', 'image/jpeg', 'image/png', 'application/pdf']}
+                onUploadSuccess={() => setAttachmentRefresh(value => value + 1)}
+                onUploadError={uploadError => notifyError(uploadError?.message || 'File upload failed')}
+              />
+              <FilePreview
+                patientId={selectedOrder.patient_id}
+                encounterId={selectedOrder.encounter_id}
+                radiologyOrderId={selectedOrder.id}
+                refreshKey={attachmentRefresh}
+                allowDelete={false}
+              />
             </Box>
           )}
         </DialogContent>
-        <DialogActions>
+        <DialogActions data-print-actions>
           <Button onClick={() => setViewDialogOpen(false)}>Close</Button>
-          <Button variant="contained" color="primary" startIcon={<PrintIcon />}>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<PrintIcon />}
+            onClick={() => {
+              try { printClinicalDocument(); } catch (error) { notifyError(error.message); }
+            }}
+          >
             Print Report
           </Button>
         </DialogActions>

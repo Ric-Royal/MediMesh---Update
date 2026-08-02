@@ -41,10 +41,17 @@ import {
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { useAuth } from '../../contexts/AuthContext';
+import API_CONFIG from '../../config/api';
 
 const FilePreview = ({
   recordId = null,
   patientId = null,
+  encounterId = null,
+  labOrderId = null,
+  radiologyOrderId = null,
+  prescriptionId = null,
+  admissionId = null,
+  refreshKey = 0,
   category = 'medical-records',
   onDownload = () => {},
   onDelete = () => {},
@@ -63,11 +70,30 @@ const FilePreview = ({
   const [fileToDelete, setFileToDelete] = useState(null);
   const { hasRole } = useAuth();
 
+  const getUploadedAt = (file) => file.uploadDate || file.uploadedAt || file.created_at;
+
+  const formatUploadDate = (file, pattern) => {
+    const uploadedAt = getUploadedAt(file);
+    if (!uploadedAt) return 'Date unavailable';
+    const parsed = new Date(uploadedAt);
+    return Number.isNaN(parsed.getTime()) ? 'Date unavailable' : format(parsed, pattern);
+  };
+
   const fetchFiles = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await fetch(`/api/files?recordId=${recordId}`, {
+      const params = new URLSearchParams();
+      if (recordId) params.set('recordId', recordId);
+      if (patientId) params.set('patientId', patientId);
+      if (encounterId) params.set('encounterId', encounterId);
+      if (labOrderId) params.set('labOrderId', labOrderId);
+      if (radiologyOrderId) params.set('radiologyOrderId', radiologyOrderId);
+      if (prescriptionId) params.set('prescriptionId', prescriptionId);
+      if (admissionId) params.set('admissionId', admissionId);
+      params.set('category', category);
+      const response = await fetch(`/api/files?${params.toString()}`, {
+        headers: API_CONFIG.getAuthHeaders(),
         credentials: 'same-origin'
       });
       
@@ -83,14 +109,14 @@ const FilePreview = ({
     } finally {
       setLoading(false);
     }
-  }, [recordId]);
+  }, [admissionId, category, encounterId, labOrderId, patientId, prescriptionId, radiologyOrderId, recordId, refreshKey]);
 
   // Fetch files when component mounts or recordId changes
   useEffect(() => {
-    if (recordId) {
+    if (recordId || patientId || encounterId || labOrderId || radiologyOrderId || prescriptionId || admissionId) {
       fetchFiles();
     }
-  }, [recordId, fetchFiles]);
+  }, [admissionId, encounterId, fetchFiles, labOrderId, patientId, prescriptionId, radiologyOrderId, recordId]);
 
   const getFileIcon = (file) => {
     const mimeType = file.mimeType || file.mime_type || '';
@@ -150,11 +176,24 @@ const FilePreview = ({
 
   const handleDownload = async (file) => {
     try {
-      // This would typically make an API call to get a download URL
-      // For now, we'll just call the onDownload callback
+      const response = await fetch(`/api/files/${file.id}`, {
+        headers: API_CONFIG.getAuthHeaders(),
+        credentials: 'same-origin',
+      });
+      if (!response.ok) throw new Error('File download failed');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = file.fileName || file.originalName || 'clinical-file';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
       onDownload(file);
     } catch (error) {
       console.error('Download error:', error);
+      setError('Unable to download this file. Please try again.');
     }
   };
 
@@ -191,7 +230,7 @@ const FilePreview = ({
           <Box sx={{ flexGrow: 1, minWidth: 0 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
               <Typography variant="subtitle1" noWrap sx={{ fontWeight: 'medium' }}>
-                {file.originalName || file.original_name || file.name}
+                {file.fileName || file.originalName || file.original_name || file.name}
               </Typography>
               {file.isPrivate && (
                 <Tooltip title="Private file - restricted access">
@@ -208,7 +247,7 @@ const FilePreview = ({
                 color="primary"
               />
               <Typography variant="body2" color="text.secondary">
-                {formatFileSize(file.size || file.file_size)}
+                {formatFileSize(file.fileSize || file.size || file.file_size)}
               </Typography>
               <Chip
                 label={getCategoryLabel(file.category)}
@@ -235,7 +274,7 @@ const FilePreview = ({
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 1 }}>
               <Typography variant="caption" color="text.secondary">
                 <CalendarIcon fontSize="small" sx={{ mr: 0.5, verticalAlign: 'middle' }} />
-                {format(new Date(file.uploadedAt || file.created_at), 'MMM dd, yyyy')}
+                {formatUploadDate(file, 'MMM dd, yyyy')}
               </Typography>
               {file.uploadedBy && (
                 <Typography variant="caption" color="text.secondary">
@@ -311,7 +350,7 @@ const FilePreview = ({
                   {formatFileSize(file.size || file.file_size)}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {format(new Date(file.uploadedAt || file.created_at), 'MMM dd, yyyy')}
+                  {formatUploadDate(file, 'MMM dd, yyyy')}
                 </Typography>
               </Box>
             }
@@ -448,7 +487,7 @@ const FilePreview = ({
                   Upload Information
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Uploaded: {format(new Date(selectedFile.uploadedAt || selectedFile.created_at), 'PPP')}
+                  Uploaded: {formatUploadDate(selectedFile, 'PPP')}
                 </Typography>
                 {selectedFile.uploadedBy && (
                   <Typography variant="body2" color="text.secondary">

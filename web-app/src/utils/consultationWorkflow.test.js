@@ -1,7 +1,9 @@
 import {
   CLINICAL_OUTCOMES,
   buildConsultationPayload,
+  createInitialConsultationForm,
   formatConsultationApiError,
+  mergeClinicalContextIntoForm,
   validateConsultationForm,
 } from './consultationWorkflow';
 
@@ -111,4 +113,40 @@ test('shows field-level API validation details to the clinician', () => {
       { field: 'durationDays', message: 'Duration must be a whole number of days.' },
     ],
   })).toBe('Select the current clinical outcome. Duration must be a whole number of days.');
+});
+
+test('restores triage and clinician data for results review without duplicating prior orders', () => {
+  const initial = createInitialConsultationForm({ chief_complaint: 'Initial complaint' });
+  const restored = mergeClinicalContextIntoForm(initial, {
+    triage: {
+      vital_signs: { temperature: 38.2, pulse: 96 },
+      chief_complaint: 'Fever',
+      history_present_illness: 'Three days of fever',
+      allergies: 'Penicillin',
+    },
+    consultations: [{
+      general_appearance: 'Tired but stable',
+      provisional_diagnosis: 'Possible infection',
+      clinical_outcome: CLINICAL_OUTCOMES.INVESTIGATIONS_PENDING,
+    }],
+  }, { resultsReview: true });
+
+  expect(restored.vitals.temperature).toBe('38.2');
+  expect(restored.historyPresentIllness).toBe('Three days of fever');
+  expect(restored.examination.generalAppearance).toBe('Tired but stable');
+  expect(restored.provisionalDiagnosis).toBe('Possible infection');
+  expect(restored.clinicalOutcome).toBe('');
+  expect(restored.labOrders).toEqual([]);
+});
+
+test('requires a final decision and a real ward bed before admission', () => {
+  const form = {
+    ...createInitialConsultationForm({}),
+    clinicalOutcome: CLINICAL_OUTCOMES.DIAGNOSIS_CONFIRMED,
+    finalDiagnosis: 'Severe community acquired pneumonia',
+    patientDisposition: 'admit',
+    admission: { wardId: '', bedId: '', admissionType: 'emergency', reason: '' },
+  };
+
+  expect(validateConsultationForm(form).admission).toMatch(/ward and bed/i);
 });

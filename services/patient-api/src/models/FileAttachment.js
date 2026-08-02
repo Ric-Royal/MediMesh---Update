@@ -10,6 +10,11 @@ class FileAttachment {
     this.original_name = data.original_name || data.file_name;
     this.medical_record_id = data.medical_record_id;
     this.patient_id = data.patient_id;
+    this.encounter_id = data.encounter_id;
+    this.lab_order_id = data.lab_order_id;
+    this.radiology_order_id = data.radiology_order_id;
+    this.prescription_id = data.prescription_id;
+    this.admission_id = data.admission_id;
     this.file_name = data.file_name || data.original_name;
     this.file_type = data.file_type;
     this.file_size = data.file_size;
@@ -41,7 +46,9 @@ class FileAttachment {
     const query = `
       INSERT INTO file_attachments (
         id, file_key, bucket_name, original_name,
-        medical_record_id, patient_id, file_name, file_type, file_size,
+        medical_record_id, patient_id, encounter_id, lab_order_id,
+        radiology_order_id, prescription_id, admission_id,
+        file_name, file_type, file_size,
         mime_type, storage_path, storage_bucket, storage_key, category,
         description, tags, is_private, uploaded_by, upload_date,
         upload_url, etag, metadata, detected_mime_type, malware_scan_status,
@@ -49,8 +56,9 @@ class FileAttachment {
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         $11, $12, $13, $14, $15, $16, $17, $18, $19,
-        $20, $21, $22::jsonb, $23, $24,
-        $25, $26, $27
+        $20, $21, $22, $23, $24,
+        $25, $26, $27::jsonb, $28, $29,
+        $30, $31, $32
       )
       RETURNING *
     `;
@@ -62,6 +70,11 @@ class FileAttachment {
       originalName,
       data.medical_record_id || null,
       data.patient_id || null,
+      data.encounter_id || null,
+      data.lab_order_id || null,
+      data.radiology_order_id || null,
+      data.prescription_id || null,
+      data.admission_id || null,
       originalName,
       data.file_type,
       data.file_size,
@@ -179,6 +192,33 @@ class FileAttachment {
     }
   }
 
+  static async findByContext(filters = {}) {
+    const supported = {
+      recordId: 'medical_record_id',
+      patientId: 'patient_id',
+      encounterId: 'encounter_id',
+      labOrderId: 'lab_order_id',
+      radiologyOrderId: 'radiology_order_id',
+      prescriptionId: 'prescription_id',
+      admissionId: 'admission_id'
+    };
+    const clauses = ['is_active = TRUE'];
+    const values = [];
+    for (const [key, column] of Object.entries(supported)) {
+      if (!filters[key]) continue;
+      values.push(filters[key]);
+      clauses.push(`${column} = $${values.length}`);
+    }
+    values.push(Math.min(Math.max(Number(filters.limit) || 50, 1), 100));
+    const result = await getDB().query(`
+      SELECT * FROM file_attachments
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY upload_date DESC
+      LIMIT $${values.length}
+    `, values);
+    return result.rows.map(row => new FileAttachment(row));
+  }
+
   async update(data) {
     const now = new Date();
     const fields = [];
@@ -287,6 +327,11 @@ class FileAttachment {
       ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS updated_by VARCHAR(100);
       ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS detected_mime_type VARCHAR(100);
       ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS malware_scan_status VARCHAR(20) NOT NULL DEFAULT 'pending';
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS encounter_id UUID REFERENCES encounters(id) ON DELETE SET NULL;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS lab_order_id UUID REFERENCES lab_orders(id) ON DELETE SET NULL;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS radiology_order_id UUID REFERENCES radiology_orders(id) ON DELETE SET NULL;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS prescription_id INTEGER REFERENCES prescriptions(id) ON DELETE SET NULL;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS admission_id UUID REFERENCES admissions(id) ON DELETE SET NULL;
       ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
       ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS deleted_by UUID;
       ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS delete_reason VARCHAR(500);

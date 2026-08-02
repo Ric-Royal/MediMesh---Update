@@ -37,7 +37,7 @@ import {
 } from '@mui/icons-material';
 import API_CONFIG from '../../config/api';
 
-const MedicationsSelector = ({ selectedMedications, onChange }) => {
+const MedicationsSelector = ({ selectedMedications, onChange, canPrescribe = true }) => {
   const [drugCatalog, setDrugCatalog] = useState([]);
   const [filteredDrugs, setFilteredDrugs] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -95,6 +95,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
   const categories = [...new Set(drugCatalog.map(drug => drug.category_name).filter(Boolean))];
 
   const handleAddMedication = (drug) => {
+    if (!canPrescribe) return;
     // Check if already added
     if (selectedMedications.find(m => m.drugId === drug.id)) {
       return;
@@ -180,6 +181,14 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
         Select medications to prescribe. You can specify dosage, frequency, and duration for each.
       </Typography>
 
+      {!canPrescribe && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          Medication is optional. To prescribe it, first enter the final diagnosis and select
+          “Final diagnosis established” under Diagnosis &amp; Plan. If tests or imaging are being
+          ordered, prescribe after those results return.
+        </Alert>
+      )}
+
       {/* Selected Medications Summary */}
       {selectedMedications.length > 0 && (
         <Paper elevation={2} sx={{ p: 2, mb: 3, bgcolor: 'secondary.light' }}>
@@ -255,6 +264,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
         <Grid item xs={12} md={8}>
           <TextField
             fullWidth
+            disabled={!canPrescribe}
             placeholder="Search medications by name or generic name..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -268,7 +278,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
           />
         </Grid>
         <Grid item xs={12} md={4}>
-          <FormControl fullWidth>
+          <FormControl fullWidth disabled={!canPrescribe}>
             <InputLabel>Category</InputLabel>
             <Select
               value={categoryFilter}
@@ -339,7 +349,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
                       color={isSelected ? 'secondary' : 'primary'}
                       startIcon={isSelected ? <DeleteIcon /> : <AddIcon />}
                       onClick={() => isSelected ? handleRemoveMedication(drug.id) : handleAddMedication(drug)}
-                      disabled={isSelected}
+                      disabled={isSelected || !canPrescribe}
                     >
                       {isSelected ? 'Added' : 'Prescribe'}
                     </Button>

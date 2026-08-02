@@ -64,6 +64,8 @@ router.post('/',
       followUpInstructions,
       clinicalOutcome,
       investigationReason,
+      patientDisposition = 'outpatient',
+      admission,
       // Orders
       labOrders = [],
       radiologyOrders = [],
@@ -142,6 +144,60 @@ router.post('/',
         throw error;
       }
 
+      let createdAdmission = null;
+      if (patientDisposition === 'admit') {
+        const bedResult = await db.query(`
+          SELECT b.id, b.ward_id, w.department_id
+          FROM beds b
+          JOIN wards w ON w.id = b.ward_id
+          WHERE b.id = $1
+            AND b.ward_id = $2
+            AND b.status = 'available'
+            AND b.is_active = TRUE
+            AND w.is_active = TRUE
+          FOR UPDATE OF b
+        `, [admission.bedId, admission.wardId]);
+        if (!bedResult.rows.length) {
+          const error = new Error('The selected ward bed is no longer available');
+          error.status = 409;
+          throw error;
+        }
+
+        const paymentResult = await db.query(
+          'SELECT payment_type FROM encounters WHERE id = $1',
+          [encounterId]
+        );
+        const encounterPaymentType = paymentResult.rows[0]?.payment_type;
+        const admissionPaymentType = ['self-pay', 'corporate', 'insurance', 'government'].includes(encounterPaymentType)
+          ? encounterPaymentType
+          : 'self-pay';
+        const admissionResult = await db.query(`
+          INSERT INTO admissions (
+            admission_number, patient_id, encounter_id, ward_id, bed_id,
+            expected_discharge_date, admission_type, admitting_doctor_id,
+            consultant_doctor_id, department_id, reason_for_admission,
+            diagnosis, status, payment_type
+          ) VALUES (
+            NULL, $1, $2, $3, $4, $5, $6, $7, $7, $8, $9, $10,
+            'admitted', $11
+          )
+          RETURNING id, admission_number, ward_id, bed_id, admission_date, status
+        `, [
+          patientId,
+          encounterId,
+          admission.wardId,
+          admission.bedId,
+          admission.expectedDischargeDate || null,
+          admission.admissionType,
+          resolvedDoctorId,
+          bedResult.rows[0].department_id,
+          admission.reason,
+          finalDiagnosis,
+          admissionPaymentType
+        ]);
+        createdAdmission = admissionResult.rows[0];
+      }
+
       if (!assignedDoctorId) {
         await db.query(
           'UPDATE encounters SET doctor_id = $2, updated_at = NOW() WHERE id = $1',
@@ -162,7 +218,7 @@ router.post('/',
           skin_exam, other_findings,
           provisional_diagnosis, differential_diagnosis, final_diagnosis,
           treatment_plan, follow_up_instructions, clinical_outcome,
-          investigation_reason,
+          investigation_reason, patient_disposition, admission_id,
           has_lab_orders, has_radiology_orders, has_prescriptions,
           total_lab_orders, total_radiology_orders, total_prescriptions,
           status, completed_at, created_by
@@ -171,9 +227,9 @@ router.post('/',
           $4, $5, $6, $7, $8, $9, $10, $11,
           $12, $13, $14, $15, $16, $17, $18,
           $19, $20, $21, $22, $23, $24, $25, $26,
-          $27, $28, $29, $30, $31, $32, $33,
-          $34, $35, $36, $37, $38, $39,
-          $40, $41, $42
+          $27, $28, $29, $30, $31, $32, $33, $34, $35,
+          $36, $37, $38, $39, $40, $41,
+          $42, $43, $44
         )
         RETURNING id, consultation_date
       `, [
@@ -187,7 +243,7 @@ router.post('/',
         emptyToNull(examination?.skin), emptyToNull(examination?.other),
         emptyToNull(provisionalDiagnosis), emptyToNull(differentialDiagnosis), emptyToNull(finalDiagnosis),
         emptyToNull(treatmentPlan), emptyToNull(followUpInstructions), clinicalOutcome,
-        emptyToNull(investigationReason),
+        emptyToNull(investigationReason), patientDisposition, createdAdmission?.id || null,
         labOrders.length > 0, radiologyOrders.length > 0, prescriptions.length > 0,
         labOrders.length, radiologyOrders.length, prescriptions.length,
         'completed', new Date(), req.user?.id || 'system'
@@ -255,6 +311,8 @@ router.post('/',
           ].filter(Boolean).join('\n') || null,
           vital_signs: vitalsJson,
           follow_up_date: null,
+          encounter_id: encounterId,
+          consultation_record_id: consultationId,
         }, req.user.id, db);
 
         logger.info(`Auto-created medical record for consultation ${consultationId}`);
@@ -453,22 +511,25 @@ router.post('/',
       `, [encounterId]);
       const pendingCounts = pendingCountsResult.rows[0];
       const hasPendingOrders = pendingCounts.lab > 0 || pendingCounts.radiology > 0 || pendingCounts.pharmacy > 0;
+      const isAdmitted = patientDisposition === 'admit';
 
       await db.query(`
         UPDATE encounters SET
           status = CASE
+            WHEN $6::boolean THEN 'admitted'
             WHEN $2::int > 0 THEN 'pending-lab'
             WHEN $3::int > 0 THEN 'pending-radiology'
             WHEN $4::int > 0 THEN 'pending-pharmacy'
             ELSE 'waiting'
           END,
+          encounter_type = CASE WHEN $6::boolean THEN 'inpatient' ELSE encounter_type END,
           consultation_completed = TRUE,
           consultation_end_time = COALESCE(consultation_end_time, NOW()),
           has_pending_orders = $1,
           pending_lab_orders = $2,
           pending_radiology_orders = $3,
           pending_prescriptions = $4,
-          all_services_completed = NOT $1,
+          all_services_completed = NOT $1 AND NOT $6::boolean,
           updated_at = NOW()
         WHERE id = $5
       `, [
@@ -476,19 +537,20 @@ router.post('/',
         pendingCounts.lab,
         pendingCounts.radiology,
         pendingCounts.pharmacy,
-        encounterId
+        encounterId,
+        isAdmitted
       ]);
 
       await db.query(`
         UPDATE appointments
-        SET status = CASE WHEN $2 THEN 'in-progress' ELSE 'completed' END,
-            completed_at = CASE WHEN $2 THEN NULL ELSE COALESCE(completed_at, NOW()) END,
+        SET status = CASE WHEN $2 OR $3 THEN 'in-progress' ELSE 'completed' END,
+            completed_at = CASE WHEN $2 OR $3 THEN NULL ELSE COALESCE(completed_at, NOW()) END,
             updated_at = NOW()
         WHERE id = (
           SELECT appointment_id FROM encounters WHERE id = $1
         )
           AND status IN ('checked-in', 'in-progress')
-      `, [encounterId, hasPendingOrders]);
+      `, [encounterId, hasPendingOrders, isAdmitted]);
 
       // 6. Update consultation queue entry status
       await db.query(`
@@ -498,17 +560,22 @@ router.post('/',
         WHERE encounter_id = $1 AND queue_type = 'consultation' AND status != 'completed'
       `, [encounterId]);
 
-      if (hasPendingOrders) {
+      if (hasPendingOrders || isAdmitted) {
         // Cashier handoff is deferred until diagnostics have returned to the
         // clinician and every final service has been completed.
         await db.query(`
           UPDATE queue_entries
           SET status = 'deferred', updated_at = NOW(),
-              notes = CONCAT_WS(' ', NULLIF(notes, ''), 'Awaiting clinical services.')
+              notes = CONCAT_WS(
+                ' ',
+                NULLIF(notes, ''),
+                CASE WHEN $2::boolean THEN 'Patient admitted; billing resumes at discharge.'
+                     ELSE 'Awaiting clinical services.' END
+              )
           WHERE encounter_id = $1
             AND queue_type = 'billing'
             AND status IN ('waiting', 'called', 'in-service')
-        `, [encounterId]);
+        `, [encounterId, isAdmitted]);
       } else {
         const billingInsert = await db.query(`
           INSERT INTO queue_entries (
@@ -554,7 +621,8 @@ router.post('/',
         data: {
           consultationId,
           consultationDate: consultationResult.rows[0].consultation_date,
-          orders: createdOrders
+          orders: createdOrders,
+          admission: createdAdmission
         },
         message: 'Consultation completed and orders created successfully'
       });
@@ -587,7 +655,7 @@ router.get(
       const { encounterId } = req.params;
       const db = getDB();
 
-      const [triage, consultations, labResults, radiologyResults, prescriptions] = await Promise.all([
+      const [triage, consultations, labResults, radiologyResults, prescriptions, admissions, attachments] = await Promise.all([
         db.query(`
           SELECT ta.*, CONCAT(s.first_name, ' ', s.last_name) AS performed_by_name
           FROM triage_assessments ta
@@ -598,9 +666,19 @@ router.get(
         db.query(`
           SELECT
             cr.id, cr.consultation_date, cr.status,
-            cr.chief_complaint, cr.provisional_diagnosis,
+            cr.blood_pressure, cr.temperature, cr.pulse, cr.respiratory_rate,
+            cr.oxygen_saturation, cr.weight, cr.height, cr.bmi,
+            cr.chief_complaint, cr.history_present_illness,
+            cr.past_medical_history, cr.family_history, cr.social_history,
+            cr.allergies, cr.current_medications,
+            cr.general_appearance, cr.cardiovascular_exam,
+            cr.respiratory_exam, cr.abdominal_exam, cr.neurological_exam,
+            cr.musculoskeletal_exam, cr.skin_exam, cr.other_findings,
+            cr.provisional_diagnosis,
             cr.differential_diagnosis, cr.final_diagnosis,
             cr.treatment_plan, cr.follow_up_instructions,
+            cr.clinical_outcome, cr.investigation_reason,
+            cr.patient_disposition, cr.admission_id,
             CONCAT(s.first_name, ' ', s.last_name) AS doctor_name
           FROM consultation_records cr
           JOIN staff s ON s.id = cr.doctor_id
@@ -652,6 +730,34 @@ router.get(
           JOIN drugs d ON d.id = pi.drug_id
           WHERE p.encounter_id = $1
           ORDER BY p.prescription_date DESC, d.generic_name
+        `, [encounterId]),
+        db.query(`
+          SELECT
+            a.id, a.admission_number, a.admission_date,
+            a.expected_discharge_date, a.actual_discharge_date,
+            a.admission_type, a.reason_for_admission, a.diagnosis,
+            a.status, w.ward_name, b.bed_number,
+            CONCAT(s.first_name, ' ', s.last_name) AS admitting_doctor_name
+          FROM admissions a
+          JOIN wards w ON w.id = a.ward_id
+          JOIN beds b ON b.id = a.bed_id
+          JOIN staff s ON s.id = a.admitting_doctor_id
+          WHERE a.encounter_id = $1
+          ORDER BY a.admission_date DESC
+        `, [encounterId]),
+        db.query(`
+          SELECT
+            fa.id, fa.file_name, fa.file_size, fa.mime_type,
+            fa.description, fa.tags, fa.upload_date,
+            fa.medical_record_id, fa.lab_order_id,
+            fa.radiology_order_id, fa.prescription_id, fa.admission_id,
+            fa.detected_mime_type, fa.malware_scan_status,
+            au.display_name AS uploaded_by_name
+          FROM file_attachments fa
+          LEFT JOIN app_users au ON au.id = fa.uploaded_by
+          WHERE fa.encounter_id = $1
+            AND fa.is_active = TRUE
+          ORDER BY fa.upload_date DESC
         `, [encounterId])
       ]);
 
@@ -662,7 +768,9 @@ router.get(
           consultations: consultations.rows,
           labResults: labResults.rows,
           radiologyResults: radiologyResults.rows,
-          prescriptions: prescriptions.rows
+          prescriptions: prescriptions.rows,
+          admissions: admissions.rows,
+          attachments: attachments.rows
         }
       });
     } catch (error) {

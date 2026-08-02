@@ -8,6 +8,7 @@ import { SettingsProvider } from './contexts/SettingsContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { RUNTIME_CONFIG } from './config/runtime';
+import './printStyles.css';
 
 // Axios errors can include request payloads and response bodies. Keep clinical
 // data out of production browser consoles until a redacting telemetry sink is

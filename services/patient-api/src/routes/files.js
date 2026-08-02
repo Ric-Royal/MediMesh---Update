@@ -18,8 +18,8 @@ const { auditLogger } = require('../utils/logger');
 const FileAttachment = require('../models/FileAttachment');
 const { getDB } = require('../utils/database');
 const {
+  findEncounterAccess,
   findPatientAccess,
-  requirePatientResourceAccess
 } = require('../security/accessControl');
 const { inspectFile } = require('../security/fileInspection');
 
@@ -53,6 +53,11 @@ const uploadMetadataSchema = Joi.object({
   category: Joi.string().valid('medical-records', 'patient-documents', 'system-files').required(),
   recordId: Joi.string().uuid().optional(),
   patientId: Joi.string().uuid().optional(),
+  encounterId: Joi.string().uuid().optional(),
+  labOrderId: Joi.string().uuid().optional(),
+  radiologyOrderId: Joi.string().uuid().optional(),
+  prescriptionId: Joi.number().integer().positive().optional(),
+  admissionId: Joi.string().uuid().optional(),
   description: Joi.string().max(500).optional(),
   tags: Joi.array().items(Joi.string().max(50)).optional(),
   isPrivate: Joi.boolean().default(false)
@@ -61,6 +66,8 @@ const uploadMetadataSchema = Joi.object({
 const fileParamsSchema = Joi.object({
   fileId: Joi.string().uuid().required()
 });
+
+const FILE_ROLES = ['doctor', 'nurse', 'lab-tech', 'radiologist', 'radiographer', 'pharmacist', 'admin'];
 
 const CATEGORY_BUCKETS = Object.freeze({
   'medical-records': BUCKETS.medical_records,
@@ -102,6 +109,86 @@ const resolveStorageLocation = (attachment) => {
 const isAdmin = (req) => (req.user?.roles || []).includes('admin');
 const isOwner = (req, attachment) => String(req.user?.id || '') === String(attachment.uploaded_by || '');
 
+class FileContextError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.status = status;
+  }
+}
+
+const resolveFileContext = async (metadata) => {
+  const lookups = [
+    ['recordId', 'medical_records', 'id', 'patient_id', 'encounter_id', 'deleted_at IS NULL'],
+    ['labOrderId', 'lab_orders', 'id', 'patient_id', 'encounter_id', null],
+    ['radiologyOrderId', 'radiology_orders', 'id', 'patient_id', 'encounter_id', null],
+    ['prescriptionId', 'prescriptions', 'id', 'patient_id', 'encounter_id', null],
+    ['admissionId', 'admissions', 'id', 'patient_id', 'encounter_id', null],
+  ];
+  const resolved = [];
+  for (const [key, table, idColumn, patientColumn, encounterColumn, condition] of lookups) {
+    if (!metadata[key]) continue;
+    const result = await getDB().query(
+      `SELECT ${patientColumn} AS patient_id, ${encounterColumn} AS encounter_id
+       FROM ${table} WHERE ${idColumn} = $1${condition ? ` AND ${condition}` : ''}`,
+      [metadata[key]]
+    );
+    if (!result.rows.length) throw new FileContextError(`${key} was not found`, 404);
+    resolved.push(result.rows[0]);
+  }
+  if (metadata.encounterId) {
+    const encounter = await getDB().query(
+      'SELECT patient_id, id AS encounter_id FROM encounters WHERE id = $1',
+      [metadata.encounterId]
+    );
+    if (!encounter.rows.length) throw new FileContextError('Encounter was not found', 404);
+    resolved.push(encounter.rows[0]);
+  }
+
+  const patientIds = new Set([
+    ...(metadata.patientId ? [metadata.patientId] : []),
+    ...resolved.map(item => item.patient_id).filter(Boolean)
+  ]);
+  const encounterIds = new Set([
+    ...(metadata.encounterId ? [metadata.encounterId] : []),
+    ...resolved.map(item => item.encounter_id).filter(Boolean)
+  ]);
+  if (patientIds.size > 1 || encounterIds.size > 1) {
+    throw new FileContextError('The supplied patient, encounter, and clinical record contexts do not match', 409);
+  }
+  return {
+    patientId: [...patientIds][0] || null,
+    encounterId: [...encounterIds][0] || null
+  };
+};
+
+const hasFileContextAccess = async (req, context) => {
+  if (isAdmin(req)) return true;
+  if (context.encounterId) {
+    return Boolean(await findEncounterAccess(req.user, context.encounterId, 'clinical'));
+  }
+  return Boolean(context.patientId && await findPatientAccess(req.user, context.patientId, 'clinical'));
+};
+
+const requireFileAccess = async (req, res, next) => {
+  try {
+    const attachment = await FileAttachment.findById(req.params.fileId);
+    if (!attachment) return res.status(404).json({ error: 'File not found' });
+    if (attachment.category === 'system-files') {
+      if (!isAdmin(req) && !isOwner(req, attachment)) return res.status(403).json({ error: 'Access denied' });
+    } else if (!await hasFileContextAccess(req, {
+      patientId: attachment.patient_id,
+      encounterId: attachment.encounter_id
+    })) {
+      return res.status(403).json({ error: 'Patient file access denied' });
+    }
+    req.fileAttachment = attachment;
+    return next();
+  } catch (error) {
+    logger.error('File authorization failed', { error: error.message, fileId: req.params.fileId });
+    return res.status(503).json({ error: 'Unable to verify file access' });
+  }
+};
+
 const safeContentType = (...candidates) => {
   const contentType = candidates
     .map(value => String(value || '').trim())
@@ -139,7 +226,7 @@ const pipeBody = async (body, response) => {
 
 // POST /api/files/upload - Upload files
 router.post('/upload',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(FILE_ROLES),
   upload.array('files', 10),
   async (req, res) => {
     try {
@@ -155,7 +242,15 @@ router.post('/upload',
         fileCount: req.files ? req.files.length : 0
       });
       
-      const { error, value } = uploadMetadataSchema.validate(req.body);
+      const rawMetadata = { ...req.body };
+      if (typeof rawMetadata.tags === 'string') {
+        try {
+          rawMetadata.tags = JSON.parse(rawMetadata.tags);
+        } catch (_error) {
+          rawMetadata.tags = rawMetadata.tags.split(',').map(tag => tag.trim()).filter(Boolean);
+        }
+      }
+      const { error, value } = uploadMetadataSchema.validate(rawMetadata, { abortEarly: false });
       if (error) {
         logger.error('Validation error:', error.details);
         return res.status(400).json({
@@ -164,29 +259,22 @@ router.post('/upload',
         });
       }
 
-      const { category, recordId, patientId, description, tags, isPrivate } = value;
+      const {
+        category, recordId, patientId, encounterId, labOrderId,
+        radiologyOrderId, prescriptionId, admissionId,
+        description, tags, isPrivate
+      } = value;
       if (category === 'system-files' && !isAdmin(req)) {
         return res.status(403).json({ error: 'System files require administrator access' });
       }
 
-      let resolvedPatientId = patientId || null;
-      if (recordId) {
-        const recordResult = await getDB().query(
-          'SELECT patient_id FROM medical_records WHERE id = $1 AND deleted_at IS NULL',
-          [recordId]
-        );
-        if (!recordResult.rows.length) {
-          return res.status(404).json({ error: 'Medical record not found' });
-        }
-        if (resolvedPatientId && resolvedPatientId !== recordResult.rows[0].patient_id) {
-          return res.status(409).json({ error: 'Record and patient context do not match' });
-        }
-        resolvedPatientId = recordResult.rows[0].patient_id;
-      }
+      const resolvedContext = await resolveFileContext(value);
+      const resolvedPatientId = resolvedContext.patientId;
+      const resolvedEncounterId = resolvedContext.encounterId;
       if (category !== 'system-files' && !resolvedPatientId) {
         return res.status(400).json({ error: 'Patient context is required for health files' });
       }
-      if (resolvedPatientId && !await findPatientAccess(req.user, resolvedPatientId, 'clinical')) {
+      if (category !== 'system-files' && !await hasFileContextAccess(req, resolvedContext)) {
         return res.status(403).json({ error: 'Patient file access denied' });
       }
 
@@ -223,6 +311,11 @@ router.post('/upload',
           const fileAttachment = await FileAttachment.create({
             medical_record_id: recordId,
             patient_id: resolvedPatientId,
+            encounter_id: resolvedEncounterId,
+            lab_order_id: labOrderId,
+            radiology_order_id: radiologyOrderId,
+            prescription_id: prescriptionId,
+            admission_id: admissionId,
             file_name: file.originalname,
             file_type: file.mimetype,
             file_size: file.size,
@@ -250,6 +343,7 @@ router.post('/upload',
             category,
             recordId,
             patientId: resolvedPatientId,
+            encounterId: resolvedEncounterId,
             timestamp: new Date().toISOString(),
             ip: req.ip
           });
@@ -308,6 +402,9 @@ router.post('/upload',
       });
 
     } catch (error) {
+      if (error instanceof FileContextError) {
+        return res.status(error.status).json({ error: error.message });
+      }
       logger.error('File upload endpoint error:', error);
       res.status(500).json({
         error: 'File upload failed',
@@ -319,11 +416,8 @@ router.post('/upload',
 
 // GET /api/files/:fileId - Download file
 router.get('/:fileId([0-9a-fA-F-]{36})',
-  authorize(['doctor', 'nurse', 'admin']),
-  requirePatientResourceAccess({
-    table: 'file_attachments',
-    id: req => req.params.fileId
-  }),
+  authorize(FILE_ROLES),
+  requireFileAccess,
   async (req, res) => {
     try {
       const { error, value } = fileParamsSchema.validate(req.params);
@@ -334,20 +428,9 @@ router.get('/:fileId([0-9a-fA-F-]{36})',
       }
 
       const { fileId } = value;
-      const attachment = await FileAttachment.findById(fileId);
-      if (!attachment) return res.status(404).json({ error: 'File not found' });
+      const attachment = req.fileAttachment;
       if (attachment.malware_scan_status !== 'clean') {
         return res.status(423).json({ error: 'File is quarantined pending security review' });
-      }
-
-      if (attachment.is_private && !isAdmin(req) && !isOwner(req, attachment)) {
-        auditLogger.info('File download denied', {
-          userId: req.user.id,
-          fileId,
-          reason: 'private-file',
-          ip: req.ip
-        });
-        return res.status(403).json({ error: 'Access denied' });
       }
 
       const { bucket, key } = resolveStorageLocation(attachment);
@@ -390,10 +473,13 @@ router.get('/:fileId([0-9a-fA-F-]{36})',
 
 // GET /api/files - List files
 router.get('/',
-  authorize(['doctor', 'nurse', 'admin']),
+  authorize(FILE_ROLES),
   async (req, res) => {
     try {
-      const { category, patientId, recordId, limit = 50 } = req.query;
+      const {
+        category, patientId, recordId, encounterId, labOrderId,
+        radiologyOrderId, prescriptionId, admissionId, limit = 50
+      } = req.query;
 
       // Validate query parameters
       const validCategories = ['medical-records', 'patient-documents', 'system-files'];
@@ -403,34 +489,20 @@ router.get('/',
         });
       }
 
-      let files = [];
-      let resolvedPatientId = patientId || null;
-      if (recordId) {
-        const recordResult = await getDB().query(
-          'SELECT patient_id FROM medical_records WHERE id = $1 AND deleted_at IS NULL',
-          [recordId]
-        );
-        if (!recordResult.rows.length) return res.status(404).json({ error: 'Medical record not found' });
-        resolvedPatientId = recordResult.rows[0].patient_id;
+      const filters = {
+        patientId, recordId, encounterId, labOrderId,
+        radiologyOrderId, prescriptionId, admissionId, limit
+      };
+      const resolvedContext = await resolveFileContext(filters);
+      if (!isAdmin(req) && !resolvedContext.patientId) {
+        return res.status(400).json({ error: 'Patient, encounter, or clinical record context is required' });
       }
-      if (!isAdmin(req) && !resolvedPatientId) {
-        return res.status(400).json({ error: 'Patient or medical record context is required' });
-      }
-      if (resolvedPatientId && !await findPatientAccess(req.user, resolvedPatientId, 'clinical')) {
+      if (resolvedContext.patientId && !await hasFileContextAccess(req, resolvedContext)) {
         return res.status(403).json({ error: 'Patient file access denied' });
       }
 
-      // Get files from database based on filters
-      if (recordId) {
-        files = await FileAttachment.findByRecordId(recordId);
-      } else if (patientId) {
-        files = await FileAttachment.findByPatientId(patientId);
-      } else if (category) {
-        files = await FileAttachment.findByCategory(category, { limit: parseInt(limit) });
-      } else {
-        // Get all files with limit
-        files = await FileAttachment.findByCategory('medical-records', { limit: parseInt(limit) });
-      }
+      let files = await FileAttachment.findByContext(filters);
+      if (category) files = files.filter(file => file.category === category);
 
       // Format response
       const formattedFiles = files.map(file => ({
@@ -443,7 +515,14 @@ router.get('/',
         tags: file.tags ? file.tags.split(',') : [],
         isPrivate: file.is_private,
         uploadDate: file.upload_date,
-        uploadedBy: file.uploaded_by
+        uploadedBy: file.uploaded_by,
+        encounterId: file.encounter_id,
+        recordId: file.medical_record_id,
+        labOrderId: file.lab_order_id,
+        radiologyOrderId: file.radiology_order_id,
+        prescriptionId: file.prescription_id,
+        admissionId: file.admission_id,
+        malwareScanStatus: file.malware_scan_status
       }));
 
       logger.info('Files listed', {
@@ -451,6 +530,7 @@ router.get('/',
         category,
         patientId,
         recordId,
+        encounterId,
         count: formattedFiles.length
       });
 
@@ -462,6 +542,9 @@ router.get('/',
       });
 
     } catch (error) {
+      if (error instanceof FileContextError) {
+        return res.status(error.status).json({ error: error.message });
+      }
       logger.error('File listing error:', error);
       res.status(500).json({
         error: 'Failed to list files',
@@ -474,10 +557,7 @@ router.get('/',
 // DELETE /api/files/:fileId - Delete file
 router.delete('/:fileId([0-9a-fA-F-]{36})',
   authorize(['admin']),
-  requirePatientResourceAccess({
-    table: 'file_attachments',
-    id: req => req.params.fileId
-  }),
+  requireFileAccess,
   async (req, res) => {
     try {
       const { error, value } = fileParamsSchema.validate(req.params);

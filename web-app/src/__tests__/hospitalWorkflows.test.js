@@ -6,6 +6,14 @@ import PharmacyPage from '../pages/PharmacyPage';
 import RadiologyPage from '../pages/RadiologyPage';
 import AddPatientToQueueDialog from '../components/queue/AddPatientToQueueDialog';
 
+jest.mock('../contexts/SettingsContext', () => ({
+  useSettings: () => ({ getSystemSetting: (_key, fallback) => fallback }),
+}));
+
+jest.mock('../contexts/AuthContext', () => ({
+  useAuth: () => ({ hasRole: () => true }),
+}));
+
 const jsonResponse = (body, ok = true) => Promise.resolve({
   ok,
   status: ok ? 200 : 500,

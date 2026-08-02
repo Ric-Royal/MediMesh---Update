@@ -63,7 +63,14 @@ router.get(
       SELECT 
         b.*,
         a.admission_number,
+        a.id as admission_id,
+        a.encounter_id,
         a.admission_date,
+        a.expected_discharge_date,
+        a.admission_type,
+        a.reason_for_admission,
+        a.diagnosis,
+        a.payment_type,
         a.status as admission_status,
         p.first_name,
         p.last_name,
@@ -73,7 +80,7 @@ router.get(
       FROM beds b
       LEFT JOIN admissions a ON b.id = a.bed_id AND a.status IN ('admitted', 'under-care')
       LEFT JOIN patients p ON a.patient_id = p.id
-      LEFT JOIN staff s ON b.assigned_doctor_id = s.id
+      LEFT JOIN staff s ON a.admitting_doctor_id = s.id
       WHERE b.ward_id = $1 AND b.is_active = true
       ORDER BY b.bed_number
     `;

@@ -8,6 +8,8 @@ class MedicalRecord {
   constructor(data) {
     this.id = data.id;
     this.patient_id = data.patient_id;
+    this.encounter_id = data.encounter_id;
+    this.consultation_record_id = data.consultation_record_id;
     this.record_type = data.record_type;
     this.record_date = data.record_date;
     this.provider_name = data.provider_name;
@@ -169,16 +171,19 @@ class MedicalRecord {
 
       const query = `
         INSERT INTO medical_records (
-          id, patient_id, record_type, record_date, provider_name,
+          id, patient_id, encounter_id, consultation_record_id,
+          record_type, record_date, provider_name,
           diagnosis, treatment_plan, medications, lab_results, notes, 
           vital_signs, follow_up_date, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING *
       `;
 
       const values = [
         id,
         data.patient_id,
+        data.encounter_id || null,
+        data.consultation_record_id || null,
         data.record_type,
         data.record_date,
         data.provider_name,
@@ -355,6 +360,8 @@ class MedicalRecord {
     return {
       id: this.id,
       patient_id: this.patient_id,
+      encounter_id: this.encounter_id,
+      consultation_record_id: this.consultation_record_id,
       patient_info: this.patient_info,
       record_type: this.record_type,
       record_date: this.record_date,

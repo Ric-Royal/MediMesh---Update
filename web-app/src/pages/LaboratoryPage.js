@@ -15,6 +15,9 @@ import {
 } from '@mui/icons-material';
 import API_CONFIG from '../config/api';
 import { useNotification } from '../contexts/NotificationContext';
+import FileUpload from '../components/common/FileUpload';
+import FilePreview from '../components/common/FilePreview';
+import { printClinicalDocument } from '../utils/printClinicalDocument';
 
 const LaboratoryPage = () => {
   const { notifySuccess, notifyError } = useNotification();
@@ -26,6 +29,7 @@ const LaboratoryPage = () => {
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [results, setResults] = useState({});
   const [statistics, setStatistics] = useState({});
+  const [attachmentRefresh, setAttachmentRefresh] = useState(0);
 
   // Fetch lab orders
   const fetchOrders = useCallback(async (status = 'pending') => {
@@ -364,7 +368,16 @@ const LaboratoryPage = () => {
                             >
                               <VisibilityIcon />
                             </IconButton>
-                            <IconButton size="small" color="primary">
+                            <IconButton
+                              size="small"
+                              color="primary"
+                              onClick={async () => {
+                                await handleViewOrder(order);
+                                window.setTimeout(() => {
+                                  try { printClinicalDocument(); } catch (error) { notifyError(error.message); }
+                                }, 250);
+                              }}
+                            >
                               <PrintIcon />
                             </IconButton>
                           </>
@@ -437,6 +450,27 @@ const LaboratoryPage = () => {
           ) : (
             <Alert severity="info">No test items found for this order.</Alert>
           )}
+          {selectedOrder && (
+            <Box sx={{ mt: 3 }}>
+              <Divider sx={{ mb: 3 }} />
+              <FileUpload
+                patientId={selectedOrder.patient_id}
+                encounterId={selectedOrder.encounter_id}
+                labOrderId={selectedOrder.id}
+                label="Upload laboratory result documents"
+                description="Attach analyzer reports, scanned worksheets, PDFs, images, CSV or text evidence."
+                onUploadSuccess={() => setAttachmentRefresh(value => value + 1)}
+                onUploadError={uploadError => notifyError(uploadError?.message || 'File upload failed')}
+              />
+              <FilePreview
+                patientId={selectedOrder.patient_id}
+                encounterId={selectedOrder.encounter_id}
+                labOrderId={selectedOrder.id}
+                refreshKey={attachmentRefresh}
+                allowDelete={false}
+              />
+            </Box>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setResultsDialogOpen(false)}>Cancel</Button>
@@ -447,7 +481,13 @@ const LaboratoryPage = () => {
       </Dialog>
 
       {/* View Order Dialog */}
-      <Dialog open={viewDialogOpen} onClose={() => setViewDialogOpen(false)} maxWidth="md" fullWidth>
+      <Dialog
+        open={viewDialogOpen}
+        onClose={() => setViewDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{ 'data-print-document': true }}
+      >
         <DialogTitle>
           Lab Order Details - {selectedOrder?.order_number}
         </DialogTitle>
@@ -505,12 +545,37 @@ const LaboratoryPage = () => {
                   </Grid>
                 </Box>
               ))}
+              <Divider sx={{ my: 3 }} />
+              <Typography variant="h6" gutterBottom>Attached result documents</Typography>
+              <FileUpload
+                patientId={selectedOrder.patient_id}
+                encounterId={selectedOrder.encounter_id}
+                labOrderId={selectedOrder.id}
+                label="Add laboratory result document"
+                description="Attach supporting evidence without changing the released result values."
+                onUploadSuccess={() => setAttachmentRefresh(value => value + 1)}
+                onUploadError={uploadError => notifyError(uploadError?.message || 'File upload failed')}
+              />
+              <FilePreview
+                patientId={selectedOrder.patient_id}
+                encounterId={selectedOrder.encounter_id}
+                labOrderId={selectedOrder.id}
+                refreshKey={attachmentRefresh}
+                allowDelete={false}
+              />
             </Box>
           )}
         </DialogContent>
-        <DialogActions>
+        <DialogActions data-print-actions>
           <Button onClick={() => setViewDialogOpen(false)}>Close</Button>
-          <Button variant="contained" color="primary" startIcon={<PrintIcon />}>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<PrintIcon />}
+            onClick={() => {
+              try { printClinicalDocument(); } catch (error) { notifyError(error.message); }
+            }}
+          >
             Print Report
           </Button>
         </DialogActions>

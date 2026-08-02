@@ -24,10 +24,13 @@ import LabTestsSelector from './LabTestsSelector';
 import RadiologyStudiesSelector from './RadiologyStudiesSelector';
 import MedicationsSelector from './MedicationsSelector';
 import ClinicalContextSection from './ClinicalContextSection';
+import AdmissionSection from './AdmissionSection';
 import {
   CLINICAL_OUTCOMES,
   buildConsultationPayload,
+  createInitialConsultationForm,
   formatConsultationApiError,
+  mergeClinicalContextIntoForm,
   validateConsultationForm,
 } from '../../utils/consultationWorkflow';
 
@@ -42,52 +45,17 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
   const isResultsReview = queueEntry?.service_type === 'results-review';
   
   // Form data state
-  const [formData, setFormData] = useState({
-    // Vitals
-    vitals: {
-      bloodPressure: '',
-      temperature: '',
-      pulse: '',
-      respiratoryRate: '',
-      oxygenSaturation: '',
-      weight: '',
-      height: '',
-      bmi: '',
-    },
-    // Clinical Information
-    chiefComplaint: encounter?.chief_complaint || '',
-    historyPresentIllness: '',
-    pastMedicalHistory: '',
-    familyHistory: '',
-    socialHistory: '',
-    allergies: '',
-    currentMedications: '',
-    // Physical Examination
-    examination: {
-      generalAppearance: '',
-      cardiovascular: '',
-      respiratory: '',
-      abdominal: '',
-      neurological: '',
-      musculoskeletal: '',
-      skin: '',
-      other: '',
-    },
-    // Assessment and Plan
-    provisionalDiagnosis: '',
-    differentialDiagnosis: '',
-    finalDiagnosis: '',
-    treatmentPlan: '',
-    followUpInstructions: '',
-    clinicalOutcome: '',
-    investigationReason: '',
-    // Orders
-    labOrders: [],
-    radiologyOrders: [],
-    prescriptions: [],
-  });
+  const [formData, setFormData] = useState(() => createInitialConsultationForm(encounter));
 
   const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    if (!open) return;
+    setFormData(createInitialConsultationForm(encounter));
+    setClinicalContext(null);
+    setErrors({});
+    setActiveTab(0);
+  }, [encounter?.id, open]);
 
   useEffect(() => {
     if (!open || !encounter?.id) return;
@@ -100,7 +68,12 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
       .then(async response => {
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Unable to load clinical context');
-        if (active) setClinicalContext(result.data);
+        if (active) {
+          setClinicalContext(result.data);
+          setFormData(current => mergeClinicalContextIntoForm(current, result.data, {
+            resultsReview: isResultsReview,
+          }));
+        }
       })
       .catch(error => {
         if (active) setContextError(error.message);
@@ -109,7 +82,7 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
         if (active) setContextLoading(false);
       });
     return () => { active = false; };
-  }, [encounter?.id, open]);
+  }, [encounter?.id, isResultsReview, open]);
 
   // Calculate BMI when weight or height changes
   useEffect(() => {
@@ -200,6 +173,10 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
     setFormData(prev => ({ ...prev, prescriptions }));
   };
 
+  const handleAdmissionChange = ({ patientDisposition, admission }) => {
+    setFormData(prev => ({ ...prev, patientDisposition, admission }));
+  };
+
   const validateForm = () => {
     const newErrors = validateConsultationForm(formData);
     setErrors(newErrors);
@@ -250,6 +227,9 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
       if (result.data.orders.prescriptions.length > 0) {
         ordersCreated.push(`Prescription: ${result.data.orders.prescriptions[0].prescriptionNumber}`);
       }
+      if (result.data.admission?.admission_number) {
+        ordersCreated.push(`Admission: ${result.data.admission.admission_number}`);
+      }
 
       if (ordersCreated.length > 0) {
         message += '\n\nOrders Created:\n' + ordersCreated.join('\n');
@@ -281,11 +261,8 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
     { label: 'Diagnosis & Plan', component: DiagnosisSection },
     { label: 'Order Lab Tests', component: LabTestsSelector },
     { label: 'Order Imaging', component: RadiologyStudiesSelector },
-    {
-      label: canPrescribe ? 'Prescribe Medication' : 'Medication (after final diagnosis)',
-      component: MedicationsSelector,
-      disabled: !canPrescribe,
-    },
+    { label: 'Medication', component: MedicationsSelector },
+    { label: 'Disposition & Admission', component: AdmissionSection },
   ];
 
   return (
@@ -393,6 +370,7 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
         <Box sx={{ minHeight: 400 }}>
           {activeTab === 0 && (
             <ClinicalContextSection
+              encounterId={encounter?.id}
               context={clinicalContext}
               loading={contextLoading}
               error={contextError}
@@ -434,6 +412,15 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
             <MedicationsSelector
               selectedMedications={formData.prescriptions}
               onChange={handlePrescriptionsChange}
+              canPrescribe={canPrescribe}
+            />
+          )}
+          {activeTab === 6 && (
+            <AdmissionSection
+              patientDisposition={formData.patientDisposition}
+              admission={formData.admission}
+              canAdmit={canPrescribe}
+              onChange={handleAdmissionChange}
             />
           )}
         </Box>
@@ -452,6 +439,9 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
             </Typography>
             <Typography variant="body2">
               Medications: <strong>{formData.prescriptions.length}</strong>
+            </Typography>
+            <Typography variant="body2">
+              Disposition: <strong>{formData.patientDisposition === 'admit' ? 'Ward admission' : 'Outpatient'}</strong>
             </Typography>
           </Box>
         </Paper>
@@ -484,11 +474,15 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
         >
           {loading
             ? 'Saving...'
-            : isResultsReview
-              ? 'Complete Results Review'
-              : (formData.labOrders.length || formData.radiologyOrders.length || formData.prescriptions.length)
+            : formData.patientDisposition === 'admit'
+              ? 'Complete Consultation & Admit'
+              : hasDiagnostics
                 ? 'Submit Orders & Hand Off'
-                : 'Complete Consultation & Send to Billing'}
+                : formData.prescriptions.length
+                  ? 'Complete & Send to Pharmacy'
+                  : isResultsReview
+                    ? 'Complete Results Review & Send to Billing'
+                    : 'Complete Consultation & Send to Billing'}
         </Button>
       </DialogActions>
     </Dialog>

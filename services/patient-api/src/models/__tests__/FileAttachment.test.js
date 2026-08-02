@@ -18,16 +18,16 @@ describe('FileAttachment storage schema compatibility', () => {
         file_key: values[1],
         bucket_name: values[2],
         original_name: values[3],
-        file_name: values[6],
-        file_type: values[7],
-        file_size: values[8],
-        mime_type: values[9],
-        storage_path: values[10],
-        storage_bucket: values[11],
-        storage_key: values[12],
-        category: values[13],
-        is_private: values[16],
-        uploaded_by: values[17],
+        file_name: values[11],
+        file_type: values[12],
+        file_size: values[13],
+        mime_type: values[14],
+        storage_path: values[15],
+        storage_bucket: values[16],
+        storage_key: values[17],
+        category: values[18],
+        is_private: values[21],
+        uploaded_by: values[22],
         is_active: true
       }]
     }));
@@ -47,8 +47,8 @@ describe('FileAttachment storage schema compatibility', () => {
     const [sql, values] = query.mock.calls[0];
     expect(sql).toContain('file_key, bucket_name, original_name');
     expect(values.slice(1, 4)).toEqual([key, bucket, 'file.txt']);
-    expect(values[11]).toBe(bucket);
-    expect(values[12]).toBe(key);
+    expect(values[16]).toBe(bucket);
+    expect(values[17]).toBe(key);
     expect(result.storage_bucket).toBe(bucket);
     expect(result.storage_key).toBe(key);
   });

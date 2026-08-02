@@ -30,6 +30,14 @@ const consultationSchema = Joi.object({
   followUpInstructions: nullableText(8000),
   investigationReason: nullableText(8000),
   clinicalOutcome: Joi.string().valid(...Object.values(CLINICAL_OUTCOMES)).required(),
+  patientDisposition: Joi.string().valid('outpatient', 'admit').default('outpatient'),
+  admission: Joi.object({
+    wardId: orderId,
+    bedId: orderId,
+    admissionType: Joi.string().valid('emergency', 'elective', 'transfer', 'observation', 'day-case').required(),
+    reason: Joi.string().trim().min(3).max(8000).required(),
+    expectedDischargeDate: Joi.date().iso().allow(null)
+  }).allow(null),
   labOrders: Joi.array().max(25).items(Joi.object({
     testId: catalogId,
     testName: nullableText(250),
@@ -116,6 +124,32 @@ function validateConsultationDecision(data) {
     details.push({
       field: 'prescriptions',
       message: 'Remove medication when no treatment is required.'
+    });
+  }
+
+  if (data.patientDisposition === 'admit') {
+    if (data.clinicalOutcome !== CLINICAL_OUTCOMES.DIAGNOSIS_CONFIRMED || !hasText(data.finalDiagnosis)) {
+      details.push({
+        field: 'patientDisposition',
+        message: 'Admission requires a recorded final diagnosis.'
+      });
+    }
+    if (!data.admission) {
+      details.push({
+        field: 'admission',
+        message: 'Select an available ward bed and enter the reason for admission.'
+      });
+    }
+    if (hasDiagnostics) {
+      details.push({
+        field: 'patientDisposition',
+        message: 'Complete the requested investigations and results review before the final admission decision.'
+      });
+    }
+  } else if (data.admission) {
+    details.push({
+      field: 'admission',
+      message: 'Select “Admit to ward” before entering admission details.'
     });
   }
 
