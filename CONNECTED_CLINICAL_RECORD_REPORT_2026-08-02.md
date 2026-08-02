@@ -223,6 +223,34 @@ stored in a new file, or sent outside the computer.
 - No user file, application volume, existing patient, appointment, encounter,
   order, result, prescription, invoice, or admission was removed.
 
+### Final Docker Desktop recovery (3 August 2026)
+
+After all application testing, publication, and GitHub security checks had
+completed, the final read-only Docker status query and local HTTP probe timed
+out. Docker Desktop's Windows processes were present, but its Linux engine and
+the published preview port were temporarily unresponsive after the sustained
+build-and-test workload.
+
+- Three timed-out read-only Docker CLI client processes created by the status
+  probes were stopped. Docker Desktop, its VM, and all container processes were
+  left untouched at that step.
+- A normal `docker desktop restart` was then requested. The client command timed
+  out while the restart continued, and a subsequent status request confirmed
+  that the engine was running again.
+- The existing preview project resumed automatically. PostgreSQL, Redis, MinIO,
+  the malware scanner, patient API, and web application all returned to a
+  running state; every service with a configured health check reported healthy.
+- The web endpoint returned HTTP 200. The patient API's private readiness probe
+  returned HTTP 200 with status `ready`, confirming database, Redis, and object
+  storage connectivity.
+- No image was rebuilt during this recovery, no container or volume was removed,
+  and no data was reset. The already verified application images and persistent
+  volumes were reused.
+
+This recovery produced only local Docker Desktop control traffic and local health
+requests. It did not download a dependency or image and did not send any patient,
+clinical-file, database, log, password, or secret content outside the computer.
+
 ## Kenyan health-data safeguards
 
 These changes support the Data Protection Act, 2019 principles of purpose
