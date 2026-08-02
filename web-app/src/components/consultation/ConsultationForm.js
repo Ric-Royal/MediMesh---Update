@@ -24,6 +24,12 @@ import LabTestsSelector from './LabTestsSelector';
 import RadiologyStudiesSelector from './RadiologyStudiesSelector';
 import MedicationsSelector from './MedicationsSelector';
 import ClinicalContextSection from './ClinicalContextSection';
+import {
+  CLINICAL_OUTCOMES,
+  buildConsultationPayload,
+  formatConsultationApiError,
+  validateConsultationForm,
+} from '../../utils/consultationWorkflow';
 
 const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuccess }) => {
   const { notifySuccess, notifyError } = useNotification();
@@ -73,6 +79,8 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
     finalDiagnosis: '',
     treatmentPlan: '',
     followUpInstructions: '',
+    clinicalOutcome: '',
+    investigationReason: '',
     // Orders
     labOrders: [],
     radiologyOrders: [],
@@ -122,35 +130,78 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
   };
 
   const handleDiagnosisChange = (diagnosis) => {
-    setFormData(prev => ({ ...prev, ...diagnosis }));
+    setFormData(prev => {
+      const next = { ...prev, ...diagnosis };
+      if (prev.prescriptions.length > 0 && (
+        next.clinicalOutcome !== CLINICAL_OUTCOMES.DIAGNOSIS_CONFIRMED ||
+        !next.finalDiagnosis.trim()
+      )) {
+        setErrors(current => ({
+          ...current,
+          prescriptions: 'Remove prescribed medication before clearing the final diagnosis or changing the clinical outcome.'
+        }));
+        return prev;
+      }
+      return next;
+    });
   };
 
   const handleLabOrdersChange = (labOrders) => {
-    setFormData(prev => ({ ...prev, labOrders }));
+    setFormData(prev => {
+      if (labOrders.length > 0 && prev.prescriptions.length > 0) {
+        setErrors(current => ({
+          ...current,
+          prescriptions: 'Remove medication before ordering investigations. Medication is prescribed after results review and final diagnosis.'
+        }));
+        return prev;
+      }
+      return {
+        ...prev,
+        labOrders,
+        clinicalOutcome: labOrders.length > 0 || prev.radiologyOrders.length > 0
+          ? CLINICAL_OUTCOMES.INVESTIGATIONS_PENDING
+          : prev.clinicalOutcome,
+      };
+    });
   };
 
   const handleRadiologyOrdersChange = (radiologyOrders) => {
-    setFormData(prev => ({ ...prev, radiologyOrders }));
+    setFormData(prev => {
+      if (radiologyOrders.length > 0 && prev.prescriptions.length > 0) {
+        setErrors(current => ({
+          ...current,
+          prescriptions: 'Remove medication before ordering investigations. Medication is prescribed after results review and final diagnosis.'
+        }));
+        return prev;
+      }
+      return {
+        ...prev,
+        radiologyOrders,
+        clinicalOutcome: radiologyOrders.length > 0 || prev.labOrders.length > 0
+          ? CLINICAL_OUTCOMES.INVESTIGATIONS_PENDING
+          : prev.clinicalOutcome,
+      };
+    });
   };
 
   const handlePrescriptionsChange = (prescriptions) => {
+    if (prescriptions.length > 0 && (
+      formData.clinicalOutcome !== CLINICAL_OUTCOMES.DIAGNOSIS_CONFIRMED ||
+      !formData.finalDiagnosis.trim() ||
+      formData.labOrders.length > 0 ||
+      formData.radiologyOrders.length > 0
+    )) {
+      setErrors(current => ({
+        ...current,
+        prescriptions: 'Medication becomes available after a final diagnosis and after any investigations are complete.'
+      }));
+      return;
+    }
     setFormData(prev => ({ ...prev, prescriptions }));
   };
 
   const validateForm = () => {
-    const newErrors = {};
-
-    // At least one of the following must be filled
-    if (!formData.provisionalDiagnosis && !formData.finalDiagnosis) {
-      newErrors.diagnosis = 'Please enter at least a provisional or final diagnosis';
-    }
-
-    // If ordering services, must have a diagnosis
-    if ((formData.labOrders.length > 0 || formData.radiologyOrders.length > 0 || formData.prescriptions.length > 0) 
-        && !formData.provisionalDiagnosis && !formData.finalDiagnosis) {
-      newErrors.orders = 'Diagnosis required when ordering services';
-    }
-
+    const newErrors = validateConsultationForm(formData);
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -164,22 +215,12 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
     setLoading(true);
 
     try {
-      const {
-        vitals,
-        historyPresentIllness,
-        pastMedicalHistory,
-        familyHistory,
-        socialHistory,
-        allergies,
-        currentMedications,
-        ...doctorOwnedData
-      } = formData;
-      const payload = {
-        encounterId: encounter.id,
-        patientId: patient.id,
-        doctorId: encounter.doctor_id || user?.id,
-        ...doctorOwnedData,
-      };
+      const payload = buildConsultationPayload({
+        formData,
+        encounter,
+        patient,
+        doctorId: user?.id,
+      });
 
 
       const response = await fetch(API_CONFIG.endpoints.consultations, {
@@ -190,7 +231,7 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || 'Failed to create consultation');
+        throw new Error(formatConsultationApiError(error));
       }
 
       const result = await response.json();
@@ -229,13 +270,22 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
     }
   };
 
+  const hasDiagnostics = formData.labOrders.length > 0 || formData.radiologyOrders.length > 0;
+  const canPrescribe = !hasDiagnostics &&
+    formData.clinicalOutcome === CLINICAL_OUTCOMES.DIAGNOSIS_CONFIRMED &&
+    formData.finalDiagnosis.trim().length > 0;
+
   const tabs = [
     { label: isResultsReview ? 'Results & Triage' : 'Triage Summary', component: ClinicalContextSection },
     { label: 'Examination', component: ExaminationSection },
     { label: 'Diagnosis & Plan', component: DiagnosisSection },
     { label: 'Order Lab Tests', component: LabTestsSelector },
     { label: 'Order Imaging', component: RadiologyStudiesSelector },
-    { label: 'Prescribe Medication', component: MedicationsSelector },
+    {
+      label: canPrescribe ? 'Prescribe Medication' : 'Medication (after final diagnosis)',
+      component: MedicationsSelector,
+      disabled: !canPrescribe,
+    },
   ];
 
   return (
@@ -260,16 +310,11 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
       </DialogTitle>
 
       <DialogContent dividers>
-        {errors.diagnosis && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {errors.diagnosis}
+        {[...new Set(Object.values(errors))].map(message => (
+          <Alert key={message} severity="error" sx={{ mb: 2 }}>
+            {message}
           </Alert>
-        )}
-        {errors.orders && (
-          <Alert severity="error" sx={{ mb: 2 }}>
-            {errors.orders}
-          </Alert>
-        )}
+        ))}
 
         <Tabs
           value={activeTab}
@@ -281,6 +326,7 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
           {tabs.map((tab, index) => (
             <Tab 
               key={index} 
+              disabled={tab.disabled}
               label={
                 <Box display="flex" alignItems="center" gap={1}>
                   {tab.label}
@@ -366,6 +412,9 @@ const ConsultationForm = ({ open, onClose, encounter, patient, queueEntry, onSuc
               finalDiagnosis={formData.finalDiagnosis}
               treatmentPlan={formData.treatmentPlan}
               followUpInstructions={formData.followUpInstructions}
+              clinicalOutcome={formData.clinicalOutcome}
+              investigationReason={formData.investigationReason}
+              hasDiagnostics={hasDiagnostics}
               onChange={handleDiagnosisChange}
             />
           )}

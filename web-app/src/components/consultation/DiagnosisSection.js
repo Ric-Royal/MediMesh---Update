@@ -5,7 +5,12 @@ import {
   Typography,
   Box,
   Alert,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
+import { CLINICAL_OUTCOMES } from '../../utils/consultationWorkflow';
 
 const DiagnosisSection = ({
   provisionalDiagnosis,
@@ -13,6 +18,9 @@ const DiagnosisSection = ({
   finalDiagnosis,
   treatmentPlan,
   followUpInstructions,
+  clinicalOutcome,
+  investigationReason,
+  hasDiagnostics,
   onChange,
 }) => {
   const handleChange = (field, value) => {
@@ -22,6 +30,8 @@ const DiagnosisSection = ({
       finalDiagnosis: field === 'finalDiagnosis' ? value : finalDiagnosis,
       treatmentPlan: field === 'treatmentPlan' ? value : treatmentPlan,
       followUpInstructions: field === 'followUpInstructions' ? value : followUpInstructions,
+      clinicalOutcome: field === 'clinicalOutcome' ? value : clinicalOutcome,
+      investigationReason: field === 'investigationReason' ? value : investigationReason,
     });
   };
 
@@ -32,15 +42,52 @@ const DiagnosisSection = ({
       </Typography>
 
       <Alert severity="info" sx={{ mb: 3 }}>
-        <strong>Required:</strong> At least one diagnosis (provisional or final) must be entered before ordering services.
+        A final diagnosis is not required to request investigations. Record the clinical reason,
+        then review the results before prescribing medication.
       </Alert>
 
       <Grid container spacing={3}>
         <Grid item xs={12}>
+          <FormControl fullWidth required>
+            <InputLabel>Clinical Outcome</InputLabel>
+            <Select
+              value={clinicalOutcome}
+              onChange={(e) => handleChange('clinicalOutcome', e.target.value)}
+              label="Clinical Outcome"
+            >
+              <MenuItem value={CLINICAL_OUTCOMES.INVESTIGATIONS_PENDING}>
+                Awaiting laboratory or imaging results
+              </MenuItem>
+              <MenuItem value={CLINICAL_OUTCOMES.DIAGNOSIS_CONFIRMED} disabled={hasDiagnostics}>
+                Final diagnosis established
+              </MenuItem>
+              <MenuItem value={CLINICAL_OUTCOMES.NO_TREATMENT_REQUIRED} disabled={hasDiagnostics}>
+                No treatment or medication required
+              </MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+
+        {(hasDiagnostics || clinicalOutcome === CLINICAL_OUTCOMES.INVESTIGATIONS_PENDING) && (
+          <Grid item xs={12}>
+            <TextField
+              fullWidth
+              required
+              label="Reason for Investigation"
+              value={investigationReason}
+              onChange={(e) => handleChange('investigationReason', e.target.value)}
+              multiline
+              rows={2}
+              placeholder="Symptoms, examination findings, clinical impression, or question to be answered..."
+              helperText="A clinical indication is required; a confirmed diagnosis is not."
+            />
+          </Grid>
+        )}
+
+        <Grid item xs={12}>
           <TextField
             fullWidth
-            required
-            label="Provisional Diagnosis"
+            label="Provisional Diagnosis or Clinical Impression"
             value={provisionalDiagnosis}
             onChange={(e) => handleChange('provisionalDiagnosis', e.target.value)}
             multiline
@@ -66,6 +113,7 @@ const DiagnosisSection = ({
         <Grid item xs={12}>
           <TextField
             fullWidth
+            required={clinicalOutcome === CLINICAL_OUTCOMES.DIAGNOSIS_CONFIRMED}
             label="Final Diagnosis"
             value={finalDiagnosis}
             onChange={(e) => handleChange('finalDiagnosis', e.target.value)}
@@ -79,7 +127,6 @@ const DiagnosisSection = ({
         <Grid item xs={12}>
           <TextField
             fullWidth
-            required
             label="Treatment Plan"
             value={treatmentPlan}
             onChange={(e) => handleChange('treatmentPlan', e.target.value)}
@@ -106,7 +153,9 @@ const DiagnosisSection = ({
 
       <Box sx={{ mt: 3, p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
         <Typography variant="body2">
-          <strong>Important:</strong> After entering diagnosis, proceed to the next tabs to order lab tests, radiology studies, or medications as needed.
+          <strong>Workflow:</strong> Investigations return to the doctor for results review.
+          Medication becomes available only after the final diagnosis is recorded. If the
+          patient needs no treatment, select that outcome and proceed without medication.
         </Typography>
       </Box>
     </Box>

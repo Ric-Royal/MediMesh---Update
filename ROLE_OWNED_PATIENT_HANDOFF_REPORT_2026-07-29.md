@@ -204,3 +204,93 @@ confidentiality, and accountability by:
 This is an engineering implementation record, not a formal legal opinion or
 substitute for a Data Protection Impact Assessment by the facility’s Data
 Protection Officer.
+
+## Follow-up: clinical decision validation (2 August 2026)
+
+The consultation workflow was changed so that the care pathway reflects how a
+real clinical team makes decisions:
+
+- A clinician may request laboratory tests or imaging before a provisional or
+  final diagnosis is known. The clinical reason for the investigation is
+  required instead of a diagnosis.
+- A patient may proceed directly to a final diagnosis when investigations are
+  unnecessary.
+- Medication may only be prescribed after a final diagnosis has been recorded.
+  It is therefore handled after investigations and results review, when those
+  stages are needed, and before billing.
+- A clinician may record that no treatment or medication is required. This path
+  does not invent a diagnosis or prescription merely to satisfy validation.
+- Empty optional clinical fields are stored as null values. Medication duration
+  is consistently represented as a number of days in the browser, API, and
+  database-facing payload.
+
+The browser form and patient API now share these decision rules. The API also
+returns field-specific validation details so the interface can explain a genuine
+problem instead of showing a generic mismatch error. Database migration
+`104-clinical-decision-workflow.sql` added the clinical outcome and investigation
+reason fields, backfilled existing consultations, and installed constraints and
+a prescription trigger that prevent medication from being linked to a
+consultation without a final diagnosis.
+
+### Verification performed
+
+- Patient API: 21 test suites and 99 tests passed.
+- Web application: 10 test suites and 61 tests passed.
+- Production patient-API and web-application images rebuilt successfully.
+- Readiness endpoint returned HTTP 200 and all application services were
+  healthy after recreation.
+- Existing database records and all persistent Docker volumes were preserved.
+- The migration was applied without deleting or resetting any table or volume;
+  all four pre-existing consultation records received a valid clinical outcome.
+
+Three synthetic end-to-end visits were completed against the rebuilt local
+containers:
+
+1. No treatment required: patient
+   `975f639f-511d-4f15-8d81-75b60307284b`, consultation
+   `803bae3c-95e8-4d14-834f-866b1667715b`, then billing.
+2. Investigation before diagnosis: patient
+   `379aed33-9dd6-4d99-a16f-6a0c79162604`, initial consultation
+   `d6fc35dd-e989-4026-a8b4-2cc2aeeecff9`, laboratory order
+   `cb33caa4-c8e6-420a-85de-4569909af3b3`, results-review consultation
+   `ddbe4966-5145-454a-96d2-0a10f4a3689c`, then billing.
+3. Final diagnosis followed by medication: patient
+   `21fc8d56-de86-4fa4-bf5e-272b3f091625`, consultation
+   `05ef4811-3034-435f-aab1-9823601ef095`, prescription `1`, pharmacy
+   dispensing, then billing.
+
+The synthetic records remain in the local preview database so the completed
+handoffs can be inspected. No real patient data was used. Recreating the web
+container ended the existing browser session, so the administrator must sign in
+again before viewing protected pages.
+
+### Follow-up computer and network record
+
+What entered the computer:
+
+- The additive database migration, application changes, tests, and this report
+  were created in the existing workspace.
+- Docker used the existing build cache and contacted its configured registry for
+  pinned base-image metadata needed by the rebuild.
+- Two temporary local test images were created:
+  `medimesh-security-preview-api-test` and
+  `medimesh-security-preview-web-test`.
+- The three sets of synthetic workflow records listed above were added only to
+  the local preview database.
+
+What left the computer:
+
+- Local browser, API, database, and container verification traffic stayed on
+  `127.0.0.1` or inside the local Docker network.
+- Docker registry requests contained image metadata, not application medical
+  records or credentials.
+- The source changes and this engineering record were pushed to the configured
+  GitHub branch. No database, Docker volume, patient record, log, password, or
+  secret file was included in the push.
+- GitHub received the pull-request description and automated workflow inputs
+  needed to review the source changes; these contain no health records or local
+  credentials.
+
+The local administrator secret was read into process memory only for local
+synthetic API authentication. It was not printed, written to a file, committed,
+or sent outside the computer.

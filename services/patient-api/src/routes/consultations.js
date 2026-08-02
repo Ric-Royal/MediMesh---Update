@@ -1,10 +1,13 @@
 const express = require('express');
-const Joi = require('joi');
 const router = express.Router();
 const { getDB } = require('../utils/database');
 const { logger } = require('../utils/logger');
 const { authorize } = require('../middleware/auth');
 const { validate } = require('../utils/validation');
+const {
+  consultationSchema,
+  validateConsultationDecision
+} = require('../utils/consultationValidation');
 const {
   isAdmin,
   requireConsultationAccess,
@@ -15,54 +18,6 @@ const {
 const CONSULTATION_READ_ROLES = ['admin', 'doctor', 'nurse'];
 const CONSULTATION_WRITE_ROLES = ['admin', 'doctor'];
 const MedicalRecord = require('../models/MedicalRecord');
-const orderId = Joi.string().uuid().required();
-const catalogId = Joi.number().integer().positive().required();
-const consultationSchema = Joi.object({
-  encounterId: orderId,
-  patientId: orderId,
-  doctorId: Joi.string().uuid(),
-  vitals: Joi.object().max(20),
-  chiefComplaint: Joi.string().allow('').max(4000),
-  historyPresentIllness: Joi.string().allow('').max(12000),
-  pastMedicalHistory: Joi.string().allow('').max(12000),
-  familyHistory: Joi.string().allow('').max(8000),
-  socialHistory: Joi.string().allow('').max(8000),
-  allergies: Joi.string().allow('').max(8000),
-  currentMedications: Joi.string().allow('').max(12000),
-  examination: Joi.object().max(20),
-  provisionalDiagnosis: Joi.string().allow('').max(8000),
-  differentialDiagnosis: Joi.string().allow('').max(8000),
-  finalDiagnosis: Joi.string().allow('').max(8000),
-  treatmentPlan: Joi.string().allow('').max(12000),
-  followUpInstructions: Joi.string().allow('').max(8000),
-  labOrders: Joi.array().max(25).items(Joi.object({
-    testId: catalogId,
-    testName: Joi.string().max(250),
-    priority: Joi.string().valid('routine', 'urgent', 'stat', 'emergency'),
-    clinicalNotes: Joi.string().allow('').max(4000),
-    price: Joi.any().strip()
-  }).unknown(false)).default([]),
-  radiologyOrders: Joi.array().max(25).items(Joi.object({
-    studyId: Joi.number().integer().positive(),
-    testId: Joi.number().integer().positive(),
-    testName: Joi.string().max(250),
-    bodyPart: Joi.string().allow('').max(250),
-    reason: Joi.string().allow('').max(4000),
-    priority: Joi.string().valid('routine', 'urgent', 'stat', 'emergency'),
-    price: Joi.any().strip()
-  }).or('studyId', 'testId').unknown(false)).default([]),
-  prescriptions: Joi.array().max(50).items(Joi.object({
-    drugId: catalogId,
-    drugName: Joi.string().max(250),
-    dosage: Joi.string().max(250).required(),
-    frequency: Joi.string().max(100).required(),
-    duration: Joi.number().integer().min(1).max(365).required(),
-    quantity: Joi.number().integer().min(1).max(10000).required(),
-    instructions: Joi.string().allow('').max(2000),
-    unitPrice: Joi.any().strip(),
-    totalPrice: Joi.any().strip()
-  }).unknown(false)).default([])
-}).unknown(false);
 
 // =====================================================
 // CREATE CONSULTATION WITH MULTIPLE ORDERS
@@ -73,6 +28,15 @@ router.post('/',
   requireProviderIdentity('doctor'),
   requireEncounterAccess({ encounterId: req => req.validatedData.encounterId }),
   async (req, res) => {
+  const decisionErrors = validateConsultationDecision(req.validatedData);
+  if (decisionErrors.length) {
+    return res.status(400).json({
+      success: false,
+      error: 'Clinical workflow validation failed',
+      details: decisionErrors
+    });
+  }
+
   const db = await getDB().connect();
   
   try {
@@ -98,6 +62,8 @@ router.post('/',
       finalDiagnosis,
       treatmentPlan,
       followUpInstructions,
+      clinicalOutcome,
+      investigationReason,
       // Orders
       labOrders = [],
       radiologyOrders = [],
@@ -195,7 +161,8 @@ router.post('/',
           abdominal_exam, neurological_exam, musculoskeletal_exam,
           skin_exam, other_findings,
           provisional_diagnosis, differential_diagnosis, final_diagnosis,
-          treatment_plan, follow_up_instructions,
+          treatment_plan, follow_up_instructions, clinical_outcome,
+          investigation_reason,
           has_lab_orders, has_radiology_orders, has_prescriptions,
           total_lab_orders, total_radiology_orders, total_prescriptions,
           status, completed_at, created_by
@@ -204,9 +171,9 @@ router.post('/',
           $4, $5, $6, $7, $8, $9, $10, $11,
           $12, $13, $14, $15, $16, $17, $18,
           $19, $20, $21, $22, $23, $24, $25, $26,
-          $27, $28, $29, $30, $31,
-          $32, $33, $34, $35, $36, $37,
-          $38, $39, $40
+          $27, $28, $29, $30, $31, $32, $33,
+          $34, $35, $36, $37, $38, $39,
+          $40, $41, $42
         )
         RETURNING id, consultation_date
       `, [
@@ -219,7 +186,8 @@ router.post('/',
         emptyToNull(examination?.abdominal), emptyToNull(examination?.neurological), emptyToNull(examination?.musculoskeletal),
         emptyToNull(examination?.skin), emptyToNull(examination?.other),
         emptyToNull(provisionalDiagnosis), emptyToNull(differentialDiagnosis), emptyToNull(finalDiagnosis),
-        emptyToNull(treatmentPlan), emptyToNull(followUpInstructions),
+        emptyToNull(treatmentPlan), emptyToNull(followUpInstructions), clinicalOutcome,
+        emptyToNull(investigationReason),
         labOrders.length > 0, radiologyOrders.length > 0, prescriptions.length > 0,
         labOrders.length, radiologyOrders.length, prescriptions.length,
         'completed', new Date(), req.user?.id || 'system'
@@ -259,7 +227,7 @@ router.post('/',
               drug: m.drugName || m.drugId,
               dosage: m.dosage,
               frequency: m.frequency,
-              duration: m.duration,
+              durationDays: m.durationDays,
             })))
           : null;
 
@@ -306,7 +274,7 @@ router.post('/',
         `, [
           patientId, encounterId, resolvedDoctorId, consultationId,
           labOrders[0]?.priority || 'routine',
-          labOrders[0]?.clinicalNotes || provisionalDiagnosis
+          labOrders[0]?.clinicalNotes || investigationReason || provisionalDiagnosis
         ]);
 
         const labOrderId = labOrderResult.rows[0].id;
@@ -364,7 +332,7 @@ router.post('/',
         `, [
           patientId, encounterId, resolvedDoctorId, consultationId,
           radiologyOrders[0]?.priority || 'routine',
-          radiologyOrders[0]?.reason || provisionalDiagnosis || 'Diagnostic imaging'
+          radiologyOrders[0]?.reason || investigationReason || provisionalDiagnosis || 'Diagnostic imaging'
         ]);
 
         const radiologyOrderId = radiologyOrderResult.rows[0].id;
@@ -447,7 +415,7 @@ router.post('/',
           `, [
             prescriptionId, medication.drugId, 
             medication.dosage, medication.frequency, 
-            parseInt(medication.duration) || 0,
+            medication.durationDays,
             medication.quantity, medication.instructions || null,
             unitPrice, totalPrice
           ]);

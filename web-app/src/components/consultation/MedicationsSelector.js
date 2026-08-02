@@ -45,6 +45,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
   const [loading, setLoading] = useState(true);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingMedication, setEditingMedication] = useState(null);
+  const [editError, setEditError] = useState('');
 
   // Fetch drug catalog
   useEffect(() => {
@@ -106,7 +107,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
       genericName: drug.generic_name,
       dosage: drug.strength || '',
       frequency: 'TID',
-      duration: '7 days',
+      durationDays: 7,
       quantity: 21,
       instructions: 'Take with food',
       unitPrice: parseFloat(drug.unit_price) || 0,
@@ -117,11 +118,25 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
     newMedication.totalPrice = newMedication.quantity * newMedication.unitPrice;
 
     setEditingMedication(newMedication);
+    setEditError('');
     setEditDialogOpen(true);
   };
 
   const handleSaveEdit = () => {
     if (editingMedication) {
+      if (
+        !editingMedication.dosage?.trim() ||
+        !editingMedication.frequency?.trim() ||
+        !Number.isInteger(editingMedication.durationDays) ||
+        editingMedication.durationDays < 1 ||
+        editingMedication.durationDays > 365 ||
+        !Number.isInteger(editingMedication.quantity) ||
+        editingMedication.quantity < 1
+      ) {
+        setEditError('Enter dosage, frequency, a duration from 1 to 365 days, and a quantity of at least 1.');
+        return;
+      }
+
       // Recalculate total price
       editingMedication.totalPrice = editingMedication.quantity * editingMedication.unitPrice;
 
@@ -140,6 +155,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
     }
     setEditDialogOpen(false);
     setEditingMedication(null);
+    setEditError('');
   };
 
   const handleRemoveMedication = (drugId) => {
@@ -148,6 +164,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
 
   const handleEditMedication = (medication) => {
     setEditingMedication({ ...medication });
+    setEditError('');
     setEditDialogOpen(true);
   };
 
@@ -197,7 +214,7 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
                     </TableCell>
                     <TableCell>{med.dosage}</TableCell>
                     <TableCell>{med.frequency}</TableCell>
-                    <TableCell>{med.duration}</TableCell>
+                    <TableCell>{med.durationDays} days</TableCell>
                     <TableCell>{med.quantity}</TableCell>
                     <TableCell align="right">${parseFloat(med.totalPrice || 0).toFixed(2)}</TableCell>
                     <TableCell align="center">
@@ -348,6 +365,11 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
         <DialogContent>
           {editingMedication && (
             <Grid container spacing={2} sx={{ mt: 1 }}>
+              {editError && (
+                <Grid item xs={12}>
+                  <Alert severity="error">{editError}</Alert>
+                </Grid>
+              )}
               <Grid item xs={12}>
                 <Typography variant="subtitle1" fontWeight="bold">
                   {editingMedication.drugName}
@@ -390,10 +412,16 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
-                  label="Duration"
-                  value={editingMedication.duration}
-                  onChange={(e) => setEditingMedication({ ...editingMedication, duration: e.target.value })}
-                  placeholder="7 days"
+                  required
+                  type="number"
+                  label="Duration (days)"
+                  value={editingMedication.durationDays}
+                  onChange={(e) => setEditingMedication({
+                    ...editingMedication,
+                    durationDays: parseInt(e.target.value, 10) || 0,
+                  })}
+                  inputProps={{ min: 1, max: 365, step: 1 }}
+                  helperText="Enter a whole number from 1 to 365"
                 />
               </Grid>
 
@@ -451,86 +479,8 @@ const MedicationsSelector = ({ selectedMedications, onChange }) => {
         </DialogActions>
       </Dialog>
 
-      {/* Drug Catalog Grid */}
-      {loading ? (
-        <Box display="flex" justifyContent="center" py={4}>
-          <Typography>Loading drug catalog...</Typography>
-        </Box>
-      ) : filteredDrugs.length === 0 ? (
-        <Alert severity="info">No medications found matching your criteria.</Alert>
-      ) : (
-        <Grid container spacing={2}>
-          {filteredDrugs.slice(0, 12).map((drug) => {
-            const isSelected = selectedMedications.find(m => m.drugId === drug.id);
-            return (
-              <Grid item xs={12} sm={6} md={4} key={drug.id}>
-                <Card 
-                  variant="outlined"
-                  sx={{ 
-                    height: '100%',
-                    border: isSelected ? 2 : 1,
-                    borderColor: isSelected ? 'secondary.main' : 'divider',
-                    bgcolor: isSelected ? 'secondary.light' : 'background.paper',
-                  }}
-                >
-                  <CardContent>
-                    <Box display="flex" alignItems="center" gap={1} mb={1}>
-                      <MedicationIcon color={isSelected ? 'secondary' : 'primary'} />
-                      <Typography variant="subtitle1" fontWeight="bold">
-                        {drug.brand_name || drug.generic_name}
-                      </Typography>
-                    </Box>
-                    {drug.generic_name && (
-                      <Typography variant="body2" color="text.secondary" gutterBottom>
-                        Generic: {drug.generic_name}
-                      </Typography>
-                    )}
-                    {drug.strength && (
-                      <Chip label={drug.strength} size="small" sx={{ mb: 1 }} />
-                    )}
-                    {drug.category_name && (
-                      <Typography variant="body2" color="text.secondary" gutterBottom>
-                        Category: {drug.category_name}
-                      </Typography>
-                    )}
-                    <Typography variant="body2" fontWeight="bold" color="primary">
-                      ${parseFloat(drug.unit_price || 0).toFixed(2)} per unit
-                    </Typography>
-                    {drug.current_stock !== undefined && (
-                      <Typography variant="caption" color={drug.current_stock > 0 ? 'success.main' : 'error.main'}>
-                        Stock: {drug.current_stock}
-                      </Typography>
-                    )}
-                  </CardContent>
-                  <CardActions>
-                    <Button
-                      fullWidth
-                      variant={isSelected ? 'outlined' : 'contained'}
-                      color={isSelected ? 'secondary' : 'primary'}
-                      startIcon={isSelected ? <EditIcon /> : <AddIcon />}
-                      onClick={() => isSelected ? handleEditMedication(isSelected) : handleAddMedication(drug)}
-                    >
-                      {isSelected ? 'Edit' : 'Prescribe'}
-                    </Button>
-                  </CardActions>
-                </Card>
-              </Grid>
-            );
-          })}
-        </Grid>
-      )}
-
-      {selectedMedications.length === 0 && (
-        <Box sx={{ mt: 3 }}>
-          <Alert severity="info">
-            No medications selected. If patient doesn't need medications, you can skip this section.
-          </Alert>
-        </Box>
-      )}
     </Box>
   );
 };
 
 export default MedicationsSelector;
-
-
