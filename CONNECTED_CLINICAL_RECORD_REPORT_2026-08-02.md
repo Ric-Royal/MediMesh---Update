@@ -147,6 +147,13 @@ record was deleted or reset.
   and the linked clinical file.
 - No admission or new clinical decision was submitted during verification. The
   test did not make a diagnosis or admission decision on behalf of a clinician.
+- The first GitHub Docker security job stopped before scanning because its hosted
+  runner timed out while reading the pinned Node and nginx manifests from Docker
+  Hub. This was a registry-network timeout, not a vulnerability result. Only the
+  failed job was retried after CodeQL completed. The retry built both images and
+  completed both Trivy scans successfully. CodeQL, secret detection, dependency
+  vulnerability scanning, license compliance, and the Docker scan all finished
+  green.
 
 The browser check used an existing synthetic encounter. One 86-byte plain-text
 file named `medimesh-synthetic-lab-evidence.txt` was uploaded into the local
@@ -189,6 +196,10 @@ database was downloaded.
   configured GitHub repository on the named branch. Git excludes the database,
   object-storage volume, synthetic attachment, logs, temporary file, passwords,
   and secret files from that transfer.
+- GitHub received authenticated requests to update the existing draft pull
+  request, read its check results and failed-job log, retry the transient failed
+  Docker job, and monitor the replacement job. Those requests contained source
+  and workflow metadata, not local clinical data or credentials.
 - No patient data or clinical attachment was sent to GitHub or another external
   service.
 
