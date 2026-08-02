@@ -60,19 +60,19 @@
 #### **🔍 External Service Configuration Analysis**
 
 **Metabase Configuration**:
-- ✅ Database connection string: `postgresql://metabase_user:MetabaseDB2024!@postgres:5432/metabase`
+- Database connection is supplied through a runtime secret, not stored in source.
 - ✅ User exists in database with proper permissions
 - ❌ **Issue**: Metabase failing during Liquibase schema migration
 - **Root Cause**: Likely version compatibility issue with PostgreSQL or Metabase internal schema conflicts
 
 **Airflow Configuration**:
-- ✅ Database connection: `postgresql+psycopg2://airflow_user:AirflowDB2024!@postgres:5432/airflow`
+- Database connection is supplied through a runtime secret, not stored in source.
 - ✅ User exists in database with proper permissions
 - ❌ **Issue**: Missing database initialization step
 - **Root Cause**: Airflow requires `airflow db init` command before starting webserver
 
 **Superset Configuration**:
-- ✅ Database connection: `postgresql://superset_user:SupersetDB2024!@postgres:5432/superset`
+- Database connection is supplied through a runtime secret, not stored in source.
 - ✅ User exists in database with proper permissions
 - ❌ **Issue**: Missing database upgrade and admin user creation
 - **Root Cause**: Superset requires `superset db upgrade` and admin user setup
@@ -87,7 +87,7 @@
 command: >
   bash -c "
   airflow db init &&
-  airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@medimesh.com --password admin123 &&
+  airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@medimesh.com --password "$AIRFLOW_ADMIN_PASSWORD" &&
   airflow webserver
   "
 ```
@@ -98,7 +98,7 @@ command: >
 command: >
   bash -c "
   superset db upgrade &&
-  superset fab create-admin --username admin --firstname Admin --lastname User --email admin@medimesh.com --password admin123 &&
+  superset fab create-admin --username admin --firstname Admin --lastname User --email admin@medimesh.com --password "$SUPERSET_ADMIN_PASSWORD" &&
   superset init &&
   superset run -h 0.0.0.0 -p 8088
   "
@@ -179,10 +179,10 @@ environment:
 4. **Security**: Added proper secret keys for all services
 
 ### **📊 Expected Results After Deployment**
-- **Airflow**: Should start successfully at `localhost:8082` with admin/admin123
-- **Superset**: Should start successfully at `localhost:8088` with admin/admin123  
+- **Airflow**: Start only after its administrator secret is provisioned.
+- **Superset**: Start only after its administrator secret is provisioned.
 - **Metabase**: Should start successfully at `localhost:3002` with setup wizard
 - **Overall Success Rate**: Expected 100% (11/11 services operational)
 
 ### **🚀 Ready for Deployment**
-All code-level issues have been resolved. The services should now start successfully with the updated Docker Compose configuration. 
+All code-level issues have been resolved. The services should now start successfully with the updated Docker Compose configuration.

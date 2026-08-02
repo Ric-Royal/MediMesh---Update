@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
   Button,
-  Paper,
   Grid,
   Card,
   CardContent,
@@ -27,14 +26,18 @@ import {
   Delete as DeleteIcon,
   Person as PersonIcon,
   CalendarToday as CalendarIcon,
-  Description as DescriptionIcon,
   LocalHospital as LocalHospitalIcon,
-  Assignment as AssignmentIcon
+  Assignment as AssignmentIcon,
+  Print as PrintIcon
 } from '@mui/icons-material';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import ClinicalContextSection from '../components/consultation/ClinicalContextSection';
+import FilePreview from '../components/common/FilePreview';
+import API_CONFIG from '../config/api';
+import { printClinicalDocument } from '../utils/printClinicalDocument';
 
 const RecordDetailPage = () => {
   const { id } = useParams();
@@ -49,30 +52,35 @@ const RecordDetailPage = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [successMessage, setSuccessMessage] = useState(location.state?.message || null);
+  const [clinicalContext, setClinicalContext] = useState(null);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextError, setContextError] = useState('');
 
-  useEffect(() => {
-    fetchRecordData();
-  }, [id]);
-
-  // Clear success message after showing it
-  useEffect(() => {
-    if (successMessage) {
-      const timer = setTimeout(() => {
-        setSuccessMessage(null);
-        // Clear the location state to prevent showing the message on refresh
-        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
-      }, 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [successMessage]);
-
-  const fetchRecordData = async () => {
+  const fetchRecordData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
       const recordResponse = await apiService.medicalRecords.getById(id);
       setRecord(recordResponse.data);
+
+      if (recordResponse.data?.encounter_id) {
+        setContextLoading(true);
+        setContextError('');
+        try {
+          const contextResponse = await fetch(
+            `${API_CONFIG.endpoints.consultations}/encounter/${recordResponse.data.encounter_id}/clinical-context`,
+            { headers: API_CONFIG.getAuthHeaders() }
+          );
+          const contextResult = await contextResponse.json();
+          if (!contextResponse.ok) throw new Error(contextResult.error || 'Unable to load visit history');
+          setClinicalContext(contextResult.data);
+        } catch (contextFetchError) {
+          setContextError(contextFetchError.message);
+        } finally {
+          setContextLoading(false);
+        }
+      }
 
       // Fetch patient details if we have a patient_id
       if (recordResponse.data?.patient_id) {
@@ -90,7 +98,23 @@ const RecordDetailPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    fetchRecordData();
+  }, [fetchRecordData]);
+
+  // Clear success message after showing it
+  useEffect(() => {
+    if (successMessage) {
+      const timer = setTimeout(() => {
+        setSuccessMessage(null);
+        // Clear the location state to prevent showing the message on refresh
+        window.history.replaceState({}, document.title, window.location.pathname + window.location.search);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [successMessage]);
 
   const handleDeleteRecord = async () => {
     if (!record) return;
@@ -163,6 +187,11 @@ const RecordDetailPage = () => {
     return age;
   };
 
+  const formatStructuredValue = value => {
+    if (typeof value !== 'string') return JSON.stringify(value, null, 2);
+    try { return JSON.stringify(JSON.parse(value), null, 2); } catch (_) { return value; }
+  };
+
   if (loading) {
     return <LoadingSpinner message="Loading medical record..." />;
   }
@@ -217,6 +246,15 @@ const RecordDetailPage = () => {
         </Box>
         
         <Box sx={{ display: 'flex', gap: 2 }}>
+          <Button
+            variant="outlined"
+            startIcon={<PrintIcon />}
+            onClick={() => {
+              try { printClinicalDocument(); } catch (printError) { setError(printError.message); }
+            }}
+          >
+            Print Complete Record
+          </Button>
           {(hasRole('doctor') || hasRole('nurse') || hasRole('admin')) && (
             <>
               <Button
@@ -252,7 +290,7 @@ const RecordDetailPage = () => {
         </Alert>
       )}
 
-      <Grid container spacing={3}>
+      <Grid container spacing={3} data-print-document>
         {/* Record Overview */}
         <Grid item xs={12} md={8}>
           <Card sx={{ mb: 3 }}>
@@ -393,7 +431,7 @@ const RecordDetailPage = () => {
                       Lab Results
                     </Typography>
                     <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
-                      {record.lab_results}
+                      {formatStructuredValue(record.lab_results)}
                     </Typography>
                   </Grid>
                 )}
@@ -445,6 +483,32 @@ const RecordDetailPage = () => {
                     </TableBody>
                   </Table>
                 </TableContainer>
+              </CardContent>
+            </Card>
+          )}
+
+          {record.encounter_id ? (
+            <Card sx={{ mt: 3 }}>
+              <CardContent>
+                <Typography variant="h5" gutterBottom>Complete visit timeline</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  Triage, clinician assessments, laboratory results, radiology reports,
+                  prescriptions, admissions and attached evidence for this encounter.
+                </Typography>
+                <ClinicalContextSection
+                  encounterId={record.encounter_id}
+                  context={clinicalContext}
+                  loading={contextLoading}
+                  error={contextError}
+                  isResultsReview={false}
+                />
+              </CardContent>
+            </Card>
+          ) : (
+            <Card sx={{ mt: 3 }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>Attached clinical files</Typography>
+                <FilePreview recordId={record.id} patientId={record.patient_id} allowDelete={false} />
               </CardContent>
             </Card>
           )}
@@ -553,4 +617,4 @@ const RecordDetailPage = () => {
   );
 };
 
-export default RecordDetailPage; 
+export default RecordDetailPage;

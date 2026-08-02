@@ -105,7 +105,7 @@ docker-compose restart patient-api
 #### **Step 4: Test Payment**
 
 1. Open frontend: http://localhost:3000
-2. Login: `admin` / `admin123`
+2. Login as `admin` using the ignored generated local password
 3. Go to a patient
 4. Click "Request Payment"
 5. Use sandbox test number: `254708374149`

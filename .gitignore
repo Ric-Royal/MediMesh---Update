@@ -45,6 +45,7 @@ vault.log
 
 # Database dumps and backups
 *.sql
+!init-scripts/*.sql
 *.dump
 *.backup
 backups/
@@ -55,6 +56,8 @@ db-dumps/
 # ===========================================
 # Dependencies
 node_modules/
+.dependency-recovery/
+.activity/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -310,4 +313,4 @@ test.db
 
 # Cache files
 .cache/
-*.cache 
+*.cache

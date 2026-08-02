@@ -1,6 +1,8 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { createTheme, ThemeProvider as MuiThemeProvider } from '@mui/material/styles';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import { ThemeProvider as MuiThemeProvider, createTheme, responsiveFontSizes } from '@mui/material/styles';
+import { lightTheme, darkTheme } from '../theme/theme';
 import { useSettings } from './SettingsContext';
+import { DEFAULT_BRAND_COLOR, getAccessibleBrandColor } from '../utils/colorContrast';
 
 const ThemeContext = createContext();
 
@@ -12,132 +14,91 @@ export const useTheme = () => {
   return context;
 };
 
-// Define theme variants
-const createDynamicTheme = (mode) => {
-  const isLight = mode === 'light';
-  const isDark = mode === 'dark';
-  
-  // Auto mode: use system preference
-  const systemPrefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-  const effectiveMode = mode === 'auto' ? (systemPrefersDark ? 'dark' : 'light') : mode;
-  const isEffectivelyDark = effectiveMode === 'dark';
-
-  return createTheme({
+const buildTheme = (mode, brandColor = DEFAULT_BRAND_COLOR) => {
+  const paletteMode = mode === 'dark' ? 'dark' : 'light';
+  const baseTheme = paletteMode === 'dark' ? darkTheme : lightTheme;
+  const themed = createTheme(baseTheme, {
     palette: {
-      mode: effectiveMode,
       primary: {
-        main: isEffectivelyDark ? '#4fc3f7' : '#1976d2',
-        light: isEffectivelyDark ? '#81d4fa' : '#42a5f5',
-        dark: isEffectivelyDark ? '#0288d1' : '#1565c0',
-      },
-      secondary: {
-        main: isEffectivelyDark ? '#f48fb1' : '#dc004e',
-        light: isEffectivelyDark ? '#f8bbd9' : '#ff5983',
-        dark: isEffectivelyDark ? '#c2185b' : '#9a0036',
-      },
-      background: {
-        default: isEffectivelyDark ? '#121212' : '#f5f5f5',
-        paper: isEffectivelyDark ? '#1e1e1e' : '#ffffff',
-      },
-      text: {
-        primary: isEffectivelyDark ? '#ffffff' : '#000000',
-        secondary: isEffectivelyDark ? '#b0b0b0' : '#666666',
-      },
-      divider: isEffectivelyDark ? '#333333' : '#e0e0e0',
-      action: {
-        hover: isEffectivelyDark ? '#333333' : '#f5f5f5',
-      },
-    },
-    typography: {
-      fontFamily: 'Roboto, Arial, sans-serif',
-      h4: {
-        fontWeight: 600,
-      },
-      h5: {
-        fontWeight: 500,
-      },
-    },
-    components: {
-      MuiAppBar: {
-        styleOverrides: {
-          root: {
-            backgroundColor: isEffectivelyDark ? '#1e1e1e' : '#1976d2',
-            color: isEffectivelyDark ? '#ffffff' : '#ffffff',
-          },
-        },
-      },
-      MuiCard: {
-        styleOverrides: {
-          root: {
-            borderRadius: 8,
-            boxShadow: isEffectivelyDark 
-              ? '0 2px 8px rgba(0,0,0,0.3)' 
-              : '0 2px 8px rgba(0,0,0,0.1)',
-            backgroundColor: isEffectivelyDark ? '#1e1e1e' : '#ffffff',
-          },
-        },
-      },
-      MuiDrawer: {
-        styleOverrides: {
-          paper: {
-            backgroundColor: isEffectivelyDark ? '#1e1e1e' : '#ffffff',
-            borderRight: isEffectivelyDark ? '1px solid #333333' : '1px solid #e0e0e0',
-          },
-        },
-      },
-      MuiListItemButton: {
-        styleOverrides: {
-          root: {
-            '&.Mui-selected': {
-              backgroundColor: isEffectivelyDark ? '#0288d1' : '#42a5f5',
-              color: '#ffffff',
-              '& .MuiListItemIcon-root': {
-                color: '#ffffff',
-              },
-              '&:hover': {
-                backgroundColor: isEffectivelyDark ? '#01579b' : '#1976d2',
-              },
-            },
-          },
-        },
+        main: getAccessibleBrandColor(brandColor),
       },
     },
   });
+  return responsiveFontSizes(themed);
+};
+
+const getSystemPreference = () => {
+  if (typeof window === 'undefined' || !window.matchMedia) {
+    return 'light';
+  }
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 };
 
 export const ThemeProvider = ({ children }) => {
-  const [currentTheme, setCurrentTheme] = useState('light');
-  const [muiTheme, setMuiTheme] = useState(() => createDynamicTheme('light'));
+  const { systemSettings } = useSettings();
+  const brandColor = getAccessibleBrandColor(systemSettings?.primaryColor);
+  const [currentTheme, setCurrentTheme] = useState(() => {
+    if (typeof window === 'undefined') return 'light';
+    return localStorage.getItem('theme-preference') || 'light';
+  });
+  const [resolvedTheme, setResolvedTheme] = useState(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('theme-preference') : 'light';
+    if (saved === 'auto') {
+      return getSystemPreference();
+    }
+    return saved || 'light';
+  });
+  const [muiTheme, setMuiTheme] = useState(() => buildTheme(resolvedTheme, brandColor));
 
   const updateTheme = (newTheme) => {
     setCurrentTheme(newTheme);
-    const theme = createDynamicTheme(newTheme);
-    setMuiTheme(theme);
-    
-    // Also set data attribute for any custom CSS
-    document.documentElement.setAttribute('data-theme', newTheme);
-    
-    // Store theme preference in localStorage as backup
-    localStorage.setItem('theme-preference', newTheme);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('theme-preference', newTheme);
+    }
   };
 
-  // Listen for system theme changes when in auto mode
-  useEffect(() => {
-    if (currentTheme === 'auto') {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const handleChange = () => {
-        setMuiTheme(createDynamicTheme('auto'));
-      };
-      
-      mediaQuery.addEventListener('change', handleChange);
-      return () => mediaQuery.removeEventListener('change', handleChange);
-    }
+  const resolvedMode = useMemo(() => {
+    return currentTheme === 'auto' ? getSystemPreference() : currentTheme;
   }, [currentTheme]);
+
+  useEffect(() => {
+    setResolvedTheme(resolvedMode);
+  }, [resolvedMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || currentTheme !== 'auto') return;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = () => {
+      setResolvedTheme(mediaQuery.matches ? 'dark' : 'light');
+    };
+
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, [currentTheme]);
+
+  useEffect(() => {
+    setMuiTheme(buildTheme(resolvedTheme, brandColor));
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-theme', resolvedTheme);
+      document.documentElement.style.backgroundColor = resolvedTheme === 'dark' ? '#0A1929' : '#F5F7FA';
+    }
+  }, [resolvedTheme, brandColor]);
+
+  const toggleThemeMode = () => {
+    setCurrentTheme((prev) => {
+      if (prev === 'auto') {
+        return resolvedTheme === 'dark' ? 'light' : 'dark';
+      }
+      return prev === 'dark' ? 'light' : 'dark';
+    });
+  };
 
   const value = {
     currentTheme,
+    resolvedTheme,
     updateTheme,
-    isDark: muiTheme.palette.mode === 'dark',
+    toggleThemeMode,
+    isDark: resolvedTheme === 'dark',
   };
 
   return (
@@ -149,13 +110,14 @@ export const ThemeProvider = ({ children }) => {
   );
 };
 
-// Hook to integrate with settings
+// Hook to integrate with settings (optional enhancement)
+// Commented out to avoid circular dependency
+/*
 export const useThemeSettings = () => {
   const { updateTheme } = useTheme();
   const { getSetting, updateUserSettings } = useSettings();
 
   useEffect(() => {
-    // Apply theme from settings when component mounts
     const savedTheme = getSetting('preferences', 'theme', 'light');
     updateTheme(savedTheme);
   }, [getSetting, updateTheme]);
@@ -163,7 +125,6 @@ export const useThemeSettings = () => {
   const changeTheme = async (newTheme) => {
     updateTheme(newTheme);
     
-    // Save to user settings
     try {
       await updateUserSettings({
         preferences: { theme: newTheme }
@@ -175,3 +136,4 @@ export const useThemeSettings = () => {
 
   return { changeTheme };
 };
+*/

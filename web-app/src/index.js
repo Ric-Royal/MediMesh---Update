@@ -1,11 +1,23 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter } from './routerCompat';
 import CssBaseline from '@mui/material/CssBaseline';
 import App from './App';
 import { AuthProvider } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { NotificationProvider } from './contexts/NotificationContext';
+import { RUNTIME_CONFIG } from './config/runtime';
+import './printStyles.css';
+
+// Axios errors can include request payloads and response bodies. Keep clinical
+// data out of production browser consoles until a redacting telemetry sink is
+// configured; development builds retain their normal diagnostics.
+if (RUNTIME_CONFIG.isProduction) {
+  ['log', 'info', 'debug', 'warn', 'error'].forEach((method) => {
+    console[method] = () => {};
+  });
+}
 
 // Error boundary component
 class ErrorBoundary extends React.Component {
@@ -45,12 +57,14 @@ root.render(
         <AuthProvider>
           <SettingsProvider>
             <ThemeProvider>
-              <CssBaseline />
-              <App />
+              <NotificationProvider>
+                <CssBaseline />
+                <App />
+              </NotificationProvider>
             </ThemeProvider>
           </SettingsProvider>
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>
   </React.StrictMode>
-); 
+);

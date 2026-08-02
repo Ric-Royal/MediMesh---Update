@@ -83,8 +83,8 @@ The MediMesh healthcare platform infrastructure has been comprehensively audited
   KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_password
   
   # After (working):
-  KC_DB_PASSWORD: KeycloakDB2024!
-  KEYCLOAK_ADMIN_PASSWORD: admin123
+  KC_DB_PASSWORD_FILE: /run/secrets/keycloak_db_password
+  KEYCLOAK_ADMIN_PASSWORD_FILE: /run/secrets/keycloak_admin_password
   ```
 
 #### **Secrets Cleanup**
@@ -234,4 +234,4 @@ The MediMesh infrastructure has been transformed from a 73% success rate to a fu
 - Healthcare-specific optimizations
 - Production-ready reliability features
 
-The platform now provides a solid foundation for healthcare data management with proper security, compliance, and monitoring capabilities. 
+The platform now provides a solid foundation for healthcare data management with proper security, compliance, and monitoring capabilities.

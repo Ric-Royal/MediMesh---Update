@@ -106,6 +106,76 @@ class SystemSettings {
         category: 'notifications',
         description: 'Enable SMS notification system',
         requires_restart: true
+      },
+      {
+        key: 'organization.facility_name',
+        value: 'MediMesh Health Centre',
+        category: 'organization',
+        description: 'Facility name displayed throughout the workspace',
+        requires_restart: false
+      },
+      {
+        key: 'organization.short_name',
+        value: 'MediMesh',
+        category: 'organization',
+        description: 'Short facility name used in compact navigation',
+        requires_restart: false
+      },
+      {
+        key: 'organization.facility_type',
+        value: 'hospital',
+        category: 'organization',
+        description: 'Operating model: clinic, medical-centre, or hospital',
+        requires_restart: false
+      },
+      {
+        key: 'organization.deployment_mode',
+        value: 'team',
+        category: 'organization',
+        description: 'Solo mode exposes the full workflow to one operator; team mode uses role workspaces',
+        requires_restart: false
+      },
+      {
+        key: 'organization.patient_label',
+        value: 'Patient',
+        category: 'organization',
+        description: 'Local term for a patient or client',
+        requires_restart: false
+      },
+      {
+        key: 'organization.visit_label',
+        value: 'Visit',
+        category: 'organization',
+        description: 'Local term for a visit or encounter',
+        requires_restart: false
+      },
+      {
+        key: 'organization.provider_label',
+        value: 'Clinician',
+        category: 'organization',
+        description: 'Local term for a care provider',
+        requires_restart: false
+      },
+      {
+        key: 'organization.currency',
+        value: 'KES',
+        category: 'organization',
+        description: 'Billing currency',
+        requires_restart: false
+      },
+      {
+        key: 'organization.timezone',
+        value: 'Africa/Nairobi',
+        category: 'organization',
+        description: 'Facility timezone',
+        requires_restart: false
+      },
+      {
+        key: 'organization.primary_color',
+        value: '#1B6B93',
+        category: 'organization',
+        description: 'Primary brand colour',
+        requires_restart: false
       }
     ];
   }
@@ -160,22 +230,14 @@ class SystemSettings {
   static async initializeDefaults() {
     try {
       const db = getDB();
-      const countResult = await db.query('SELECT COUNT(*) FROM system_settings');
-      const count = parseInt(countResult.rows[0].count);
-
-      if (count === 0) {
-        logger.info('Initializing default system settings');
-        const defaults = this.getDefaultSettings();
-        
-        for (const setting of defaults) {
-          await db.query(
-            'INSERT INTO system_settings (key, value, category, description, requires_restart) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (key) DO NOTHING',
-            [setting.key, JSON.stringify(setting.value), setting.category, setting.description, setting.requires_restart]
-          );
-        }
-        
-        logger.info('Default system settings initialized');
+      const defaults = this.getDefaultSettings();
+      for (const setting of defaults) {
+        await db.query(
+          'INSERT INTO system_settings (key, value, category, description, requires_restart) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (key) DO NOTHING',
+          [setting.key, JSON.stringify(setting.value), setting.category, setting.description, setting.requires_restart]
+        );
       }
+      logger.info('Default system settings verified');
     } catch (error) {
       logger.error('Error initializing default settings:', error);
       throw error;
@@ -394,4 +456,4 @@ class SystemSettings {
   }
 }
 
-module.exports = SystemSettings; 
+module.exports = SystemSettings;

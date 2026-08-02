@@ -1,6 +1,14 @@
 # 📚 MediMesh Documentation Center
 
-**Last Updated:** November 30, 2025
+> **Current release documentation (22 July 2026):** Use the
+> [role-based user guide](USER-GUIDE.md),
+> [production operations guide](PRODUCTION-OPERATIONS.md), and
+> [regulatory/release gates](REGULATORY-AND-RELEASE-GATES.md). Other documents
+> in this directory are historical engineering snapshots. They may contain
+> development-only passwords, ports, `latest` image examples, or superseded
+> architecture and must not be used to operate a production deployment.
+
+**Historical index last updated:** November 30, 2025
 
 This directory contains all project documentation, organized by category for easy navigation.
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -22,7 +22,7 @@ import {
   Add as AddIcon,
   Visibility as ViewIcon
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -34,41 +34,57 @@ const PatientsPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(25);
+  const [totalPatients, setTotalPatients] = useState(0);
   
   const { hasRole } = useAuth();
   const navigate = useNavigate();
+  const searchTermRef = useRef(searchTerm);
+  const paginationRef = useRef({ page, rowsPerPage });
 
-  const fetchPatients = async () => {
+  const fetchPatients = useCallback(async (currentPage, currentRowsPerPage, currentSearchTerm) => {
     try {
       setLoading(true);
       setError(null);
 
       const params = {
-        limit: rowsPerPage,
-        offset: page * rowsPerPage,
-        search: searchTerm.trim() || undefined
+        limit: currentRowsPerPage,
+        offset: currentPage * currentRowsPerPage,
+        search: currentSearchTerm.trim() || undefined
       };
 
       const response = await apiService.patients.getAll(params);
       setPatients(response.data || []);
+      setTotalPatients(response.pagination?.total ?? response.data?.length ?? 0);
     } catch (err) {
       console.error('Error fetching patients:', err);
       setError('Failed to load patients. Please try again.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchPatients();
+    searchTermRef.current = searchTerm;
+  }, [searchTerm]);
+
+  useEffect(() => {
+    paginationRef.current = { page, rowsPerPage };
   }, [page, rowsPerPage]);
 
   useEffect(() => {
+    fetchPatients(page, rowsPerPage, searchTermRef.current);
+  }, [fetchPatients, page, rowsPerPage]);
+
+  useEffect(() => {
     const timer = setTimeout(() => {
-      fetchPatients();
+      fetchPatients(
+        paginationRef.current.page,
+        paginationRef.current.rowsPerPage,
+        searchTerm
+      );
     }, 500);
     return () => clearTimeout(timer);
-  }, [searchTerm]);
+  }, [fetchPatients, searchTerm]);
 
   const calculateAge = (dateOfBirth) => {
     const today = new Date();
@@ -88,12 +104,12 @@ const PatientsPage = () => {
   }
 
   return (
-    <Box>
+    <Box sx={{ width: '100%', minWidth: 0 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4" gutterBottom>
           Patients
         </Typography>
-        {(hasRole('doctor') || hasRole('nurse') || hasRole('admin')) && (
+        {(hasRole('admin') || hasRole('receptionist')) && (
           <Button
             variant="contained"
             startIcon={<AddIcon />}
@@ -126,9 +142,9 @@ const PatientsPage = () => {
         />
       </Paper>
 
-      <Paper>
+      <Paper sx={{ width: '100%', minWidth: 0 }}>
         <TableContainer>
-          <Table>
+          <Table sx={{ width: '100%' }}>
             <TableHead>
               <TableRow>
                 <TableCell>Patient</TableCell>
@@ -216,7 +232,7 @@ const PatientsPage = () => {
 
         <TablePagination
           component="div"
-          count={patients.length}
+          count={totalPatients}
           page={page}
           onPageChange={(event, newPage) => setPage(newPage)}
           rowsPerPage={rowsPerPage}

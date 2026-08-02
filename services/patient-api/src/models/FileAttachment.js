@@ -5,57 +5,97 @@ const { getDB } = require('../utils/database');
 class FileAttachment {
   constructor(data) {
     this.id = data.id;
+    this.file_key = data.file_key || data.storage_key;
+    this.bucket_name = data.bucket_name || data.storage_bucket;
+    this.original_name = data.original_name || data.file_name;
     this.medical_record_id = data.medical_record_id;
     this.patient_id = data.patient_id;
-    this.file_name = data.file_name;
+    this.encounter_id = data.encounter_id;
+    this.lab_order_id = data.lab_order_id;
+    this.radiology_order_id = data.radiology_order_id;
+    this.prescription_id = data.prescription_id;
+    this.admission_id = data.admission_id;
+    this.file_name = data.file_name || data.original_name;
     this.file_type = data.file_type;
     this.file_size = data.file_size;
     this.mime_type = data.mime_type;
     this.storage_path = data.storage_path;
-    this.storage_bucket = data.storage_bucket;
-    this.storage_key = data.storage_key;
+    this.storage_bucket = data.storage_bucket || data.bucket_name;
+    this.storage_key = data.storage_key || data.file_key;
     this.category = data.category;
     this.description = data.description;
     this.tags = data.tags;
     this.is_private = data.is_private;
+    this.is_active = data.is_active;
     this.uploaded_by = data.uploaded_by;
     this.upload_date = data.upload_date;
     this.created_at = data.created_at;
     this.updated_at = data.updated_at;
+    this.detected_mime_type = data.detected_mime_type;
+    this.malware_scan_status = data.malware_scan_status;
+    this.deleted_at = data.deleted_at;
   }
 
   static async create(data) {
     const id = uuidv4();
     const now = new Date();
+    const storageKey = data.storage_key || data.file_key;
+    const storageBucket = data.storage_bucket || data.bucket_name;
+    const originalName = data.original_name || data.file_name;
 
     const query = `
       INSERT INTO file_attachments (
-        id, medical_record_id, patient_id, file_name, file_type, file_size, 
-        mime_type, storage_path, storage_bucket, storage_key, category, 
-        description, tags, is_private, uploaded_by, upload_date, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+        id, file_key, bucket_name, original_name,
+        medical_record_id, patient_id, encounter_id, lab_order_id,
+        radiology_order_id, prescription_id, admission_id,
+        file_name, file_type, file_size,
+        mime_type, storage_path, storage_bucket, storage_key, category,
+        description, tags, is_private, uploaded_by, upload_date,
+        upload_url, etag, metadata, detected_mime_type, malware_scan_status,
+        created_at, updated_at, created_by
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17, $18, $19,
+        $20, $21, $22, $23, $24,
+        $25, $26, $27::jsonb, $28, $29,
+        $30, $31, $32
+      )
       RETURNING *
     `;
 
     const values = [
       id,
+      storageKey,
+      storageBucket,
+      originalName,
       data.medical_record_id || null,
       data.patient_id || null,
-      data.file_name,
+      data.encounter_id || null,
+      data.lab_order_id || null,
+      data.radiology_order_id || null,
+      data.prescription_id || null,
+      data.admission_id || null,
+      originalName,
       data.file_type,
       data.file_size,
       data.mime_type,
-      data.storage_path,
-      data.storage_bucket,
-      data.storage_key,
+      data.storage_path || storageKey,
+      storageBucket,
+      storageKey,
       data.category,
       data.description || null,
       data.tags || null,
-      data.is_private || false,
+      data.is_private === true,
       data.uploaded_by,
       data.upload_date || now,
+      data.upload_url || null,
+      data.etag || null,
+      JSON.stringify(data.metadata || {}),
+      data.detected_mime_type,
+      data.malware_scan_status || 'pending',
       now,
-      now
+      now,
+      String(data.uploaded_by)
     ];
 
     try {
@@ -152,6 +192,33 @@ class FileAttachment {
     }
   }
 
+  static async findByContext(filters = {}) {
+    const supported = {
+      recordId: 'medical_record_id',
+      patientId: 'patient_id',
+      encounterId: 'encounter_id',
+      labOrderId: 'lab_order_id',
+      radiologyOrderId: 'radiology_order_id',
+      prescriptionId: 'prescription_id',
+      admissionId: 'admission_id'
+    };
+    const clauses = ['is_active = TRUE'];
+    const values = [];
+    for (const [key, column] of Object.entries(supported)) {
+      if (!filters[key]) continue;
+      values.push(filters[key]);
+      clauses.push(`${column} = $${values.length}`);
+    }
+    values.push(Math.min(Math.max(Number(filters.limit) || 50, 1), 100));
+    const result = await getDB().query(`
+      SELECT * FROM file_attachments
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY upload_date DESC
+      LIMIT $${values.length}
+    `, values);
+    return result.rows.map(row => new FileAttachment(row));
+  }
+
   async update(data) {
     const now = new Date();
     const fields = [];
@@ -193,17 +260,22 @@ class FileAttachment {
     }
   }
 
-  async delete() {
+  async archive(archivedBy, reason) {
     const query = `
       UPDATE file_attachments 
-      SET is_active = false, updated_at = $1 
-      WHERE id = $2 
+      SET is_active = false,
+          deleted_at = $1,
+          deleted_by = $2,
+          delete_reason = $3,
+          updated_at = $1,
+          updated_by = $2
+      WHERE id = $4
       RETURNING *
     `;
 
     try {
       const pool = getDB();
-      const result = await pool.query(query, [new Date(), this.id]);
+      const result = await pool.query(query, [new Date(), archivedBy, reason, this.id]);
       this.is_active = false;
       return result.rows[0];
     } catch (error) {
@@ -217,6 +289,9 @@ class FileAttachment {
     const query = `
       CREATE TABLE IF NOT EXISTS file_attachments (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        file_key VARCHAR(500) NOT NULL,
+        bucket_name VARCHAR(100) NOT NULL,
+        original_name VARCHAR(255) NOT NULL,
         medical_record_id UUID REFERENCES medical_records(id) ON DELETE CASCADE,
         patient_id UUID REFERENCES patients(id) ON DELETE CASCADE,
         file_name VARCHAR(255) NOT NULL,
@@ -233,9 +308,39 @@ class FileAttachment {
         is_active BOOLEAN DEFAULT TRUE,
         uploaded_by UUID NOT NULL,
         upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        upload_url TEXT,
+        etag VARCHAR(100),
+        metadata JSONB,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        created_by VARCHAR(100),
+        updated_by VARCHAR(100)
       );
+
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS file_key VARCHAR(500);
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS bucket_name VARCHAR(100);
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS original_name VARCHAR(255);
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS upload_url TEXT;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS etag VARCHAR(100);
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS metadata JSONB;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS created_by VARCHAR(100);
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS updated_by VARCHAR(100);
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS detected_mime_type VARCHAR(100);
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS malware_scan_status VARCHAR(20) NOT NULL DEFAULT 'pending';
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS encounter_id UUID REFERENCES encounters(id) ON DELETE SET NULL;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS lab_order_id UUID REFERENCES lab_orders(id) ON DELETE SET NULL;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS radiology_order_id UUID REFERENCES radiology_orders(id) ON DELETE SET NULL;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS prescription_id INTEGER REFERENCES prescriptions(id) ON DELETE SET NULL;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS admission_id UUID REFERENCES admissions(id) ON DELETE SET NULL;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS deleted_by UUID;
+      ALTER TABLE file_attachments ADD COLUMN IF NOT EXISTS delete_reason VARCHAR(500);
+
+      UPDATE file_attachments
+      SET file_key = COALESCE(file_key, storage_key),
+          bucket_name = COALESCE(bucket_name, storage_bucket),
+          original_name = COALESCE(original_name, file_name)
+      WHERE file_key IS NULL OR bucket_name IS NULL OR original_name IS NULL;
 
       -- Create indexes for performance
       CREATE INDEX IF NOT EXISTS idx_file_attachments_record ON file_attachments(medical_record_id);
@@ -256,4 +361,4 @@ class FileAttachment {
   }
 }
 
-module.exports = FileAttachment; 
+module.exports = FileAttachment;

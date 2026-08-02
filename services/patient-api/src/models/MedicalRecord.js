@@ -2,11 +2,14 @@ const { getDB } = require('../utils/database');
 const { v4: uuidv4 } = require('uuid');
 const { logger } = require('../utils/logger');
 const { cache } = require('../utils/redis');
+const { patientScope } = require('../security/accessControl');
 
 class MedicalRecord {
   constructor(data) {
     this.id = data.id;
     this.patient_id = data.patient_id;
+    this.encounter_id = data.encounter_id;
+    this.consultation_record_id = data.consultation_record_id;
     this.record_type = data.record_type;
     this.record_date = data.record_date;
     this.provider_name = data.provider_name;
@@ -28,7 +31,7 @@ class MedicalRecord {
         SELECT mr.*, p.first_name, p.last_name, p.patient_id as patient_number
         FROM medical_records mr
         JOIN patients p ON mr.patient_id = p.id
-        WHERE mr.patient_id = $1
+        WHERE mr.patient_id = $1 AND mr.deleted_at IS NULL
         ORDER BY mr.record_date DESC, mr.created_at DESC
         LIMIT $2 OFFSET $3
       `;
@@ -64,7 +67,7 @@ class MedicalRecord {
         SELECT mr.*, p.first_name, p.last_name, p.patient_id as patient_number
         FROM medical_records mr
         JOIN patients p ON mr.patient_id = p.id
-        WHERE mr.id = $1
+        WHERE mr.id = $1 AND mr.deleted_at IS NULL
       `;
 
       const result = await db.query(query, [id]);
@@ -91,16 +94,26 @@ class MedicalRecord {
     }
   }
 
-  static async findAll(limit = 50, offset = 0, filters = {}) {
+  static async findAll(limit = 50, offset = 0, filters = {}, user = null) {
     try {
       const db = getDB();
       let query = `
         SELECT mr.*, p.first_name, p.last_name, p.patient_id as patient_number
         FROM medical_records mr
         JOIN patients p ON mr.patient_id = p.id
-        WHERE 1=1
+        WHERE mr.deleted_at IS NULL
       `;
       const params = [];
+
+      if (user) {
+        const scope = patientScope(user, {
+          alias: 'p',
+          access: 'clinical',
+          parameterOffset: params.length
+        });
+        query += ` AND (${scope.clause})`;
+        params.push(...scope.params);
+      }
 
       // Add filters
       if (filters.recordType) {
@@ -152,23 +165,25 @@ class MedicalRecord {
     }
   }
 
-  static async create(data, createdBy) {
+  static async create(data, createdBy, executor = getDB()) {
     try {
-      const db = getDB();
       const id = uuidv4();
 
       const query = `
         INSERT INTO medical_records (
-          id, patient_id, record_type, record_date, provider_name,
+          id, patient_id, encounter_id, consultation_record_id,
+          record_type, record_date, provider_name,
           diagnosis, treatment_plan, medications, lab_results, notes, 
           vital_signs, follow_up_date, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING *
       `;
 
       const values = [
         id,
         data.patient_id,
+        data.encounter_id || null,
+        data.consultation_record_id || null,
         data.record_type,
         data.record_date,
         data.provider_name,
@@ -182,7 +197,7 @@ class MedicalRecord {
         createdBy
       ];
 
-      const result = await db.query(query, values);
+      const result = await executor.query(query, values);
       
       const record = new MedicalRecord(result.rows[0]);
       
@@ -253,11 +268,19 @@ class MedicalRecord {
     }
   }
 
-  async delete() {
+  async archive(archivedBy, reason) {
     try {
       const db = getDB();
       
-      const result = await db.query('DELETE FROM medical_records WHERE id = $1', [this.id]);
+      const result = await db.query(`
+        UPDATE medical_records
+        SET deleted_at = NOW(),
+            deleted_by = $2,
+            delete_reason = $3,
+            updated_at = NOW(),
+            updated_by = $2
+        WHERE id = $1 AND deleted_at IS NULL
+      `, [this.id, archivedBy, reason]);
       
       if (result.rowCount === 0) {
         throw new Error('Medical record not found');
@@ -266,7 +289,7 @@ class MedicalRecord {
       // Clear cache
       await cache.del(`medical_record:${this.id}`);
       
-      logger.info('Medical record deleted', { recordId: this.id });
+      logger.info('Medical record archived', { recordId: this.id, archivedBy });
       
       return true;
     } catch (error) {
@@ -275,20 +298,28 @@ class MedicalRecord {
     }
   }
 
-  static async getStatistics() {
+  static async getStatistics(user = null) {
     try {
       const db = getDB();
       const query = `
         SELECT 
           COUNT(*) as total_records,
-          COUNT(CASE WHEN created_at >= NOW() - INTERVAL '30 days' THEN 1 END) as new_records_30d,
-          COUNT(DISTINCT patient_id) as unique_patients,
-          COUNT(DISTINCT record_type) as record_types_count,
-          COUNT(CASE WHEN record_date >= NOW() - INTERVAL '7 days' THEN 1 END) as recent_records
-        FROM medical_records
+          COUNT(CASE WHEN mr.created_at >= NOW() - INTERVAL '30 days' THEN 1 END) as new_records_30d,
+          COUNT(DISTINCT mr.patient_id) as unique_patients,
+          COUNT(DISTINCT mr.record_type) as record_types_count,
+          COUNT(CASE WHEN mr.record_date >= NOW() - INTERVAL '7 days' THEN 1 END) as recent_records
+        FROM medical_records mr
+        JOIN patients p ON p.id = mr.patient_id
+        WHERE mr.deleted_at IS NULL
       `;
-      
-      const result = await db.query(query);
+      const params = [];
+      let scopedQuery = query;
+      if (user) {
+        const scope = patientScope(user, { alias: 'p', parameterOffset: 0 });
+        scopedQuery += ` AND (${scope.clause})`;
+        params.push(...scope.params);
+      }
+      const result = await db.query(scopedQuery, params);
       return result.rows[0];
     } catch (error) {
       logger.error('Error getting medical record statistics:', error);
@@ -296,17 +327,28 @@ class MedicalRecord {
     }
   }
 
-  static async getRecordTypes() {
+  static async getRecordTypes(user = null) {
     try {
       const db = getDB();
       const query = `
-        SELECT DISTINCT record_type, COUNT(*) as count
-        FROM medical_records 
-        GROUP BY record_type 
+        SELECT mr.record_type, COUNT(*) as count
+        FROM medical_records mr
+        JOIN patients p ON p.id = mr.patient_id
+        WHERE mr.deleted_at IS NULL
+        GROUP BY mr.record_type
         ORDER BY count DESC
       `;
-      
-      const result = await db.query(query);
+      const params = [];
+      let scopedQuery = query;
+      if (user) {
+        const scope = patientScope(user, { alias: 'p', parameterOffset: 0 });
+        scopedQuery = scopedQuery.replace(
+          'GROUP BY mr.record_type',
+          `AND (${scope.clause}) GROUP BY mr.record_type`
+        );
+        params.push(...scope.params);
+      }
+      const result = await db.query(scopedQuery, params);
       return result.rows;
     } catch (error) {
       logger.error('Error getting record types:', error);
@@ -318,6 +360,8 @@ class MedicalRecord {
     return {
       id: this.id,
       patient_id: this.patient_id,
+      encounter_id: this.encounter_id,
+      consultation_record_id: this.consultation_record_id,
       patient_info: this.patient_info,
       record_type: this.record_type,
       record_date: this.record_date,
@@ -335,4 +379,4 @@ class MedicalRecord {
   }
 }
 
-module.exports = MedicalRecord; 
+module.exports = MedicalRecord;

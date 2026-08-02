@@ -1,5 +1,5 @@
 import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useLocation } from './routerCompat';
 import { Box } from '@mui/material';
 import { useAuth } from './contexts/AuthContext';
 
@@ -19,11 +19,20 @@ import CreateRecordPage from './pages/CreateRecordPage';
 import EditPatientPage from './pages/EditPatientPage';
 import EditRecordPage from './pages/EditRecordPage';
 import SettingsPage from './pages/SettingsPage';
+import QueueManagementPage from './pages/QueueManagementPage';
+import WardOccupancyPage from './pages/WardOccupancyPage';
+import PharmacyPage from './pages/PharmacyPage';
+import LaboratoryPage from './pages/LaboratoryPage';
+import EnhancedBillingPage from './pages/EnhancedBillingPage';
+import RadiologyPage from './pages/RadiologyPage';
+import AppointmentsPage from './pages/AppointmentsPage';
 import NotFoundPage from './pages/NotFoundPage';
+import { getHomeRoute, hasRouteRole } from './utils/navigation';
 
 // Protected Route component
-const ProtectedRoute = ({ children }) => {
-  const { isAuthenticated, loading } = useAuth();
+const ProtectedRoute = ({ children, allowedRoles }) => {
+  const { isAuthenticated, loading, user } = useAuth();
+  const location = useLocation();
   
   if (loading) {
     return <LoadingSpinner />;
@@ -32,20 +41,37 @@ const ProtectedRoute = ({ children }) => {
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;
   }
+
+  if ((user?.mustChangePassword || user?.mfaEnrollmentRequired) && location.pathname !== '/settings') {
+    return <Navigate to="/settings" replace />;
+  }
+
+  if (!hasRouteRole(user?.roles, allowedRoles)) {
+    return <Navigate to={getHomeRoute(user?.roles)} replace />;
+  }
   
   return children;
 };
 
-// Public Route component (redirects to dashboard if already authenticated)
+const HomeRedirect = () => {
+  const { user } = useAuth();
+  return <Navigate to={getHomeRoute(user?.roles)} replace />;
+};
+
+const RoleRoute = ({ roles, children }) => (
+  <ProtectedRoute allowedRoles={roles}>{children}</ProtectedRoute>
+);
+
+// Public Route component (redirects to the user's workspace if already authenticated)
 const PublicRoute = ({ children }) => {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   
   if (loading) {
     return <LoadingSpinner />;
   }
   
   if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={getHomeRoute(user?.roles)} replace />;
   }
   
   return children;
@@ -53,7 +79,7 @@ const PublicRoute = ({ children }) => {
 
 function App() {
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+    <Box sx={{ display: 'flex', width: '100%', minWidth: 0, minHeight: '100vh' }}>
       <Routes>
         {/* Public routes */}
         <Route 
@@ -72,20 +98,41 @@ function App() {
             <ProtectedRoute>
               <AppLayout>
                 <Routes>
-                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                  <Route path="/dashboard" element={<DashboardPage />} />
+                  <Route path="/" element={<HomeRedirect />} />
+                  <Route path="/dashboard" element={<RoleRoute roles={['doctor', 'nurse', 'admin']}><DashboardPage /></RoleRoute>} />
                   
                   {/* Patient routes */}
-                  <Route path="/patients" element={<PatientsPage />} />
-                  <Route path="/patients/new" element={<CreatePatientPage />} />
-                  <Route path="/patients/:id" element={<PatientDetailPage />} />
-                  <Route path="/patients/:id/edit" element={<EditPatientPage />} />
+                  <Route path="/patients" element={<RoleRoute roles={['doctor', 'nurse', 'admin', 'receptionist']}><PatientsPage /></RoleRoute>} />
+                  <Route path="/patients/new" element={<RoleRoute roles={['admin', 'receptionist']}><CreatePatientPage /></RoleRoute>} />
+                  <Route path="/patients/:id" element={<RoleRoute roles={['doctor', 'nurse', 'admin', 'receptionist']}><PatientDetailPage /></RoleRoute>} />
+                  <Route path="/patients/:id/edit" element={<RoleRoute roles={['doctor', 'nurse', 'admin', 'receptionist']}><EditPatientPage /></RoleRoute>} />
                   
                   {/* Medical records routes */}
-                  <Route path="/records" element={<MedicalRecordsPage />} />
-                  <Route path="/records/new" element={<CreateRecordPage />} />
-                  <Route path="/records/:id" element={<RecordDetailPage />} />
-                  <Route path="/records/:id/edit" element={<EditRecordPage />} />
+                  <Route path="/records" element={<RoleRoute roles={['doctor', 'nurse', 'admin']}><MedicalRecordsPage /></RoleRoute>} />
+                  <Route path="/records/new" element={<RoleRoute roles={['doctor', 'nurse', 'admin']}><CreateRecordPage /></RoleRoute>} />
+                  <Route path="/records/:id" element={<RoleRoute roles={['doctor', 'nurse', 'admin']}><RecordDetailPage /></RoleRoute>} />
+                  <Route path="/records/:id/edit" element={<RoleRoute roles={['doctor', 'nurse', 'admin']}><EditRecordPage /></RoleRoute>} />
+                  
+                  {/* Appointments & Scheduling */}
+                  <Route path="/appointments" element={<RoleRoute roles={['doctor', 'nurse', 'admin', 'receptionist']}><AppointmentsPage /></RoleRoute>} />
+                  
+                  {/* Queue Management - NEW! */}
+                  <Route path="/queue" element={<RoleRoute roles={['doctor', 'nurse', 'admin', 'receptionist']}><QueueManagementPage /></RoleRoute>} />
+                  
+                  {/* Ward Occupancy - NEW! */}
+                  <Route path="/wards" element={<RoleRoute roles={['doctor', 'nurse', 'admin']}><WardOccupancyPage /></RoleRoute>} />
+                  
+                  {/* Pharmacy Management - PHASE 2! */}
+                  <Route path="/pharmacy" element={<RoleRoute roles={['pharmacist', 'admin']}><PharmacyPage /></RoleRoute>} />
+                  
+                  {/* Lab Workflow - PHASE 2! */}
+                  <Route path="/lab" element={<RoleRoute roles={['lab-tech', 'admin']}><LaboratoryPage /></RoleRoute>} />
+                  
+                  {/* Billing - PHASE 3! */}
+                  <Route path="/billing" element={<RoleRoute roles={['billing', 'admin']}><EnhancedBillingPage /></RoleRoute>} />
+                  
+                  {/* Radiology - PHASE 3! */}
+                  <Route path="/radiology" element={<RoleRoute roles={['radiographer', 'radiologist', 'admin']}><RadiologyPage /></RoleRoute>} />
                   
                   {/* Settings */}
                   <Route path="/settings" element={<SettingsPage />} />
@@ -102,4 +149,4 @@ function App() {
   );
 }
 
-export default App; 
+export default App;

@@ -84,8 +84,8 @@ CREATE TABLE patient_documents (
 ### Required Environment Variables
 ```bash
 MINIO_ENDPOINT=http://localhost:9000
-MINIO_ACCESS_KEY=your-access-key
-MINIO_SECRET_KEY=your-secret-key
+MINIO_ACCESS_KEY_FILE=/run/secrets/minio_app_user
+MINIO_SECRET_KEY_FILE=/run/secrets/minio_app_password
 MINIO_BUCKET_NAME=medimesh-documents
 ```
 
@@ -248,7 +248,7 @@ docker exec -it medimesh-airflow-webserver airflow users create \
     --lastname User \
     --role Admin \
     --email admin@medimesh.com \
-    --password admin123
+    --password "$AIRFLOW_ADMIN_PASSWORD"
 ```
 
 ---

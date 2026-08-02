@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -35,7 +35,6 @@ import {
 import {
   Add as AddIcon,
   Search as SearchIcon,
-  FilterList as FilterIcon,
   Visibility as ViewIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
@@ -43,7 +42,7 @@ import {
   MoreVert as MoreVertIcon,
   Clear as ClearIcon
 } from '@mui/icons-material';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -90,23 +89,7 @@ const MedicalRecordsPage = () => {
     'other'
   ];
 
-  // Debounced search function
-  const debouncedSearch = useCallback(
-    debounce((term, currentFilters, currentPage, currentLimit) => {
-      fetchRecords(term, currentFilters, currentPage, currentLimit);
-    }, 300),
-    []
-  );
-
-  useEffect(() => {
-    fetchStats();
-  }, []);
-
-  useEffect(() => {
-    debouncedSearch(searchTerm, filters, pagination.page, pagination.limit);
-  }, [searchTerm, filters, pagination.page, pagination.limit, debouncedSearch]);
-
-  const fetchRecords = async (search = '', currentFilters = {}, page = 0, limit = 25) => {
+  const fetchRecords = useCallback(async (search = '', currentFilters = {}, page = 0, limit = 25) => {
     try {
       setLoading(true);
       setError(null);
@@ -138,16 +121,31 @@ const MedicalRecordsPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
     try {
       const response = await apiService.medicalRecords.getStatistics();
       setStats(response.data);
     } catch (err) {
       console.error('Error fetching stats:', err);
     }
-  };
+  }, []);
+
+  // Debounced search function
+  const debouncedSearch = useMemo(
+    () => debounce(fetchRecords, 300),
+    [fetchRecords]
+  );
+
+  useEffect(() => {
+    fetchStats();
+  }, [fetchStats]);
+
+  useEffect(() => {
+    debouncedSearch(searchTerm, filters, pagination.page, pagination.limit);
+    return () => debouncedSearch.cancel();
+  }, [searchTerm, filters, pagination.page, pagination.limit, debouncedSearch]);
 
   const handleSearch = (event) => {
     setSearchTerm(event.target.value);
@@ -274,7 +272,7 @@ const MedicalRecordsPage = () => {
   }
 
   return (
-    <Box>
+    <Box sx={{ width: '100%', minWidth: 0 }}>
       {/* Header */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h4">
@@ -439,9 +437,9 @@ const MedicalRecordsPage = () => {
       )}
 
       {/* Records Table */}
-      <Paper>
+      <Paper sx={{ width: '100%', minWidth: 0 }}>
         <TableContainer>
-          <Table>
+          <Table sx={{ width: '100%' }}>
             <TableHead>
               <TableRow>
                 <TableCell>Date</TableCell>
@@ -515,8 +513,9 @@ const MedicalRecordsPage = () => {
                     <TableCell>
                       <Typography 
                         variant="body2" 
-                        sx={{ 
-                          maxWidth: 200,
+                        sx={{
+                          width: '100%',
+                          minWidth: 180,
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap'
@@ -624,4 +623,4 @@ const MedicalRecordsPage = () => {
   );
 };
 
-export default MedicalRecordsPage; 
+export default MedicalRecordsPage;

@@ -8,6 +8,7 @@ const UserSettings = require('../models/UserSettings');
 const SystemSettings = require('../models/SystemSettings');
 const { authorize } = require('../middleware/auth');
 const { logger, auditLogger } = require('../utils/logger');
+const { getDB } = require('../utils/database');
 
 // Validation schemas
 const userSettingsSchema = Joi.object({
@@ -259,6 +260,22 @@ router.get('/user/schema',
 // SYSTEM SETTINGS ROUTES (Admin Only)
 // =====================
 
+// GET /api/settings/organization - Safe shared facility identity and labels.
+// Authentication is already enforced by the route mount; these settings do
+// not contain secrets and must be visible in every role workspace.
+router.get('/organization', async (req, res) => {
+  try {
+    const settings = await SystemSettings.findByCategory('organization');
+    res.json({
+      success: true,
+      data: settings.map(setting => setting.toJSON())
+    });
+  } catch (error) {
+    logger.error('Error retrieving organization settings:', error);
+    res.status(500).json({ success: false, error: 'Failed to retrieve organization settings' });
+  }
+});
+
 // GET /api/settings/system - Get all system settings
 router.get('/system',
   authorize(['admin']),
@@ -488,62 +505,43 @@ router.get('/logs/audit',
         });
       }
 
-      const logFile = path.join(__dirname, '../../logs/audit.log');
-      
-      try {
-        const logContent = await fs.readFile(logFile, 'utf8');
-        let logs = logContent.split('\n')
-          .filter(line => line.trim())
-          .map(line => {
-            try {
-              return JSON.parse(line);
-            } catch {
-              return { message: line, timestamp: new Date().toISOString(), level: 'info' };
-            }
-          })
-          .reverse(); // Most recent first
-
-        // Apply filters (similar to application logs)
-        if (value.userId) {
-          logs = logs.filter(log => log.userId === value.userId);
-        }
-
-        if (value.search) {
-          const searchTerm = value.search.toLowerCase();
-          logs = logs.filter(log => 
-            JSON.stringify(log).toLowerCase().includes(searchTerm)
-          );
-        }
-
-        if (value.startDate) {
-          logs = logs.filter(log => new Date(log.timestamp) >= new Date(value.startDate));
-        }
-
-        if (value.endDate) {
-          logs = logs.filter(log => new Date(log.timestamp) <= new Date(value.endDate));
-        }
-
-        // Pagination
-        const paginatedLogs = logs.slice(value.offset, value.offset + value.limit);
-
-        res.json({
-          success: true,
-          data: paginatedLogs,
-          pagination: {
-            limit: value.limit,
-            offset: value.offset,
-            total: logs.length,
-            has_more: value.offset + value.limit < logs.length
-          }
-        });
-      } catch (fileError) {
-        res.json({
-          success: true,
-          data: [],
-          message: 'Audit log file not found or empty',
-          pagination: { limit: value.limit, offset: value.offset, total: 0, has_more: false }
-        });
+      const params = [];
+      let query = `
+        SELECT sequence_id, request_id, occurred_at, user_id,
+               provider_identifier, username, action, method, path,
+               status_code, outcome, resource_type, resource_id,
+               patient_id, purpose, break_glass, source_ip, metadata,
+               previous_hash, event_hash, COUNT(*) OVER()::int AS total
+        FROM audit_events
+        WHERE TRUE
+      `;
+      const add = input => {
+        params.push(input);
+        return `$${params.length}`;
+      };
+      if (value.userId) query += ` AND user_id = ${add(value.userId)}`;
+      if (value.startDate) query += ` AND occurred_at >= ${add(value.startDate)}`;
+      if (value.endDate) query += ` AND occurred_at <= ${add(value.endDate)}`;
+      if (value.search) {
+        const search = add(`%${value.search}%`);
+        query += ` AND (
+          action ILIKE ${search} OR path ILIKE ${search} OR
+          username ILIKE ${search} OR resource_id ILIKE ${search}
+        )`;
       }
+      query += ` ORDER BY sequence_id DESC LIMIT ${add(value.limit)} OFFSET ${add(value.offset)}`;
+      const result = await getDB().query(query, params);
+      const total = result.rows[0]?.total || 0;
+      return res.json({
+        success: true,
+        data: result.rows.map(({ total: ignored, ...event }) => event),
+        pagination: {
+          limit: value.limit,
+          offset: value.offset,
+          total,
+          has_more: value.offset + value.limit < total
+        }
+      });
     } catch (error) {
       logger.error('Error retrieving audit logs:', error);
       res.status(500).json({
@@ -732,4 +730,4 @@ router.post('/logs/export',
   }
 );
 
-module.exports = router; 
+module.exports = router;

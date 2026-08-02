@@ -1,72 +1,20 @@
-version: '3.8'
-
+# Use together with the base file:
+# docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm patient-api
 services:
-  # Core Database
-  postgres:
-    image: postgres:15
-    container_name: medimesh-postgres-test
-    environment:
-      POSTGRES_DB: medimesh
-      POSTGRES_USER: medimesh_user
-      POSTGRES_PASSWORD: MediMeshDB2024!
-    volumes:
-      - postgres_test_data:/var/lib/postgresql/data
-      - ./init-scripts:/docker-entrypoint-initdb.d
-    ports:
-      - "5432:5432"
-    networks:
-      - medimesh-test-network
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U medimesh_user -d medimesh"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-  # Redis for caching
-  redis:
-    image: redis:7-alpine
-    container_name: medimesh-redis-test
-    volumes:
-      - redis_test_data:/data
-    ports:
-      - "6379:6379"
-    command: redis-server --appendonly yes --requirepass redis_password
-    networks:
-      - medimesh-test-network
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-
-  # Patient Service API
   patient-api:
     build:
-      context: ./services/patient-api
-      dockerfile: Dockerfile
-    container_name: medimesh-patient-api-test
+      target: test
     environment:
-      DATABASE_URL: postgresql://medimesh_user:MediMeshDB2024!@postgres:5432/medimesh
-      REDIS_URL: redis://redis:6379
-      JWT_SECRET: your-super-secret-jwt-key-change-this-in-production-12345
-      NODE_ENV: development
-      PORT: 3000
-      ALLOWED_ORIGINS: http://localhost:3000
-      LOG_LEVEL: info
-    ports:
-      - "3001:3000"
-    networks:
-      - medimesh-test-network
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      NODE_ENV: test
+      REQUIRE_MFA: "false"
+      RUN_RUNTIME_SCHEMA_SYNC: "false"
+    command: ["npm", "test", "--", "--runInBand"]
+    ports: []
 
-networks:
-  medimesh-test-network:
-    driver: bridge
-
-volumes:
-  postgres_test_data:
-  redis_test_data: 
+  web-app:
+    build:
+      target: test
+    environment:
+      CI: "true"
+    command: ["npm", "test"]
+    ports: []

@@ -4,36 +4,46 @@
   "description": "MediMesh Clinician Web Application",
   "private": true,
   "dependencies": {
-    "@testing-library/jest-dom": "^5.16.4",
-    "@testing-library/react": "^13.3.0",
-    "@testing-library/user-event": "^13.5.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "react-router-dom": "^6.3.0",
-    "react-scripts": "5.0.1",
-    "axios": "^1.4.0",
-    "keycloak-js": "^22.0.1",
-    "@mui/material": "^5.14.1",
-    "@mui/icons-material": "^5.14.1",
-    "@emotion/react": "^11.11.1",
-    "@emotion/styled": "^11.11.0",
-    "@mui/x-data-grid": "^6.10.1",
-    "@mui/x-date-pickers": "^6.10.1",
-    "date-fns": "^2.30.0",
-    "recharts": "^2.7.2",
-    "web-vitals": "^2.1.4"
+    "@emotion/react": "11.14.0",
+    "@emotion/styled": "11.14.0",
+    "@mui/icons-material": "5.17.1",
+    "@mui/material": "5.17.1",
+    "@mui/x-data-grid": "6.20.4",
+    "@mui/x-date-pickers": "6.20.2",
+    "axios": "1.18.1",
+    "date-fns": "2.30.0",
+    "keycloak-js": "26.2.4",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "2.15.3",
+    "socket.io-client": "4.8.1",
+    "web-vitals": "2.1.4",
+    "wouter": "3.10.0"
+  },
+  "devDependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/preset-env": "7.29.7",
+    "@babel/preset-react": "7.29.7",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/jest-dom": "7.0.0",
+    "@testing-library/react": "16.3.2",
+    "@testing-library/user-event": "14.6.1",
+    "@vitejs/plugin-react": "5.2.0",
+    "babel-jest": "30.4.1",
+    "jest": "30.4.2",
+    "jest-environment-jsdom": "30.4.1",
+    "vite": "7.3.6"
+  },
+  "overrides": {
+    "babel-plugin-istanbul": "8.0.0",
+    "brace-expansion": "5.0.8",
+    "glob": "13.0.6",
+    "test-exclude": "8.0.0"
   },
   "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
+    "start": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "test": "jest --runInBand"
   },
   "browserslist": {
     "production": [
@@ -46,5 +56,14 @@
       "last 1 firefox version",
       "last 1 safari version"
     ]
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "setupFilesAfterEnv": [
+      "<rootDir>/src/setupTests.js"
+    ],
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(wouter|regexparam|mitt|use-sync-external-store)/)"
+    ]
   }
-} 
+}

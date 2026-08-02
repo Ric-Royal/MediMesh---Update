@@ -69,7 +69,7 @@ docker-compose ps patient-api
 ### **Test 1: Frontend Test (Easiest)**
 
 1. **Open your browser:** http://localhost:3000
-2. **Login** with development credentials (`admin` / `admin123`)
+2. **Login** as `admin` using the ignored generated local password
 3. **Go to Patients page**
 4. **Click on any patient**
 5. **Click "Request Payment" button**
@@ -84,13 +84,12 @@ docker-compose ps patient-api
 ### **Test 2: API Test with PowerShell**
 
 ```powershell
-# 1. Get authentication token
-$auth = Invoke-RestMethod -Uri "http://localhost:3001/api/auth/login" -Method Post -Body '{"username":"admin","password":"admin123"}' -ContentType "application/json"
-$token = $auth.token
+# 1. Establish a cookie session
+$password = (Get-Content -Raw .\secrets\bootstrap_admin_password.txt).Trim()
+$auth = Invoke-RestMethod -Uri "http://localhost:3000/api/auth/login" -Method Post -Body (@{username='admin'; password=$password} | ConvertTo-Json) -ContentType "application/json" -SessionVariable session
 
 # 2. Get a patient
-$headers = @{"Authorization"="Bearer $token"; "Content-Type"="application/json"}
-$patients = Invoke-RestMethod -Uri "http://localhost:3001/api/patients?limit=1" -Headers $headers
+$patients = Invoke-RestMethod -Uri "http://localhost:3000/api/patients?limit=1" -WebSession $session
 $patientId = $patients.data[0].id
 
 # 3. Initiate payment

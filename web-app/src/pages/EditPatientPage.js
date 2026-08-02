@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -20,7 +20,7 @@ import {
   Save as SaveIcon,
   Person as PersonIcon
 } from '@mui/icons-material';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -68,11 +68,7 @@ const EditPatientPage = () => {
   // Check permissions
   const hasEditPermission = hasRole('doctor') || hasRole('nurse') || hasRole('admin');
 
-  useEffect(() => {
-    fetchPatientData();
-  }, [id]);
-
-  const fetchPatientData = async () => {
+  const fetchPatientData = useCallback(async () => {
     try {
       setLoading(true);
       const response = await apiService.patients.getById(id);
@@ -113,7 +109,11 @@ const EditPatientPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    fetchPatientData();
+  }, [fetchPatientData]);
 
   const handleInputChange = (field, value, section = null) => {
     if (section) {
@@ -163,12 +163,12 @@ const EditPatientPage = () => {
     }
 
     // Phone validation
-    if (formData.phone && !/^\+?[\d\s\-\(\)]+$/.test(formData.phone)) {
+    if (formData.phone && !/^\+?[\d\s\-()]+$/.test(formData.phone)) {
       newErrors['phone'] = 'Please enter a valid phone number';
     }
 
     // Emergency contact phone validation
-    if (formData.emergency_contact.phone && !/^\+?[\d\s\-\(\)]+$/.test(formData.emergency_contact.phone)) {
+    if (formData.emergency_contact.phone && !/^\+?[\d\s\-()]+$/.test(formData.emergency_contact.phone)) {
       newErrors['emergency_contact.phone'] = 'Please enter a valid phone number';
     }
 
@@ -399,7 +399,7 @@ const EditPatientPage = () => {
                       onChange={(e) => handleInputChange('phone', e.target.value)}
                       error={!!errors.phone}
                       helperText={errors.phone}
-                      placeholder="+1 (555) 123-4567"
+                      placeholder="+254 712 345 678"
                     />
                   </Grid>
                   <Grid item xs={12} sm={6}>
@@ -510,7 +510,7 @@ const EditPatientPage = () => {
                       onChange={(e) => handleInputChange('phone', e.target.value, 'emergency_contact')}
                       error={!!errors['emergency_contact.phone']}
                       helperText={errors['emergency_contact.phone']}
-                      placeholder="+1 (555) 123-4567"
+                      placeholder="+254 712 345 678"
                     />
                   </Grid>
                 </Grid>
@@ -535,7 +535,7 @@ const EditPatientPage = () => {
                       onChange={(e) => handleInputChange('provider', e.target.value, 'insurance')}
                       error={!!errors['insurance.provider']}
                       helperText={errors['insurance.provider']}
-                      placeholder="e.g., Blue Cross, Aetna, United Healthcare"
+                      placeholder="e.g., SHIF, AAR, Jubilee"
                     />
                   </Grid>
                   <Grid item xs={12} sm={4}>
@@ -579,7 +579,6 @@ const EditPatientPage = () => {
                   patientId={id}
                   category="patient-documents"
                   onFileDeleted={(fileId) => {
-                    console.log('Patient document deleted:', fileId);
                     // Handle file deletion - could refresh file list
                   }}
                 />
@@ -590,7 +589,6 @@ const EditPatientPage = () => {
                     category="patient-documents"
                     patientId={id}
                     onUploadSuccess={(files) => {
-                      console.log('Patient documents uploaded:', files);
                       setHasUploadedFiles(true); // Mark that files have been uploaded
                     }}
                     onUploadError={(error) => {
@@ -599,7 +597,7 @@ const EditPatientPage = () => {
                     }}
                     maxFiles={10}
                     label="Upload Patient Documents"
-                    description="📋 Drag and drop ID cards, insurance cards, consent forms, and other patient documents here"
+                    description="Drag and drop ID cards, insurance cards, consent forms, and other patient documents here"
                   />
                 </Box>
               </CardContent>
@@ -634,4 +632,4 @@ const EditPatientPage = () => {
   );
 };
 
-export default EditPatientPage; 
+export default EditPatientPage;

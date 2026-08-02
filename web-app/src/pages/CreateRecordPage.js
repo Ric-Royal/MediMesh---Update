@@ -22,7 +22,7 @@ import {
   Description as DescriptionIcon,
   Person as PersonIcon
 } from '@mui/icons-material';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation } from '../routerCompat';
 import apiService from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';
@@ -234,7 +234,6 @@ const CreateRecordPage = () => {
       }
 
       // Log the request data before sending
-      console.log('Medical Record Request data:', cleanData);
 
       const response = await apiService.medicalRecords.create(cleanData);
       
@@ -246,8 +245,6 @@ const CreateRecordPage = () => {
       });
     } catch (err) {
       console.error('Error creating medical record:', err);
-      console.log('Medical Record Error response:', err.response?.data);
-      console.log('Medical Record Error status:', err.response?.status);
       
       if (err.response?.data?.details) {
         // Handle validation errors from server
@@ -629,7 +626,6 @@ const CreateRecordPage = () => {
                   recordId={null}
                   patientId={formData.patient_id}
                   onUploadSuccess={(files) => {
-                    console.log('Files uploaded:', files);
                     // Handle successful upload
                   }}
                   onUploadError={(error) => {
@@ -672,4 +668,4 @@ const CreateRecordPage = () => {
   );
 };
 
-export default CreateRecordPage; 
+export default CreateRecordPage;

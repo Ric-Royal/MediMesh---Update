@@ -1,19 +1,29 @@
 import axios from 'axios';
+import { RUNTIME_CONFIG } from '../config/runtime';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
+const API_BASE_URL = RUNTIME_CONFIG.apiUrl;
 
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // Increased to 30 seconds for settings operations
+  timeout: 30000,
+  withCredentials: true,
 });
 
-// Request interceptor to add auth headers
+const readCookie = name => document.cookie
+  .split(';')
+  .map(value => value.trim())
+  .find(value => value.startsWith(`${name}=`))
+  ?.slice(name.length + 1);
+
+// Cookie sessions are HttpOnly. Mutating requests additionally carry the
+// non-sensitive double-submit token so another site cannot forge actions.
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token') || localStorage.getItem('dev_token');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    const method = String(config.method || 'get').toLowerCase();
+    if (!['get', 'head', 'options'].includes(method)) {
+      const csrfToken = readCookie('medimesh_csrf');
+      if (csrfToken) config.headers['X-CSRF-Token'] = decodeURIComponent(csrfToken);
     }
     return config;
   },
@@ -28,10 +38,11 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    if (error.response?.status === 401) {
-      // Handle unauthorized access
-      localStorage.removeItem('token');
-      localStorage.removeItem('dev_token');
+    const requestPath = error.config?.url || '';
+    const isCredentialCheck = requestPath.includes('/api/auth/login') ||
+      requestPath.includes('/api/auth/change-password') ||
+      requestPath.includes('/api/auth/me');
+    if (error.response?.status === 401 && !isCredentialCheck) {
       window.location.href = '/login';
     }
     return Promise.reject(error);
@@ -44,8 +55,11 @@ const handleResponse = (response) => {
 };
 
 const handleError = (error) => {
-  const message = error.response?.data?.message || error.message || 'An error occurred';
-  throw new Error(message);
+  const message = error.response?.data?.error || error.response?.data?.message || error.message || 'An error occurred';
+  const normalizedError = new Error(message);
+  normalizedError.response = error.response;
+  normalizedError.status = error.response?.status;
+  throw normalizedError;
 };
 
 // API service object
@@ -83,6 +97,48 @@ const apiService = {
     me: async () => {
       try {
         const response = await api.get('/api/auth/me');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    verifyMfa: async (mfaToken, code) => {
+      try {
+        const response = await api.post('/api/auth/mfa/verify', { mfaToken, code });
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    setupMfa: async () => {
+      try {
+        return handleResponse(await api.post('/api/auth/mfa/setup'));
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    enableMfa: async code => {
+      try {
+        return handleResponse(await api.post('/api/auth/mfa/enable', { code }));
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    disableMfa: async (password, code) => {
+      try {
+        return handleResponse(await api.post('/api/auth/mfa/disable', { password, code }));
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    changePassword: async (currentPassword, newPassword) => {
+      try {
+        const response = await api.post('/api/auth/change-password', { currentPassword, newPassword });
         return handleResponse(response);
       } catch (error) {
         throw handleError(error);
@@ -397,6 +453,39 @@ const apiService = {
     }
   },
 
+  // Dashboard API
+  dashboard: {
+    getStatistics: async () => {
+      try {
+        const response = await api.get('/api/dashboard/statistics');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
+    getSystemStatus: async () => {
+      try {
+        const response = await api.get('/api/dashboard/system-status');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+  },
+
+  // Clinics API
+  clinics: {
+    getAll: async () => {
+      try {
+        const response = await api.get('/api/clinics');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+  },
+
   // Settings Management
   settings: {
     // User Settings
@@ -437,6 +526,15 @@ const apiService = {
     },
 
     // System Settings (Admin only)
+    getOrganizationSettings: async () => {
+      try {
+        const response = await api.get('/api/settings/organization');
+        return handleResponse(response);
+      } catch (error) {
+        throw handleError(error);
+      }
+    },
+
     getSystemSettings: async () => {
       try {
         const response = await api.get('/api/settings/system');
@@ -553,4 +651,4 @@ const apiService = {
   }
 };
 
-export default apiService; 
+export default apiService;

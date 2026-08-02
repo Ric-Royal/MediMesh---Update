@@ -1,136 +1,110 @@
-const { auditLogger: auditLoggerUtil } = require('../utils/logger');
-const { getDB } = require('../utils/database');
+const crypto = require('crypto');
+const { appendAuditEvent } = require('../security/auditEvents');
+const { logger } = require('../utils/logger');
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const resourceFromPath = (path, params = {}) => {
+  const segments = String(path || '').split('/').filter(Boolean);
+  const apiIndex = segments.indexOf('api');
+  const resourceType = segments[apiIndex + 1] || segments[0] || 'unknown';
+  const candidates = [
+    params.fileId,
+    params.itemId,
+    params.patientId,
+    params.encounterId,
+    params.id,
+    ...segments
+  ];
+  const resourceId = candidates.find(value => UUID_PATTERN.test(String(value || ''))) || null;
+  return { resourceType, resourceId };
+};
+
+const auditMetadata = req => ({
+  changed_fields: ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)
+    ? Object.keys(req.body || {}).filter(field => !/password|secret|token|code/i.test(field))
+    : [],
+  query_fields: Object.keys(req.query || {}),
+  authentication_source: req.authenticationSource || null,
+  department_id: req.user?.departmentId || null,
+  staff_role: req.user?.staffRole || null
+});
+
+const buildAuditEvent = (req, res) => {
+  const requestPath = (req.originalUrl || req.url || '').split('?')[0];
+  const resource = resourceFromPath(requestPath, req.params);
+  return {
+    requestId: req.auditContext.requestId,
+    occurredAt: req.auditContext.startedAt,
+    userId: req.user?.id || null,
+    providerIdentifier: req.user?.providerIdentifier || null,
+    username: req.user?.username || null,
+    action: `${req.method} ${requestPath}`,
+    method: req.method,
+    path: requestPath,
+    statusCode: res.statusCode,
+    outcome: res.statusCode < 400 ? 'success' : 'denied_or_error',
+    resourceType: resource.resourceType,
+    resourceId: resource.resourceId,
+    patientId: req.accessContext?.patientId || null,
+    purpose: req.accessContext?.purpose || req.get('X-Access-Purpose') || null,
+    breakGlass: req.accessContext?.breakGlass === true,
+    sourceIp: req.ip || req.socket?.remoteAddress || null,
+    userAgent: req.get('User-Agent') || null,
+    metadata: auditMetadata(req)
+  };
+};
 
 const auditLogger = (req, res, next) => {
-  // Capture the original res.json function
-  const originalJson = res.json;
-  
-  // Override res.json to capture response data
-  res.json = function(data) {
-    // Log the audit trail
-    logAuditTrail(req, res, data);
-    
-    // Call the original res.json function
-    return originalJson.call(this, data);
+  req.auditContext = {
+    requestId: req.get('X-Request-ID') || crypto.randomUUID(),
+    startedAt: new Date().toISOString()
+  };
+  res.setHeader('X-Request-ID', req.auditContext.requestId);
+
+  const originalEnd = res.end.bind(res);
+  let endStarted = false;
+
+  res.end = function auditedEnd(chunk, encoding, callback) {
+    if (endStarted) return originalEnd(chunk, encoding, callback);
+    endStarted = true;
+
+    const finish = () => originalEnd(chunk, encoding, callback);
+    appendAuditEvent(buildAuditEvent(req, res))
+      .then(finish)
+      .catch(error => {
+        logger.error('Mandatory audit persistence failed', {
+          error: error.message,
+          requestId: req.auditContext.requestId,
+          method: req.method,
+          path: req.path,
+          userId: req.user?.id
+        });
+
+        if (process.env.AUDIT_FAIL_CLOSED !== 'false' && !res.headersSent) {
+          res.statusCode = 503;
+          res.removeHeader('Set-Cookie');
+          res.setHeader('Content-Type', 'application/json');
+          return originalEnd(JSON.stringify({
+            error: 'The request could not be completed because audit recording is unavailable.',
+            request_id: req.auditContext.requestId
+          }), 'utf8', callback);
+        }
+        return finish();
+      });
+    return res;
   };
 
   next();
 };
 
-const logAuditTrail = async (req, res, responseData) => {
-  try {
-    const auditData = {
-      timestamp: new Date().toISOString(),
-      user_id: req.user?.id || 'anonymous',
-      username: req.user?.username || 'anonymous',
-      action: `${req.method} ${req.originalUrl}`,
-      resource_type: extractResourceType(req.originalUrl),
-      resource_id: extractResourceId(req.originalUrl, req.params),
-      status_code: res.statusCode,
-      ip_address: req.ip || req.connection.remoteAddress,
-      user_agent: req.get('User-Agent'),
-      request_body: sanitizeRequestBody(req.body),
-      response_status: res.statusCode < 400 ? 'success' : 'error'
-    };
-
-    // Log to Winston audit logger
-    auditLoggerUtil.info('API Access', auditData);
-
-    // Store in database for immutable audit trail
-    if (shouldLogToDatabase(req.originalUrl)) {
-      await storeAuditLog(auditData);
-    }
-
-  } catch (error) {
-    console.error('Audit logging error:', error);
-  }
-};
-
-const extractResourceType = (url) => {
-  if (url.includes('/patients')) return 'patient';
-  if (url.includes('/records')) return 'medical_record';
-  if (url.includes('/auth')) return 'authentication';
-  return 'unknown';
-};
-
-const extractResourceId = (url, params) => {
-  return params?.id || params?.patientId || null;
-};
-
-const sanitizeRequestBody = (body) => {
-  if (!body) return null;
-  
-  // Remove sensitive fields from logging
-  const sanitized = { ...body };
-  const sensitiveFields = ['password', 'ssn', 'social_security_number'];
-  
-  sensitiveFields.forEach(field => {
-    if (sanitized[field]) {
-      sanitized[field] = '[REDACTED]';
-    }
-  });
-  
-  return sanitized;
-};
-
-const shouldLogToDatabase = (url) => {
-  // Always log medical data access
-  return url.includes('/patients') || url.includes('/records');
-};
-
-const storeAuditLog = async (auditData) => {
-  try {
-    const db = getDB();
-    const query = `
-      INSERT INTO audit_logs (
-        user_id, action, resource_type, resource_id, 
-        old_values, new_values, ip_address, user_agent
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-    `;
-    
-    await db.query(query, [
-      auditData.user_id,
-      auditData.action,
-      auditData.resource_type,
-      auditData.resource_id,
-      null, // old_values - would be populated for updates
-      auditData.request_body,
-      auditData.ip_address,
-      auditData.user_agent
-    ]);
-  } catch (error) {
-    console.error('Failed to store audit log in database:', error);
-  }
-};
-
-// Middleware to capture data changes for updates
-const captureDataChanges = (resourceType) => {
-  return async (req, res, next) => {
-    if (req.method === 'PUT' || req.method === 'PATCH') {
-      try {
-        const resourceId = req.params.id;
-        const db = getDB();
-        
-        let query;
-        if (resourceType === 'patient') {
-          query = 'SELECT * FROM patients WHERE id = $1';
-        } else if (resourceType === 'medical_record') {
-          query = 'SELECT * FROM medical_records WHERE id = $1';
-        }
-        
-        if (query) {
-          const result = await db.query(query, [resourceId]);
-          req.oldData = result.rows[0];
-        }
-      } catch (error) {
-        console.error('Failed to capture old data:', error);
-      }
-    }
-    next();
-  };
-};
+// Retained for route compatibility. Before/after values are versioned in the
+// clinical history tables rather than copied into general application logs.
+const captureDataChanges = () => (req, res, next) => next();
 
 module.exports = {
   auditLogger,
-  captureDataChanges
-}; 
+  buildAuditEvent,
+  captureDataChanges,
+  resourceFromPath
+};
